@@ -83,7 +83,7 @@ rather nothing moved.
 | `/ascent demo` | step the bar through every visual state; `off` to stop |
 | `/ascent reset confirm` | erase this character's recorded history |
 | `/ascent debug` | everything the addon knows about itself: client, capabilities, attribution counters, places |
-| `/ascent evidence on` | record a session to the saved variables file for later reading; `off`, `reset` |
+| `/ascent debug evidence on` | record a session to the saved variables file for later reading; `off`, `reset` |
 | `/ascent copy` | the diagnostics as selectable text, ready to paste into a bug report; `summary`, `pending` for a narrower one |
 
 The options panel also lives under **Interface → AddOns → Ascent**, and its Behaviour page has a

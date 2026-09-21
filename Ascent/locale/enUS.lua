@@ -194,7 +194,8 @@ ns.locale.tables.enUS = {
   [TextKey.CMD_HELP_OPTIONS]       = "bar options",
   [TextKey.CMD_HELP_RESET]         = "erase this character's recorded history",
   [TextKey.CMD_HELP_DEBUG]         = "everything the addon knows about itself: client, capabilities, "
-                                  .. "attribution, places, quests and client strings. timesync on|off toggles "
+                                  .. "attribution, places, quests and client strings. evidence on|off|reset "
+                                  .. "records a session to a file instead of the chat; timesync on|off toggles "
                                   .. "the played-time request",
   [TextKey.CMD_HELP_DEMO]          = "step the bar through every visual state; off to stop",
   [TextKey.CMD_HELP_CHANGELOG]     = "what changed, version by version",
@@ -266,8 +267,6 @@ ns.locale.tables.enUS = {
   [TextKey.CMD_EVIDENCE_OFF]       = "evidence recording off",
   [TextKey.CMD_EVIDENCE_STATUS]    = "evidence: %s",
   [TextKey.CMD_EVIDENCE_RESET]     = "evidence cleared",
-  [TextKey.CMD_HELP_EVIDENCE]      =
-    "record what happens to a file for diagnosis; never prints to chat",
   [TextKey.COPY_TITLE]             = "Ascent - report",
   [TextKey.COPY_HINT]              =
     "Selected already: press Ctrl-C (Cmd-C on a Mac) to copy, Escape to close. "

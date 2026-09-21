@@ -247,7 +247,6 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   CMD_EVIDENCE_OFF    = "cmd_evidence_off",
   CMD_EVIDENCE_STATUS = "cmd_evidence_status",
   CMD_EVIDENCE_RESET  = "cmd_evidence_reset",
-  CMD_HELP_EVIDENCE   = "cmd_help_evidence",
 
   -- The copy dialog. The report it shows is diagnostic output and stays literal
   -- English (see this file's header); these three are what the player reads

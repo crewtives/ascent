@@ -1609,11 +1609,12 @@ step("commands that need no views", function()
   handler("pending")
   handler("options")
   handler("debug")
-  handler("evidence on")
-  handler("evidence")
+  handler("debug evidence on")
+  handler("debug evidence")
   -- Off last, so nothing below pushes samples into a ring somebody might read.
-  handler("evidence off")
+  handler("debug evidence off")
 end)
+
 
 -- What the composition root prints, read back. Everything below was a defect that
 -- every gate in this repo was structurally unable to see: the dump omitted the
@@ -1727,7 +1728,6 @@ step("the diagnostic names what it probed, not only what was missing", function(
   end
 end)
 
-
 step("changing a setting from outside the panel refreshes the panel", function()
   local SettingKey = ns.core.SettingKey
   local dropdown = _G.AscentOptionsSlotDropdown
@@ -1746,7 +1746,6 @@ step("changing a setting from outside the panel refreshes the panel", function()
 
   context.saveSetting(SettingKey.BAR_SLOT, restore)
 end)
-
 
 step("where the bar lives is a list of the three slots, not a button to cycle", function()
   local dropdown = _G.AscentOptionsSlotDropdown
@@ -1783,7 +1782,6 @@ step("where the bar lives is a list of the three slots, not a button to cycle", 
   context.saveSetting(SettingKey.BAR_SLOT, restore)
 end)
 
-
 step("the bar's breakdown goes where the player keeps their tooltips", function()
   GameTooltip.defaultAnchored = false
   local onEnter = context.bar.frame.scripts and context.bar.frame.scripts.OnEnter
@@ -1805,7 +1803,6 @@ step("the bar's breakdown goes where the player keeps their tooltips", function(
   -- the run.
   context.bar.frame.scripts.OnLeave(context.bar.frame)
 end)
-
 
 step("a bar asked to stay quiet says nothing until the cursor is on it", function()
   local SettingKey = ns.core.SettingKey
@@ -1836,7 +1833,6 @@ step("a bar asked to stay quiet says nothing until the cursor is on it", functio
     error("the bar stayed quiet after the setting was turned back off")
   end
 end)
-
 
 step("the text field editor writes what the bar says, in the order it reads", function()
   local SettingKey, TextToken = ns.core.SettingKey, ns.core.TextToken
@@ -1876,7 +1872,6 @@ step("a bar with no text at all is a choice, not a crash", function()
 
   context.saveSetting(SettingKey.BAR_TEXT_TOKENS, restore)
 end)
-
 
 step("every options control fits inside the page it lives on", function()
   -- One page per section now, so a control is measured against ITS page rather
@@ -1988,7 +1983,6 @@ step("every options control fits inside the page it lives on", function()
     end
   end
 end)
-
 
 -- ---------------------------------------------------------------------------
 -- The client's slot: the three transitions, and the client that has no bar.
@@ -2301,7 +2295,6 @@ step("a visual setting changed in the slot repaints at the slot's size, not the 
   slash("options slot off")
 end)
 
-
 -- The owner's third report: "cuando todo free on screen se queda con la dimension
 -- vieja". The bar came back from the slot as wide as the screen. assertSize alone
 -- could not see it -- the renderer's own numbers were right; it was the FRAME
@@ -2354,7 +2347,6 @@ step("a client with no experience bar costs the slot, not the bar", function()
   MainMenuExpBar = kept
   slash("options slot off")
 end)
-
 
 -- The pull plate, driven the way a fight actually drives it. This is the only
 -- gate in the repo that executes ui/PullPlateView.lua or ui/Effects.lua at all,
@@ -2863,6 +2855,60 @@ step("an update announces itself once, and is remembered", function()
   if not said:find(remembered, 1, true) then
     error(("the notice named a different version than the one remembered: %s vs %s")
       :format(said, remembered))
+  end
+end)
+
+-- ONE PLACE TO LOOK. The flight recorder used to be a top-level command beside
+-- `debug`, which meant a player chasing one thing had to know which of the two
+-- words held it -- the same reason the three diagnostic dumps were folded into
+-- one before this. The old spelling has to be gone, not merely unadvertised:
+-- a command that still half-answers is worse than one that says it does not exist.
+step("the recorder answers under debug, and the old spelling does not answer at all", function()
+  local mark = #chatLines + 1
+  slash("debug evidence on")
+  if chatSince(mark, "evidence recording on") == nil then
+    error("`debug evidence on` did not turn the recorder on")
+  end
+
+  mark = #chatLines + 1
+  slash("debug evidence off")
+  if chatSince(mark, "evidence recording off") == nil then
+    error("`debug evidence off` did not turn it off")
+  end
+
+  mark = #chatLines + 1
+  slash("evidence on")
+  if chatSince(mark, "evidence recording on") ~= nil then
+    error("the old top-level command still works; there are two doors again")
+  end
+  if chatSince(mark, "evidence") == nil then
+    error("an unknown subcommand said nothing at all")
+  end
+end)
+
+step("the help offers what exists, and nothing that does not", function()
+  local mark = #chatLines + 1
+  slash("help")
+
+  local rows = {}
+  for index = mark, #chatLines do
+    rows[#rows + 1] = chatLines[index]
+  end
+  local help = table.concat(rows, "\n")
+
+  -- `debug quests` and `debug strings` were folded into `debug` itself, and the
+  -- help went on offering them for months. Advertising a subcommand that no
+  -- longer answers is the same bug as hiding one that does.
+  if help:find("quests|strings", 1, true) then
+    error("the help still offers subcommands that were folded away")
+  end
+  if not help:find("debug [evidence", 1, true) then
+    error("the help does not say the recorder lives under debug: " .. help)
+  end
+  for _, row in ipairs(rows) do
+    if row:find("/ascent evidence ", 1, true) then
+      error("the help still lists evidence as a command of its own: " .. row)
+    end
   end
 end)
 

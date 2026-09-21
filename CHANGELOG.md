@@ -24,6 +24,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Un interruptor** en Interface → AddOns para apagarlo, que silencia las dos mitades: deja de avisar y deja
   de anunciar.
 
+### Changed
+
+- **El grabador de sesión pasa a vivir dentro de `debug`**: lo que era `/ascent evidence on|off|reset` ahora es
+  `/ascent debug evidence on|off|reset`. El diagnóstico del addon se consulta por una sola puerta, que es la
+  misma razón por la que antes se fundieron en una los tres volcados que había. La ayuda además dejaba de
+  ofrecer `debug quests` y `debug strings`, que ya no existían desde aquella fusión.
+
 ## [0.1.0] - 2026-09-21
 
 First public build, and an early beta rather than a finished thing: it has been played far less than

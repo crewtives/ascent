@@ -1013,9 +1013,8 @@ local function buildContext()
     { "options [reset|skin <id>|contrast on|off|motion <0-1>|lock|unlock|scale <n>|debug on|off]",
       TextKey.CMD_HELP_OPTIONS },
     { "reset confirm", TextKey.CMD_HELP_RESET },
-    { "debug [quests|strings]", TextKey.CMD_HELP_DEBUG },
+    { "debug [evidence on|off|reset] [timesync on|off]", TextKey.CMD_HELP_DEBUG },
     { "demo [off]", TextKey.CMD_HELP_DEMO },
-    { "evidence [on|off|reset]", TextKey.CMD_HELP_EVIDENCE },
     { "copy [debug|summary|pending]", TextKey.CMD_HELP_COPY },
     { "changelog", TextKey.CMD_HELP_CHANGELOG },
   }
@@ -1526,6 +1525,37 @@ local function buildContext()
     return true
   end
 
+  -- The flight recorder's switch. A SUBCOMMAND of debug rather than a command of
+  -- its own: `/ascent debug` is where everything the addon knows about itself
+  -- lives, and a player chasing one thing should not have to know which of two
+  -- top-level words holds it -- the same reason the three diagnostic dumps were
+  -- folded into one.
+  --
+  -- What it is NOT is a second debug mode. Debug prints to chat, which is fine
+  -- for a two-minute check; this writes to the saved variables file and is meant
+  -- to be left on for a whole levelling session without being noticed.
+  local function handleEvidence(sub)
+    sub = sub:lower()
+    if sub == "on" then
+      saveSetting(SettingKey.EVIDENCE, true)
+      -- Starts recording now rather than next session, and attaches to the
+      -- store so what it records is already in the file at logout.
+      evidence:enable(true)
+      AscentCharDB = AscentCharDB or {}
+      evidence:attachTo(AscentCharDB, evidenceEnvironment())
+      logger:info(locale:get(TextKey.CMD_EVIDENCE_ON))
+    elseif sub == "off" then
+      saveSetting(SettingKey.EVIDENCE, false)
+      evidence:enable(false)
+      logger:info(locale:get(TextKey.CMD_EVIDENCE_OFF))
+    elseif sub == "reset" then
+      evidence:reset()
+      logger:info(locale:get(TextKey.CMD_EVIDENCE_RESET))
+    else
+      logger:info(locale:get(TextKey.CMD_EVIDENCE_STATUS, evidence:summary()))
+    end
+  end
+
   local COPY_SECTIONS = {
     debug = printDebug,
     summary = printSummary,
@@ -1627,26 +1657,6 @@ local function buildContext()
       handleOptions(rest)
     elseif command == "reset" then
       handleReset(rest)
-    elseif command == "evidence" then
-      local sub = rest:lower()
-      if sub == "on" then
-        saveSetting(SettingKey.EVIDENCE, true)
-        -- Starts recording now rather than next session, and attaches to the
-        -- store so what it records is already in the file at logout.
-        evidence:enable(true)
-        AscentCharDB = AscentCharDB or {}
-        evidence:attachTo(AscentCharDB, evidenceEnvironment())
-        logger:info(locale:get(TextKey.CMD_EVIDENCE_ON))
-      elseif sub == "off" then
-        saveSetting(SettingKey.EVIDENCE, false)
-        evidence:enable(false)
-        logger:info(locale:get(TextKey.CMD_EVIDENCE_OFF))
-      elseif sub == "reset" then
-        evidence:reset()
-        logger:info(locale:get(TextKey.CMD_EVIDENCE_RESET))
-      else
-        logger:info(locale:get(TextKey.CMD_EVIDENCE_STATUS, evidence:summary()))
-      end
     elseif command == "copy" then
       handleCopy(rest)
     elseif command == "changelog" then
@@ -1661,7 +1671,9 @@ local function buildContext()
     elseif command == "debug" then
       local sub, arg = splitFirst(rest)
       sub = sub:lower()
-      if sub == "timesync" then
+      if sub == "evidence" then
+        handleEvidence(arg)
+      elseif sub == "timesync" then
         -- Spike 0.6's lever, and the only way to ask its question: the request
         -- fires from PLAYER_ENTERING_WORLD, during the loading screen, so
         -- suppressing it has to be decided before the session starts. It takes
