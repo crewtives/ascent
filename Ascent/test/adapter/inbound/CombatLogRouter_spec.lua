@@ -65,8 +65,11 @@ describe("CombatLogRouter", function()
       assert.same({}, bus:topicsInOrder())
     end)
 
+    -- The example used to be SPELL_AURA_APPLIED, which is dispatched now: a debuff
+    -- landing names a creature that is fighting you, which is the one thing this
+    -- router wants from it. Any subevent outside the table still costs nothing.
     it("discards a subevent nobody dispatches, even one involving the player", function()
-      emit("SPELL_AURA_APPLIED", PLAYER_GUID, BOAR_GUID, "Boar")
+      emit("SPELL_ENERGIZE", PLAYER_GUID, BOAR_GUID, "Boar")
 
       assert.same({}, bus:topicsInOrder())
     end)
@@ -154,6 +157,66 @@ describe("CombatLogRouter", function()
     end)
   end)
 
+  -- Being fought is not the same fact as being hurt, and the plate needs the first
+  -- one: a creature that charges you and misses is in the pull.
+  describe("who is in the fight", function()
+    it("engages the creature the player swung at", function()
+      emit(CombatLogSubevent.SWING_DAMAGE, PLAYER_GUID, BOAR_GUID, "Boar", 30)
+
+      assert.equal(BOAR_GUID, bus:lastOn(EventTopic.ENEMY_ENGAGED).guid)
+      assert.equal("Boar", bus:lastOn(EventTopic.ENEMY_ENGAGED).name)
+    end)
+
+    it("engages a creature that swung at the player and missed", function()
+      emit(CombatLogSubevent.SWING_MISSED, BOAR_GUID, PLAYER_GUID, "Player", "MISS")
+
+      assert.equal(BOAR_GUID, bus:lastOn(EventTopic.ENEMY_ENGAGED).guid)
+      assert.equal(0, bus:countOf(EventTopic.DAMAGE_TAKEN), "a miss hurt nobody")
+    end)
+
+    it("engages a creature whose spell missed, and one whose debuff landed", function()
+      emit(CombatLogSubevent.SPELL_MISSED, BOAR_GUID, PLAYER_GUID, "Player", 133, "Fireball", 4, "RESIST")
+      assert.equal(1, bus:countOf(EventTopic.ENEMY_ENGAGED))
+
+      emit(CombatLogSubevent.SPELL_AURA_APPLIED, OTHER_CREATURE_GUID, PLAYER_GUID, "Player",
+        589, "Shadow Word: Pain", 32, "DEBUFF")
+      assert.equal(OTHER_CREATURE_GUID, bus:lastOn(EventTopic.ENEMY_ENGAGED).guid)
+    end)
+
+    it("engages what is fighting the pet, which is fighting the player", function()
+      emit(CombatLogSubevent.SWING_DAMAGE, BOAR_GUID, PET_GUID, "Pet", 12)
+
+      assert.equal(BOAR_GUID, bus:lastOn(EventTopic.ENEMY_ENGAGED).guid)
+    end)
+
+    -- A player duelling you, a falling rock, a training dummy's owner: damage with
+    -- no creature on the other end engages nobody.
+    it("engages nobody when the other side is not a creature", function()
+      emit(CombatLogSubevent.SWING_DAMAGE, "Player-4657-0000AAAA", PLAYER_GUID, "Player", 30)
+
+      assert.equal(0, bus:countOf(EventTopic.ENEMY_ENGAGED))
+    end)
+
+    -- A friendly NPC healing you is a creature on the other side of a line, and it
+    -- is not a fight: enrolling it would put a quest giver in the pull and expect
+    -- experience for killing them.
+    it("engages nobody when a creature heals the player", function()
+      emit(CombatLogSubevent.SPELL_HEAL, BOAR_GUID, PLAYER_GUID, "Player", 2050, "Lesser Heal", 2, 40)
+
+      assert.equal(40, bus:lastOn(EventTopic.HEALING_RECEIVED).amount)
+      assert.equal(0, bus:countOf(EventTopic.ENEMY_ENGAGED))
+    end)
+
+    -- On a death neither side is the player, and the creature that died is not
+    -- something the player just engaged.
+    it("engages nobody on a death it merely overheard", function()
+      emit(CombatLogSubevent.UNIT_DIED, OTHER_CREATURE_GUID, BOAR_GUID, "Boar")
+
+      assert.equal(0, bus:countOf(EventTopic.ENEMY_ENGAGED))
+      assert.equal(1, bus:countOf(EventTopic.CREATURE_DIED))
+    end)
+  end)
+
   describe("damage taken and healing", function()
     it("reports damage the player takes as DAMAGE_TAKEN, not DAMAGE_DEALT", function()
       emit(CombatLogSubevent.SWING_DAMAGE, BOAR_GUID, PLAYER_GUID, "Player", 30)
@@ -161,6 +224,39 @@ describe("CombatLogRouter", function()
       assert.equal(30, bus:lastOn(EventTopic.DAMAGE_TAKEN).amount)
       assert.equal(0, bus:countOf(EventTopic.DAMAGE_DEALT))
       assert.equal(0, bus:countOf(EventTopic.ABILITY_USED))
+    end)
+
+    -- The other end of the line, and the reason this matters: a creature beating
+    -- on the player is the only thing that names a fight the player did not start.
+    -- Without it the pull plate could only list what the player had hit back.
+    it("names the creature that landed the blow", function()
+      emit(CombatLogSubevent.SWING_DAMAGE, BOAR_GUID, PLAYER_GUID, "Player", 30)
+
+      local taken = bus:lastOn(EventTopic.DAMAGE_TAKEN)
+      assert.equal(30, taken.amount)
+      assert.equal("Source", taken.name)
+      assert.equal(BOAR_GUID, taken.guid)
+    end)
+
+    -- Same guard as the blow the player lands: a fall, a trap or another player is
+    -- damage with no creature on the other end, and a nameless enemy is an
+    -- invention rather than a reading.
+    it("names nothing when what hit the player is not a creature", function()
+      emit(CombatLogSubevent.SWING_DAMAGE, "Player-4657-0000AAAA", PLAYER_GUID, "Player", 30)
+
+      local taken = bus:lastOn(EventTopic.DAMAGE_TAKEN)
+      assert.equal(30, taken.amount)
+      assert.is_nil(taken.name)
+      assert.is_nil(taken.guid)
+    end)
+
+    it("carries the attacker on spell and ranged damage as well as on a swing", function()
+      emit(CombatLogSubevent.SPELL_DAMAGE, BOAR_GUID, PLAYER_GUID, "Player", 133, "Fireball", 4, 25)
+      assert.equal(BOAR_GUID, bus:lastOn(EventTopic.DAMAGE_TAKEN).guid)
+
+      emit(CombatLogSubevent.RANGE_DAMAGE, OTHER_CREATURE_GUID, PLAYER_GUID, "Player",
+        75, "Shoot", 1, 12)
+      assert.equal(OTHER_CREATURE_GUID, bus:lastOn(EventTopic.DAMAGE_TAKEN).guid)
     end)
 
     it("reports healing the player receives, from any source", function()

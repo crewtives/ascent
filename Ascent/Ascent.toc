@@ -129,6 +129,7 @@ adapter/outbound/QuestLogReader.lua
 adapter/inbound/WowEventRouter.lua
 adapter/inbound/CreatureGuid.lua
 adapter/inbound/CombatLogRouter.lua
+adapter/inbound/NameplateWatch.lua
 adapter/inbound/TimePlayedSync.lua
 adapter/inbound/VersionChannel.lua
 

@@ -132,6 +132,39 @@ describe("PullRecord", function()
       assert.equal(1, pull.creatures["Mana Serpent"].engaged)
     end)
 
+    -- The defect this closes: a fight you did not start listed nothing and
+    -- expected nothing until the first blow the PLAYER landed, so a creature that
+    -- beat on you for half a minute was not in the pull at all.
+    it("counts something that is hitting you, even if you never hit it back", function()
+      local pull = PullRecord.new(0)
+
+      pull:recordDamageTaken(13, "Withered Green Keeper", "Creature-0-1-1-1-15636-A")
+      pull:recordDamageTaken(13, "Withered Green Keeper", "Creature-0-1-1-1-15636-A")
+
+      assert.equal(1, pull.creatures["Withered Green Keeper"].engaged)
+      assert.equal(1, pull:engagedCount())
+      assert.equal(26, pull.damageTaken, "every blow still counts towards the damage")
+    end)
+
+    -- One creature, whichever end of it the pull learned about first.
+    it("counts a creature once whether it hit you, you hit it, or both", function()
+      local pull = PullRecord.new(0)
+
+      pull:recordDamageTaken(13, "Withered Green Keeper", "Creature-0-1-1-1-15636-A")
+      pull:recordDamageDealt(20, "Withered Green Keeper", "Creature-0-1-1-1-15636-A")
+
+      assert.equal(1, pull:engagedCount())
+    end)
+
+    it("ignores damage taken from something it cannot name", function()
+      local pull = PullRecord.new(0)
+
+      pull:recordDamageTaken(50, nil, nil)
+
+      assert.equal(0, pull:engagedCount())
+      assert.equal(50, pull.damageTaken)
+    end)
+
     it("ignores damage dealt to something it cannot name", function()
       local pull = PullRecord.new(0)
 

@@ -298,6 +298,20 @@ function EvidenceLog:start()
     self:push({ kind = "levelCompleted", completedLevel = record and record.level })
   end)
 
+  -- Who the pull enrolled and from where. The two paths -- a line of the combat
+  -- log, and a nameplate seen coming -- publish the same topic on purpose, so what
+  -- this answers afterwards is "did anything enrol at all", which is the first
+  -- question when a player reports a pull that stayed empty.
+  whileEnabled(self, EventTopic.ENEMY_ENGAGED, function(payload)
+    self:count("engaged")
+    self:push({
+      kind = "engaged",
+      creature = payload and payload.name,
+      guid = payload and payload.guid,
+      from = payload and payload.from,
+    })
+  end)
+
   whileEnabled(self, EventTopic.REST_CHANGED, function(payload)
     self:count("restChanged")
     self:push({ kind = "restChanged", restedXp = payload and payload.restedXp })

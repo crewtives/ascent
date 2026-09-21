@@ -185,9 +185,15 @@ function PullRecord:recordDamageDealt(amount, name, guid)
   self:recordEngagement(name, guid)
 end
 
-function PullRecord:recordDamageTaken(amount)
+-- The other half of recordDamageDealt, and it was missing: something beating on
+-- you is something you are fighting, whether or not you have hit it back yet. Left
+-- out, a pull you did not start listed nothing and expected nothing until the first
+-- blow the PLAYER landed -- a fight could run half a minute against an empty list.
+-- Same engagement rule, so the two ends cannot count one creature twice.
+function PullRecord:recordDamageTaken(amount, name, guid)
   Guard.nonNegativeInteger(amount, "PullRecord.recordDamageTaken amount")
   self.damageTaken = self.damageTaken + amount
+  self:recordEngagement(name, guid)
 end
 
 function PullRecord:recordHealing(amount)

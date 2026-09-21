@@ -393,6 +393,10 @@ local function buildContext()
   -- somebody nearby runs a newer build -- and keeps the changelog, the upgrade
   -- notice and everything else. Named here so the diagnostic can say it was off.
   capabilities:register("addon_messages", function() return ns.adapter.VersionChannel.isSupported() end)
+  -- Absent when the player has nameplates switched off, and then a pull is built
+  -- from the combat log alone -- which sees every creature that has touched you and
+  -- none of the ones still running at you.
+  capabilities:register("nameplates", function() return ns.adapter.NameplateWatch.isSupported() end)
 
   -- THE VERSION CHECK. An addon cannot ask a server anything, so the only source
   -- for "is there something newer" is the people already around the player. Three
@@ -842,6 +846,10 @@ local function buildContext()
   local lastSettleAt = nil
   local lastObserveAt = nil
   local lastQuestScanAt = nil
+  local lastSweepAt = nil
+  local nameplateWatch = ns.adapter.NameplateWatch.new({
+    bus = bus, recordEvidence = recordEvidence,
+  })
 
   local ticker = CreateFrame("Frame")
   ticker:SetScript("OnUpdate", function(_, elapsed)
@@ -865,6 +873,14 @@ local function buildContext()
     -- unconditionally here would rebuild a view-model sixty times a second
     -- during a fight for a frame whose numbers changed twice.
     pullTracker:tick(now)
+    -- What you pulled that has not reached you yet (D6's budget is why this is
+    -- throttled AND gated): only while a pull is actually open, so out of combat
+    -- it costs one comparison, and four times a second inside one, which is far
+    -- faster than a creature can cross the ground between you.
+    if pullTracker:current() ~= nil and (lastSweepAt == nil or now - lastSweepAt >= 0.25) then
+      lastSweepAt = now
+      nameplateWatch:sweep()
+    end
     if plate ~= nil then
       if plateDemo ~= nil then
         -- The demo owns the plate while it runs, the same way DemoDriver owns

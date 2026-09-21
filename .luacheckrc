@@ -35,7 +35,10 @@ local WOW_API = {
   -- player and unit state
   "UnitXP", "UnitXPMax", "UnitLevel", "UnitName", "UnitGUID", "UnitClass", "UnitRace",
   "UnitHealth", "UnitHealthMax", "UnitPower", "UnitPowerMax", "UnitFactionGroup",
-  "UnitTokenFromGUID", "UnitExists", "UnitIsUnit",
+  "UnitTokenFromGUID", "UnitExists", "UnitIsUnit", "UnitCanAttack", "UnitIsDead", "UnitAffectingCombat",
+  -- nameplates: the only place a Classic client names a creature that has aggroed
+  -- and not yet reached you
+  "C_NamePlate",
   -- experience and rest
   "GetXPExhaustion", "GetRestState", "IsResting", "IsXPUserDisabled",
   "GetMaxPlayerLevel", "GetMaxLevelForExpansionLevel", "GetExpansionLevel",

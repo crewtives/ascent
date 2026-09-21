@@ -41,6 +41,66 @@ describe("PullTracker", function()
     assert.equal(1, tracker:currentGeneration())
   end)
 
+  -- The whole of the reported defect, end to end: a fight the player never struck
+  -- back in used to list nothing, so the plate showed a pull against no one and
+  -- expected no experience from it.
+  it("lists what is beating on you in a fight you never struck back in", function()
+    bus:publish(EventTopic.COMBAT_STARTED, {})
+    bus:publish(EventTopic.DAMAGE_TAKEN,
+      { amount = 13, name = "Withered Green Keeper", guid = "Creature-0-1-1-1-15636-A" })
+    bus:publish(EventTopic.DAMAGE_TAKEN,
+      { amount = 16, name = "Withered Green Keeper", guid = "Creature-0-1-1-1-15636-B" })
+
+    local pull = tracker:current()
+    assert.equal(2, pull:engagedCount())
+    assert.equal(2, pull.creatures["Withered Green Keeper"].engaged)
+    assert.equal(29, pull.damageTaken)
+  end)
+
+  -- The prelude from the other side: an ambush lands its first blow before the
+  -- client says you are in combat, and that blow is the only thing naming what
+  -- started it.
+  it("keeps the first blow of an ambush, which lands before combat opens", function()
+    clock:advance(10)
+    bus:publish(EventTopic.DAMAGE_TAKEN,
+      { amount = 13, name = "Withered Green Keeper", guid = "Creature-0-1-1-1-15636-A" })
+    clock:advance(1)
+    bus:publish(EventTopic.COMBAT_STARTED, {})
+
+    local pull = tracker:current()
+    assert.equal(1, pull:engagedCount())
+    assert.equal(13, pull.damageTaken)
+    assert.equal(10, pull.startedAt, "the fight began when the first blow landed")
+  end)
+
+  -- What the player actually asked for after the first fix: it should not take a
+  -- blow landing. A creature that swung and missed is in the fight.
+  it("counts a creature that is fighting you before it has hurt you", function()
+    bus:publish(EventTopic.COMBAT_STARTED, {})
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Withered Green Keeper", guid = "Creature-0-1-1-1-15636-A" })
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Withered Green Keeper", guid = "Creature-0-1-1-1-15636-B" })
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Withered Green Keeper", guid = "Creature-0-1-1-1-15636-A" })
+
+    local pull = tracker:current()
+    assert.equal(2, pull:engagedCount(), "one per creature, however many lines it takes")
+    assert.equal(0, pull.damageTaken, "and nothing has hurt anyone yet")
+  end)
+
+  it("keeps an engagement that precedes combat, and backdates the pull to it", function()
+    clock:advance(10)
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Withered Green Keeper", guid = "Creature-0-1-1-1-15636-A" })
+    clock:advance(1)
+    bus:publish(EventTopic.COMBAT_STARTED, {})
+
+    local pull = tracker:current()
+    assert.equal(1, pull:engagedCount())
+    assert.equal(10, pull.startedAt)
+  end)
+
   it("records what lands while combat runs", function()
     bus:publish(EventTopic.COMBAT_STARTED, {})
     bus:publish(EventTopic.CREATURE_DIED, { name = "Kobold Miner", at = 1 })

@@ -115,9 +115,19 @@ local function damageDealt(self, amount, destGUID, destName)
   end
 end
 
-local function damageTaken(self, amount)
+-- Symmetrical with damageDealt above, and for the same reason: a surface has to
+-- be able to answer "what am I fighting" while it is being fought. Without the
+-- attacker here, a creature that beats on the player for half a minute was never
+-- part of the pull -- the plate counted only what the player had hit back -- so a
+-- fight you did not start read as a fight against nothing.
+local function damageTaken(self, amount, sourceGUID, sourceName)
   if type(amount) == "number" and amount > 0 then
-    self.bus:publish(EventTopic.DAMAGE_TAKEN, { amount = amount })
+    local isCreature = CreatureGuid.isCreature(sourceGUID)
+    self.bus:publish(EventTopic.DAMAGE_TAKEN, {
+      amount = amount,
+      name = isCreature and sourceName or nil,
+      guid = isCreature and sourceGUID or nil,
+    })
   end
 end
 
@@ -129,14 +139,17 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Step 3: subevent handlers. Each receives (self, playerSource, playerDest,
--- destGUID, destName, ...extras), where extras are exactly what that subevent's
--- combat log line carries past the shared eleven-field prefix.
+-- destGUID, destName, sourceGUID, sourceName, ...extras), where extras are exactly
+-- what that subevent's combat log line carries past the shared eleven-field
+-- prefix. Both ends of the line travel: on a blow the player lands the creature is
+-- the destination, and on one they take it is the source, and a pull needs to know
+-- it either way.
 -- ---------------------------------------------------------------------------
 
 -- Spells are counted as "used" here and only here -- a DoT tick is SPELL_DAMAGE,
 -- not a new cast, and would otherwise inflate the ranking of whatever the player
 -- pressed once.
-local function onSpellCastSuccess(self, playerSource, _, _, _, spellId, spellName)
+local function onSpellCastSuccess(self, playerSource, _, _, _, _, _, spellId, spellName)
   if playerSource then
     -- Remembered, so the ranged handlers below can tell a shot that announces
     -- its own cast from one that does not. See castsItsOwn.
@@ -171,12 +184,13 @@ end
 -- A swing that misses was still swung (Events.lua's own note on this): melee
 -- auto attacks are counted from both _DAMAGE and _MISSED, never doubled between
 -- them because a single swing produces exactly one of the two.
-local function onSwingDamage(self, playerSource, playerDest, destGUID, destName, amount)
+local function onSwingDamage(self, playerSource, playerDest, destGUID, destName,
+    sourceGUID, sourceName, amount)
   if playerSource then
     abilityUsed(self, AbilityKey.MELEE_SWING, nil)
     damageDealt(self, amount, destGUID, destName)
   elseif playerDest then
-    damageTaken(self, amount)
+    damageTaken(self, amount, sourceGUID, sourceName)
   end
 end
 
@@ -186,32 +200,34 @@ local function onSwingMissed(self, playerSource)
   end
 end
 
-local function onRangeDamage(self, playerSource, playerDest, destGUID, destName, spellId, _, _, amount)
+local function onRangeDamage(self, playerSource, playerDest, destGUID, destName,
+    sourceGUID, sourceName, spellId, _, _, amount)
   if playerSource then
     if not castsItsOwn(self, spellId) then
       abilityUsed(self, AbilityKey.RANGED_AUTO, nil)
     end
     damageDealt(self, amount, destGUID, destName)
   elseif playerDest then
-    damageTaken(self, amount)
+    damageTaken(self, amount, sourceGUID, sourceName)
   end
 end
 
-local function onRangeMissed(self, playerSource, _, _, _, spellId)
+local function onRangeMissed(self, playerSource, _, _, _, _, _, spellId)
   if playerSource and not castsItsOwn(self, spellId) then
     abilityUsed(self, AbilityKey.RANGED_AUTO, nil)
   end
 end
 
-local function onSpellDamage(self, playerSource, playerDest, destGUID, destName, _, _, _, amount)
+local function onSpellDamage(self, playerSource, playerDest, destGUID, destName,
+    sourceGUID, sourceName, _, _, _, amount)
   if playerSource then
     damageDealt(self, amount, destGUID, destName)
   elseif playerDest then
-    damageTaken(self, amount)
+    damageTaken(self, amount, sourceGUID, sourceName)
   end
 end
 
-local function onSpellHeal(self, _, playerDest, _, _, _, _, _, amount)
+local function onSpellHeal(self, _, playerDest, _, _, _, _, _, _, _, amount)
   if playerDest then
     healingReceived(self, amount)
   end
@@ -263,8 +279,31 @@ local function onCreatureDied(self, _, _, destGUID, destName)
   })
 end
 
+-- Nothing to publish from the line itself: a miss deals no damage and an aura is
+-- not a metric this addon keeps. They are dispatched anyway because dispatch is
+-- what decides which lines reach the engagement below -- and "this creature swung
+-- at you and missed" is exactly as good an answer to "who is in this fight" as a
+-- blow that landed.
+local function onInteractionOnly() end
+
+-- The subevents that mean "these two are fighting". Everything dispatched that is
+-- not in here still does its own job; it just does not answer this question.
+local ENGAGING = {
+  [CombatLogSubevent.SPELL_CAST_SUCCESS]    = true,
+  [CombatLogSubevent.SWING_DAMAGE]          = true,
+  [CombatLogSubevent.SWING_MISSED]          = true,
+  [CombatLogSubevent.RANGE_DAMAGE]          = true,
+  [CombatLogSubevent.RANGE_MISSED]          = true,
+  [CombatLogSubevent.SPELL_DAMAGE]          = true,
+  [CombatLogSubevent.SPELL_PERIODIC_DAMAGE] = true,
+  [CombatLogSubevent.SPELL_MISSED]          = true,
+  [CombatLogSubevent.SPELL_AURA_APPLIED]    = true,
+}
+
 local DISPATCH = {
   [CombatLogSubevent.SPELL_CAST_SUCCESS]    = onSpellCastSuccess,
+  [CombatLogSubevent.SPELL_MISSED]          = onInteractionOnly,
+  [CombatLogSubevent.SPELL_AURA_APPLIED]    = onInteractionOnly,
   [CombatLogSubevent.SWING_DAMAGE]          = onSwingDamage,
   [CombatLogSubevent.SWING_MISSED]          = onSwingMissed,
   [CombatLogSubevent.RANGE_DAMAGE]          = onRangeDamage,
@@ -317,7 +356,7 @@ end
 -- combat log's own fields as arguments -- that is what GetCurrentEventInfo() is
 -- for -- so unlike WowEventRouter's dispatch there is nothing to pass in.
 function CombatLogRouter:handleCombatLogEvent()
-  local _, subevent, _, sourceGUID, _, _, _, destGUID, destName, _, _,
+  local _, subevent, _, sourceGUID, sourceName, _, _, destGUID, destName, _, _,
     a1, a2, a3, a4, a5, a6, a7, a8, a9 = readCurrentEvent()
 
   local handler = DISPATCH[subevent]
@@ -333,7 +372,36 @@ function CombatLogRouter:handleCombatLogEvent()
     return
   end
 
-  handler(self, playerSource, playerDest, destGUID, destName, a1, a2, a3, a4, a5, a6, a7, a8, a9)
+  -- WHO IS IN THIS FIGHT, said by the line rather than by what the line did. Every
+  -- subevent that gets this far has the player or their pet on one side, so the
+  -- other side is the answer -- and it is published whether the line was a blow, a
+  -- miss, a cast or a debuff.
+  --
+  -- This is the general form of a defect reported from a real pull: enrolment used
+  -- to happen only where damage was recorded, so a creature the player had not hit
+  -- back was in no pull at all, and after that was fixed it still had to LAND a hit
+  -- to count. A creature that charges you, swings and misses is being fought.
+  --
+  -- Exactly one of the two sides is tested, never both: on UNIT_DIED neither is the
+  -- player, and publishing the dead creature here would enrol whatever died nearby.
+  --
+  -- ENGAGING and not "every line that got this far", because two of them are not a
+  -- fight: a creature that HEALS the player is a friendly NPC, and enrolling it
+  -- would put a quest giver in the pull and count experience for killing it.
+  if ENGAGING[subevent] and playerSource ~= playerDest then
+    local guid, name
+    if playerSource then
+      guid, name = destGUID, destName
+    else
+      guid, name = sourceGUID, sourceName
+    end
+    if CreatureGuid.isCreature(guid) and name ~= nil then
+      self.bus:publish(EventTopic.ENEMY_ENGAGED, { guid = guid, name = name })
+    end
+  end
+
+  handler(self, playerSource, playerDest, destGUID, destName, sourceGUID, sourceName,
+    a1, a2, a3, a4, a5, a6, a7, a8, a9)
 end
 
 function CombatLogRouter:start()

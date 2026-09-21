@@ -33,6 +33,12 @@ ns.core.EventTopic = Frozen.enum("EventTopic", {
   ABILITY_USED      = "ability_used",
   DAMAGE_DEALT      = "damage_dealt",
   DAMAGE_TAKEN      = "damage_taken",
+  -- A creature and this player are in the same fight, said by ANY line of the
+  -- combat log that has one on each side. Separate from the damage topics on
+  -- purpose: waiting for damage meant a creature that had charged you, swung and
+  -- missed was not in the pull, and one you had not hit back was never in it at
+  -- all. Being fought is not the same fact as being hurt.
+  ENEMY_ENGAGED     = "enemy_engaged",
   HEALING_RECEIVED  = "healing_received",
   CREATURE_DIED     = "creature_died",
   KILL_UNREWARDED   = "kill_unrewarded", -- a creature died and nothing paid for it
@@ -91,6 +97,11 @@ ns.core.CombatLogSubevent = Frozen.enum("CombatLogSubevent", {
   RANGE_MISSED         = "RANGE_MISSED",
   SPELL_DAMAGE         = "SPELL_DAMAGE",
   SPELL_PERIODIC_DAMAGE = "SPELL_PERIODIC_DAMAGE",
+  -- Carried for who is in the fight rather than for what they did: a spell that
+  -- misses and a debuff that lands both name a creature that is fighting you and
+  -- neither of them moves a health bar.
+  SPELL_MISSED         = "SPELL_MISSED",
+  SPELL_AURA_APPLIED   = "SPELL_AURA_APPLIED",
   SPELL_HEAL           = "SPELL_HEAL",
   SPELL_PERIODIC_HEAL  = "SPELL_PERIODIC_HEAL",
   UNIT_DIED            = "UNIT_DIED",

@@ -445,6 +445,10 @@ C_Map = {
   GetBestMapForUnit = function() return 1 end,
   GetMapInfo = function(mapId) return { mapID = mapId, name = "Elwynn Forest" } end,
 }
+-- Present but showing nobody, which is the state a player in an empty field is in:
+-- the sweep runs on every tick of every pull below and enrols nothing, so the pulls
+-- these steps assert about are built from the combat log alone.
+C_NamePlate = { GetNamePlates = function() return {} end }
 C_Seasons = { GetActiveSeason = function() return 0 end }
 C_GameRules = {}
 C_Spell = {}
@@ -1716,7 +1720,8 @@ step("the diagnostic names what it probed, not only what was missing", function(
   local mark = #chatLines + 1
   SlashCmdList["ASCENT"]("debug")
 
-  for _, name in ipairs({ "creature_level", "map_position", "quest_reward_on_turn_in", "settings_canvas" }) do
+  for _, name in ipairs({ "creature_level", "map_position", "quest_reward_on_turn_in",
+    "settings_canvas", "nameplates" }) do
     if chatSince(mark, "capability " .. name) == nil then
       error("the diagnostic never reported the capability " .. name)
     end
@@ -1728,6 +1733,9 @@ step("the diagnostic names what it probed, not only what was missing", function(
   end
   if chatSince(mark, "capability creature_level: absent") == nil then
     error("creature_level should be absent against this stand-in")
+  end
+  if chatSince(mark, "capability nameplates: present") == nil then
+    error("nameplates should be present against this stand-in")
   end
 end)
 

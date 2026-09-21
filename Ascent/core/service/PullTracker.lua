@@ -155,6 +155,7 @@ function PullTracker.new(options)
   on(EventTopic.XP_ATTRIBUTED, PullTracker.onXpAttributed)
   on(EventTopic.CREATURE_DIED, PullTracker.onCreatureDied)
   on(EventTopic.ABILITY_USED, PullTracker.onAbilityUsed)
+  on(EventTopic.ENEMY_ENGAGED, PullTracker.onEnemyEngaged)
   on(EventTopic.DAMAGE_DEALT, PullTracker.onDamageDealt)
   on(EventTopic.DAMAGE_TAKEN, PullTracker.onDamageTaken)
   on(EventTopic.HEALING_RECEIVED, PullTracker.onHealingReceived)
@@ -334,6 +335,28 @@ function PullTracker:onAbilityUsed(payload)
   self.changed = true
 end
 
+-- Who is in this fight, which is a different question from who has been hurt in
+-- it. A creature that charged the player, swung and missed belongs in the pull --
+-- and so does one the player has not hit back yet, which is the whole of the
+-- defect this answers: the plate used to count what the player had damaged, so a
+-- fight the player did not start read as a fight against nobody.
+function PullTracker:onEnemyEngaged(payload)
+  if payload.name == nil then
+    return
+  end
+  local pull = self:recording()
+  if pull == nil then
+    -- The same prelude as the opening shot, from the other end: the swing that
+    -- announces an ambush lands before the client agrees there is a fight.
+    if self:isEnabled() then
+      self:remember(EventTopic.ENEMY_ENGAGED, payload, self.clock:now())
+    end
+    return
+  end
+  pull:recordEngagement(payload.name, payload.guid)
+  self.changed = true
+end
+
 function PullTracker:onDamageDealt(payload)
   if payload.amount == nil then
     return
@@ -355,11 +378,21 @@ function PullTracker:onDamageDealt(payload)
 end
 
 function PullTracker:onDamageTaken(payload)
-  local pull = self:recording()
-  if pull == nil or payload.amount == nil then
+  if payload.amount == nil then
     return
   end
-  pull:recordDamageTaken(payload.amount)
+  local pull = self:recording()
+  if pull == nil then
+    -- The prelude, from the other side. An ambush lands its first blow before the
+    -- client says you are in combat, and that blow is the only thing naming the
+    -- creature that started it -- so it waits in the same buffer as the shot that
+    -- opens a pull the player chose.
+    if self:isEnabled() then
+      self:remember(EventTopic.DAMAGE_TAKEN, payload, self.clock:now())
+    end
+    return
+  end
+  pull:recordDamageTaken(payload.amount, payload.name, payload.guid)
   self.changed = true
 end
 
@@ -441,5 +474,7 @@ end
 -- from what the tracker would have recorded had the client been quicker.
 PRELUDE_TOPICS[ns.core.EventTopic.ABILITY_USED] = PullTracker.onAbilityUsed
 PRELUDE_TOPICS[ns.core.EventTopic.DAMAGE_DEALT] = PullTracker.onDamageDealt
+PRELUDE_TOPICS[ns.core.EventTopic.DAMAGE_TAKEN] = PullTracker.onDamageTaken
+PRELUDE_TOPICS[ns.core.EventTopic.ENEMY_ENGAGED] = PullTracker.onEnemyEngaged
 
 ns.core.PullTracker = PullTracker
