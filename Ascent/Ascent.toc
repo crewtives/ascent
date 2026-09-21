@@ -103,14 +103,27 @@ core/service/PullViewModel.lua
 core/service/CopyReport.lua
 
 # --- adapter: compat -------------------------------------------------------
+adapter/compat/Compat.lua
+adapter/compat/Capabilities.lua
+adapter/compat/ClientXpBar.lua
 
 # Out of its own group on purpose: it is a dependency-free string utility that
 # both the inbound routers and the outbound quest log reader bind at load time,
 # and the client has no require() -- a file listed after its dependency binds nil.
+adapter/inbound/GlobalStringPattern.lua
 
 # --- adapter: outbound -----------------------------------------------------
+adapter/outbound/SavedVariablesRepository.lua
+adapter/outbound/WowClock.lua
+adapter/outbound/WowPlayerState.lua
+adapter/outbound/ChatLogger.lua
+adapter/outbound/QuestLogReader.lua
 
 # --- adapter: inbound ------------------------------------------------------
+adapter/inbound/WowEventRouter.lua
+adapter/inbound/CreatureGuid.lua
+adapter/inbound/CombatLogRouter.lua
+adapter/inbound/TimePlayedSync.lua
 
 # --- ui --------------------------------------------------------------------
 
