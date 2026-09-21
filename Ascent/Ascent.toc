@@ -1,0 +1,80 @@
+## Interface: 11509, 20506
+## Title: Ascent
+## Notes: Per-level leveling analytics. Where every point of experience came from, and how you played to earn it.
+## Notes-esES: Analítica de leveleo por nivel. De dónde salió cada punto de experiencia y cómo jugaste para conseguirlo.
+## Author: crewtives
+## Version: 0.1.0
+## SavedVariables: AscentDB
+## SavedVariablesPerCharacter: AscentCharDB
+## X-Category: Leveling
+## X-License: MIT
+## X-Curse-Project-ID: 1706237
+## DefaultState: enabled
+
+# Load order is explicit and layered. A file may only reference what loads above it.
+#
+#   1. core/       pure domain. Must never touch the WoW API (enforced by .luacheckrc).
+#   2. adapter/    translates between the client and the domain.
+#   3. ui/         consumes view-models built by core.
+#   4. locale/     localization tables.
+#   5. app/        composition root. The only file that sees all three layers.
+
+# --- core: constants -------------------------------------------------------
+core/constants/Frozen.lua
+core/constants/Xp.lua
+core/constants/Place.lua
+core/constants/Events.lua
+core/constants/Metrics.lua
+core/constants/Interface.lua
+core/constants/Runtime.lua
+core/constants/Settings.lua
+core/constants/Text.lua
+core/constants/Appearance.lua
+
+# --- core: model -----------------------------------------------------------
+core/model/Guard.lua
+core/model/Stored.lua
+core/model/Packed.lua
+core/model/CreatureKey.lua
+core/model/PlaceKey.lua
+core/model/XpGain.lua
+core/model/AbilityUsage.lua
+core/model/QuestObjective.lua
+core/model/QuestForecast.lua
+core/model/CombatSummary.lua
+core/model/LevelRecord.lua
+core/model/PullRecord.lua
+
+# --- core: ports -----------------------------------------------------------
+core/port/Port.lua
+core/port/Clock.lua
+core/port/PlayerState.lua
+core/port/Repository.lua
+core/port/EventBus.lua
+core/port/Logger.lua
+core/port/Locale.lua
+
+# --- core: registries ------------------------------------------------------
+core/registry/SkinCatalog.lua
+core/registry/ClassifierRegistry.lua
+core/registry/XpClassifiers.lua
+core/registry/MetricRegistry.lua
+
+# --- core: services --------------------------------------------------------
+core/service/EventBus.lua
+
+# --- adapter: compat -------------------------------------------------------
+
+# Out of its own group on purpose: it is a dependency-free string utility that
+# both the inbound routers and the outbound quest log reader bind at load time,
+# and the client has no require() -- a file listed after its dependency binds nil.
+
+# --- adapter: outbound -----------------------------------------------------
+
+# --- adapter: inbound ------------------------------------------------------
+
+# --- ui --------------------------------------------------------------------
+
+# --- locale ----------------------------------------------------------------
+
+# --- app: composition root -------------------------------------------------

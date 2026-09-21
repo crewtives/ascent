@@ -1,0 +1,17 @@
+-- Ascent - Clock port.
+--
+-- Two clocks, because they answer different questions and mixing them is how a
+-- level ends up claiming it took nine hours because the player went to bed.
+
+local _, ns = ...
+ns.core = ns.core or {}
+
+ns.core.Clock = ns.core.Port.define("Clock", {
+  now = "Monotonic seconds since the client started. Use for measuring durations "
+     .. "inside a session. Unaffected by /reload or by returning to the character "
+     .. "select screen, and meaningless across sessions.",
+
+  timestamp = "Seconds since the epoch. Use for instants that get persisted, such "
+           .. "as when a level started. Never use it to measure a duration: the "
+           .. "player's clock can move.",
+})
