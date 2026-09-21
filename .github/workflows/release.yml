@@ -33,6 +33,15 @@ jobs:
   release:
     needs: gates
     runs-on: ubuntu-latest
+    # One repository publishes, and it is the one people clone. This file travels
+    # to both -- it is not excluded from a publication and should not be, since the
+    # shop window is where it has to run -- and it fires on any `v*` tag, so
+    # without this line whichever repository happened to receive the tag would be
+    # the one that published. That is how 0.1.0 went out from the workshop.
+    #
+    # The gates above deliberately run in both: a tag is a fine reason to check a
+    # tree anywhere. It is publishing that has one home.
+    if: github.repository == 'crewtives/ascent'
     # Only for the GitHub release below. The CurseForge upload authenticates with
     # its own token and needs nothing from here.
     permissions:
