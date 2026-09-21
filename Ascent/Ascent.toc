@@ -62,6 +62,19 @@ core/registry/MetricRegistry.lua
 
 # --- core: services --------------------------------------------------------
 core/service/EventBus.lua
+core/service/KillCorrelator.lua
+core/service/XpAttribution.lua
+core/service/XpLedger.lua
+core/service/RecordStore.lua
+core/service/RetentionPolicy.lua
+core/service/QuestNames.lua
+core/service/QuestForecastService.lua
+core/service/LevelTracker.lua
+core/service/SessionXpTracker.lua
+core/service/ProgressEstimator.lua
+core/service/KillXpEstimator.lua
+core/service/QuestPendingViewModel.lua
+core/service/PlaceTimeCollector.lua
 
 # --- adapter: compat -------------------------------------------------------
 
