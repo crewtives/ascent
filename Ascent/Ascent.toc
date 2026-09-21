@@ -126,7 +126,18 @@ adapter/inbound/CombatLogRouter.lua
 adapter/inbound/TimePlayedSync.lua
 
 # --- ui --------------------------------------------------------------------
+ui/Effects.lua
+ui/BarRenderer.lua
+ui/XpBarView.lua
+ui/BarPreview.lua
+ui/RowList.lua
+ui/PullPlateView.lua
+ui/ReportPanelView.lua
+ui/CopyDialog.lua
+ui/OptionsPanel.lua
 
 # --- locale ----------------------------------------------------------------
+locale/enUS.lua
+locale/LocaleTable.lua
 
 # --- app: composition root -------------------------------------------------
