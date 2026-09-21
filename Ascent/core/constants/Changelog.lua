@@ -12,6 +12,27 @@ ns.core = ns.core or {}
 
 ns.core.CHANGELOG = {
   {
+    version = "0.2.0",
+    date = "2026-09-22",
+    lines = {
+      "Still a beta. What changed about that: the addon has now been played through a complete level and the sources added up to exactly the experience of it, which is one level more than could be said when 0.1.0 shipped. Every fix below came out of reading the file that session left behind.",
+      "",
+      "Added",
+      "- Knowing that a newer version exists. An addon cannot make a network request, so the only possible source is other players: Ascent announces its version over the addon channel to your guild and your group, and listens for theirs. It does not believe a single one — the contents of those messages are written by somebody else's client and can be forged — so it takes three distinct players announcing the same later version before it says anything, and it says it once per session. It sends far below what the client allows, never retries a rejection, and never answers somebody else's announcement with one of its own.",
+      "- /ascent changelog, which shows what changed without leaving the game, headed by the version you are running and as selectable text. It is generated from this file when the addon is packaged, so it cannot tell you anything else.",
+      "- A notice when the version changes. On login the addon says whether it was updated. And if you went back to an earlier version, it says what used to happen in silence: the history written by the later version is set aside, not deleted, because a migration only ever walks forward.",
+      "- A switch under Interface → AddOns to turn it off, which silences both halves: it stops telling you, and it stops announcing.",
+      "",
+      "Changed",
+      "- The session recorder moved inside debug: what was /ascent evidence on|off|reset is now /ascent debug evidence on|off|reset. The addon's diagnostics are reached through one door, which is the same reason the three separate dumps it used to have were folded into one. The help was also still offering debug quests and debug strings, gone since that merge.",
+      "",
+      "Fixed",
+      "- The rested bonus was counted twice. The figure the client prints in parentheses was credited to its own kill, and then again to the first kill behind it that carried no parentheses at all: with nothing to read there, the addon inferred the bonus from how far the rested reserve had fallen, and that reading is taken from the chat line — which the client prints BEFORE applying the experience — so it described the previous kill. A line that does not mention rest now means zero, which is what it means. Levels already on disk keep the inflated figure: the correction applies from here on and does not rewrite your history.",
+      "- A level could end up labelled with the name of a building. A place is identified by its map, but it was shown with the name the client gave the zone at that instant, and inside a building that name is the building's while the map underneath stays the zone's. Because a place only adopts a name it was missing, the first one to arrive stayed for good: a whole level spent across Eversong Woods could read as “Duskwither Spire”. The name comes from the map now, one name per place.",
+      "- The session recorder did not say which level had completed. It noted that one had, and left the number blank, because it was reading the level in the wrong place.",
+    },
+  },
+  {
     version = "0.1.0",
     date = "2026-09-21",
     lines = {

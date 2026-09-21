@@ -5,47 +5,53 @@ All notable changes to Ascent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-22
+
+Still a beta. What changed about that: the addon has now been played through a complete level and the
+sources added up to exactly the experience of it, which is one level more than could be said when
+0.1.0 shipped. Every fix below came out of reading the file that session left behind.
 
 ### Added
 
-- **Saber que hay una versión más nueva.** Un addon no puede hacer peticiones de red, así que la única fuente
-  posible son los demás jugadores: Ascent anuncia su versión por el canal de addons a la hermandad y al grupo,
-  y escucha las de los demás. No se cree a uno solo —el contenido de esos mensajes lo escribe el cliente ajeno
-  y se puede falsificar—, así que hacen falta tres jugadores distintos anunciando la misma versión posterior
-  antes de decir nada, y lo dice una vez por sesión. Envía muy por debajo de lo que el cliente permite, no
-  reintenta un rechazo y nunca responde a un anuncio ajeno con otro.
-- **`/ascent changelog`**, que muestra qué cambió sin salir del juego, con la versión en ejecución arriba y
-  como texto seleccionable. Se genera desde este mismo archivo al empaquetar, así que no puede contar otra
-  cosa.
-- **Aviso al cambiar de versión.** Al entrar, el addon dice si se actualizó. Y si se volvió a una versión
-  anterior, dice lo que hasta ahora pasaba en silencio: el historial escrito por la versión posterior queda
-  **apartado, no borrado**, porque una migración sólo camina hacia adelante.
-- **Un interruptor** en Interface → AddOns para apagarlo, que silencia las dos mitades: deja de avisar y deja
-  de anunciar.
+- **Knowing that a newer version exists.** An addon cannot make a network request, so the only
+  possible source is other players: Ascent announces its version over the addon channel to your guild
+  and your group, and listens for theirs. It does not believe a single one — the contents of those
+  messages are written by somebody else's client and can be forged — so it takes three distinct
+  players announcing the same later version before it says anything, and it says it once per session.
+  It sends far below what the client allows, never retries a rejection, and never answers somebody
+  else's announcement with one of its own.
+- **`/ascent changelog`**, which shows what changed without leaving the game, headed by the version you
+  are running and as selectable text. It is generated from this file when the addon is packaged, so it
+  cannot tell you anything else.
+- **A notice when the version changes.** On login the addon says whether it was updated. And if you
+  went back to an earlier version, it says what used to happen in silence: the history written by the
+  later version is **set aside, not deleted**, because a migration only ever walks forward.
+- **A switch** under Interface → AddOns to turn it off, which silences both halves: it stops telling
+  you, and it stops announcing.
 
 ### Changed
 
-- **El grabador de sesión pasa a vivir dentro de `debug`**: lo que era `/ascent evidence on|off|reset` ahora es
-  `/ascent debug evidence on|off|reset`. El diagnóstico del addon se consulta por una sola puerta, que es la
-  misma razón por la que antes se fundieron en una los tres volcados que había. La ayuda además dejaba de
-  ofrecer `debug quests` y `debug strings`, que ya no existían desde aquella fusión.
+- **The session recorder moved inside `debug`**: what was `/ascent evidence on|off|reset` is now
+  `/ascent debug evidence on|off|reset`. The addon's diagnostics are reached through one door, which is
+  the same reason the three separate dumps it used to have were folded into one. The help was also
+  still offering `debug quests` and `debug strings`, gone since that merge.
 
 ### Fixed
 
-- **El bonus de descanso se contaba dos veces.** La cifra del paréntesis se acreditaba a su muerte, y después
-  otra vez a la primera muerte sin descanso que viniera detrás. Al no ver paréntesis, el addon deducía el
-  bonus de cuánto había bajado la reserva, y esa lectura se toma de la línea de chat —que el cliente imprime
-  **antes** de aplicar la experiencia—, así que describía la muerte anterior. Una línea que no menciona el
-  descanso ahora significa cero, que es lo que significa. Los niveles ya guardados conservan la cifra
-  inflada: la corrección va hacia adelante y no reescribe el historial.
-- **Un nivel podía quedar etiquetado con el nombre de un interior.** El lugar se identifica por su mapa, pero
-  se mostraba con el nombre que el cliente daba a la zona en ese instante, y dentro de un edificio ese nombre
-  es el del edificio mientras el mapa sigue siendo el de la zona. Como un lugar sólo adopta el nombre que le
-  faltaba, el primero en llegar se quedaba para siempre: un nivel entero de Eversong Woods podía leerse como
-  «Duskwither Spire». Ahora el nombre lo da el mapa, uno por identidad.
-- **El grabador de sesión no decía qué nivel se había cerrado.** Anotaba que uno se completó y dejaba el
-  número en blanco, porque leía el nivel en el sitio equivocado del aviso.
+- **The rested bonus was counted twice.** The figure the client prints in parentheses was credited to
+  its own kill, and then again to the first kill behind it that carried no parentheses at all: with
+  nothing to read there, the addon inferred the bonus from how far the rested reserve had fallen, and
+  that reading is taken from the chat line — which the client prints BEFORE applying the experience
+  — so it described the previous kill. A line that does not mention rest now means zero, which is
+  what it means. Levels already on disk keep the inflated figure: the correction applies from here on
+  and does not rewrite your history.
+- **A level could end up labelled with the name of a building.** A place is identified by its map, but
+  it was shown with the name the client gave the zone at that instant, and inside a building that name
+  is the building's while the map underneath stays the zone's. Because a place only adopts a name it
+  was missing, the first one to arrive stayed for good: a whole level spent across Eversong Woods could
+  read as “Duskwither Spire”. The name comes from the map now, one name per place.
+- **The session recorder did not say which level had completed.** It noted that one had, and left the
+  number blank, because it was reading the level in the wrong place.
 
 ## [0.1.0] - 2026-09-21
 
@@ -106,4 +112,5 @@ only way anything from your game can reach the author, since an addon cannot mak
 - **Flavour compatibility** resolved at runtime: only the collectors the client supports are
   registered, and `/ascent debug` reports which capabilities are present and which are not.
 
+[0.2.0]: https://github.com/crewtives/ascent/releases/tag/v0.2.0
 [0.1.0]: https://github.com/crewtives/ascent/releases/tag/v0.1.0
