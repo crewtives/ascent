@@ -72,9 +72,19 @@ core/service/QuestForecastService.lua
 core/service/LevelTracker.lua
 core/service/SessionXpTracker.lua
 core/service/ProgressEstimator.lua
+core/service/CombatBreakdownViewModel.lua
+core/service/AbilityRankingViewModel.lua
 core/service/KillXpEstimator.lua
 core/service/QuestPendingViewModel.lua
+core/service/AbilityUsageCollector.lua
+core/service/CombatOutcomeCollector.lua
+core/service/DeathCollector.lua
+core/service/CombatTimeCollector.lua
 core/service/PlaceTimeCollector.lua
+core/service/DamageCollector.lua
+core/service/CombatAggregator.lua
+core/service/PullTracker.lua
+core/service/PullViewModel.lua
 
 # --- adapter: compat -------------------------------------------------------
 
