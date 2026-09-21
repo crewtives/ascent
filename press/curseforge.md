@@ -169,7 +169,7 @@ send it.
   nothing beside it, 115 entries, 904 KB, no `test/` file at all, and the 100 packaged `.lua` files
   match the 100 the TOC lists one for one. That is the shape CurseForge expects, so the upload needs
   no repackaging step of its own — build it the same way on the day.
-- **Release type**: **Beta**. Not Release until the in-client verification in `openspec/` is done.
+- **Release type**: **Beta**. Not Release until the in-client verification is done.
 - **Game versions**: tick both — Classic Era 1.15.x and Burning Crusade 2.5.x. The TOC declares
   `## Interface: 11509, 20506` from one file. If the CurseForge app installs it into only one
   flavour's folder, the fix is the standard one: split into `Ascent_Vanilla.toc` and `Ascent_TBC.toc`

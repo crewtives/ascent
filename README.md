@@ -113,8 +113,8 @@ it, two ranks of one spell listed as two abilities, a row of zeroes for a place 
 What the sessions have **not** done yet is the whole of it. `ui/` has no unit coverage — the only thing
 that exercises it is a load harness against a stand-in client — the smoke checklist has not been run
 end to end on either flavour, and the central promise, that the sources add up to exactly the level,
-has been confirmed level by level rather than across a full 1–60. The plan that tracks what remains
-lives in `openspec/`, and the in-client verification each task still owes is written into it.
+has been confirmed level by level rather than across a full 1–60. What remains is tracked task by task,
+each one carrying the in-client verification it still owes.
 
 Treat it as an early beta: worth levelling with if you want to help find the rest, not yet something to
 rely on.

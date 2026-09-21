@@ -27,10 +27,9 @@ manual-changelog:
     filename: CHANGELOG.md
     markup-type: markdown
 
-# Everything that is repository, not addon. Two matter more than the rest:
-# `Ascent/test` is INSIDE the packaged folder and must never ship, and `openspec`
-# is the entire plan of the project -- proposals, designs, task lists -- which has
-# no business on a player's disk.
+# Everything that is repository, not addon. The one that matters most is
+# `Ascent/test`: it sits INSIDE the packaged folder, so it is the only entry here
+# that a careless zip would actually pick up.
 ignore:
     - Ascent/test
     - openspec
