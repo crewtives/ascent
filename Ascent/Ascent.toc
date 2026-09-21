@@ -72,10 +72,25 @@ core/service/QuestForecastService.lua
 core/service/LevelTracker.lua
 core/service/SessionXpTracker.lua
 core/service/ProgressEstimator.lua
+core/service/Composition.lua
+core/service/XpBarViewModel.lua
+core/service/LevelBreakdownViewModel.lua
 core/service/CombatBreakdownViewModel.lua
 core/service/AbilityRankingViewModel.lua
 core/service/KillXpEstimator.lua
 core/service/QuestPendingViewModel.lua
+core/service/LevelHistoryViewModel.lua
+core/service/ReportPanelViewModel.lua
+core/service/RebuildGate.lua
+core/service/Easing.lua
+core/service/BarTween.lua
+core/service/Pulse.lua
+core/service/BarGeometry.lua
+core/service/BarSlotPolicy.lua
+core/service/SkinResolver.lua
+core/service/XpBarText.lua
+core/service/BarTextFields.lua
+core/service/RedrawScheduler.lua
 core/service/AbilityUsageCollector.lua
 core/service/CombatOutcomeCollector.lua
 core/service/DeathCollector.lua
@@ -85,6 +100,7 @@ core/service/DamageCollector.lua
 core/service/CombatAggregator.lua
 core/service/PullTracker.lua
 core/service/PullViewModel.lua
+core/service/CopyReport.lua
 
 # --- adapter: compat -------------------------------------------------------
 
