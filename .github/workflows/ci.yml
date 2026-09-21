@@ -1,0 +1,44 @@
+# The three gates the project already runs locally, run again on every push so a
+# green tree is a fact rather than a claim. Same commands as ./dev.sh, because a
+# CI that runs something else is a CI that can disagree with the developer.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  gates:
+    name: lint, test, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Distribution packages rather than a Lua-version action: the action's
+      # luajit builds are fetched from a release archive and the one this needed
+      # answered 404, which is a dependency on somebody else's hosting for a
+      # toolchain apt already has.
+      #
+      # ONE DIFFERENCE FROM A DEVELOPER'S MACHINE, on purpose and worth knowing:
+      # busted lands in the Lua 5.1 rock tree and runs the suite on PUC Lua 5.1,
+      # while locally it runs on LuaJIT. Both are 5.1 semantics and the suite
+      # asserts _VERSION, so a wrong interpreter still fails loudly -- but a
+      # LuaJIT-specific difference would show up locally, not here. The smoke
+      # harness below does run on real LuaJIT, which is where the addon's own
+      # load-order behaviour is exercised.
+      - name: install the lua toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            luajit lua5.1 liblua5.1-0-dev luarocks
+          sudo luarocks --lua-version=5.1 install busted
+          sudo luarocks --lua-version=5.1 install luacheck
+          luajit -v
+          busted --version
+          luacheck --version
+
+      - run: ./dev.sh lint
+      - run: ./dev.sh test
+      - run: ./dev.sh smoke

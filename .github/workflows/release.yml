@@ -1,0 +1,70 @@
+# Cut a release and hand it to CurseForge.
+#
+# Tagging is the whole interface: `git tag v0.1.0 && git push --tags` builds the
+# zip and uploads it as a beta. The release type can be raised by hand from the
+# Actions tab when a version is ready to stop being one.
+#
+# Nothing about the release is described twice. The version, the supported
+# clients and the release notes all come out of files that already had to be
+# right -- the TOC and CHANGELOG.md -- so a release cannot disagree with the
+# addon it contains.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: What to publish this as
+        type: choice
+        default: beta
+        options: [alpha, beta, release]
+
+env:
+  # Public: it is the number in the project's own authors.curseforge.com URL.
+  # The token that goes with it is a repository secret.
+  CF_PROJECT_ID: "1706237"
+
+jobs:
+  gates:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag that disagrees with the TOC ships a zip whose insides say a
+      # different version than its name -- which is the one packaging mistake
+      # nobody notices until a user reports a bug against a version that does
+      # not exist.
+      - name: the tag agrees with the TOC
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared="$(sed -n 's/^## Version: *//p' Ascent/Ascent.toc | head -1 | tr -d '\r')"
+          if [ "$tagged" != "$declared" ]; then
+            echo "tag $GITHUB_REF_NAME says $tagged, the TOC says $declared" >&2
+            exit 1
+          fi
+          echo "both say $declared"
+
+      - name: build the zip
+        run: ./dev.sh package
+
+      # Kept on the run itself, so the exact artefact that went to CurseForge can
+      # be downloaded and compared later.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: addon-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: upload to CurseForge
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          ./tools/curseforge-upload.sh \
+            --release-type "${{ github.event.inputs.release_type || 'beta' }}"
