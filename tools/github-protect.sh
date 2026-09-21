@@ -28,7 +28,10 @@ REPO="${1:-crewtives/ascent}"
 #                                 one approving review, the code owner's review,
 #                                 and every conversation resolved. A new push
 #                                 dismisses stale approvals -- an approval is of
-#                                 a diff, not of a person.
+#                                 a diff, not of a person -- and whoever pushed
+#                                 last cannot be the one who approves it, so a
+#                                 future collaborator cannot wave their own work
+#                                 through.
 #   required_status_checks        the three gates (lint, test, smoke) have to be
 #                                 green, against an up-to-date branch. `strict`
 #                                 is what stops two pull requests that each pass
@@ -54,7 +57,7 @@ read -r -d '' RULESET <<'JSON' || true
         "required_approving_review_count": 1,
         "dismiss_stale_reviews_on_push": true,
         "require_code_owner_review": true,
-        "require_last_push_approval": false,
+        "require_last_push_approval": true,
         "required_review_thread_resolution": true,
         "allowed_merge_methods": ["squash"]
       }
