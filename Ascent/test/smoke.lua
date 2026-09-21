@@ -480,6 +480,10 @@ AscentDB = {
   settings = {
     bar_skin = "cartographer",
     high_contrast = true,
+    -- A version older than any this addon will ever be, so the composition root
+    -- takes the "you updated" branch on the way up. It is the only way to see
+    -- that path from here: the notice is decided once, while the addon loads.
+    last_seen_version = "0.0.1",
     bar_colors = {
       -- Saved by the client's colour picker, which writes r/g/b and no alpha.
       -- Every reader has to complete it, and this is the only place that says so.
@@ -2816,6 +2820,112 @@ step("the options panel offers the same report the command does", function()
 
   if not dialog.shown then
     error("the button did not open the report")
+  end
+end)
+
+-- THE VERSION CHECK, driven from the composition root.
+--
+-- The channel itself is covered by its own spec against a stand-in client; what
+-- can only be seen from here is the wiring: that the command exists, that the
+-- window opens, and that a client with no addon channel at all -- which is
+-- exactly what this harness is -- loads anyway and says what it turned off.
+
+step("a client with no addon channel loads, and names what it turned off", function()
+  local mark = #chatLines + 1
+  slash("debug")
+
+  if chatSince(mark, "addon_messages") == nil then
+    error("the diagnostic does not mention the addon message channel at all")
+  end
+  local missing = chatSince(mark, "missing capabilities")
+  if missing == nil or not missing:find("addon_messages", 1, true) then
+    error("this harness defines no C_ChatInfo, so the channel must read as missing: "
+      .. tostring(missing))
+  end
+end)
+
+step("an update announces itself once, and is remembered", function()
+  local said
+  for _, line in ipairs(chatLines) do
+    if line:find("updated to ", 1, true) then
+      said = line
+    end
+  end
+  if said == nil then
+    error("loading over an older remembered version said nothing about it")
+  end
+
+  -- Remembered, or the same notice would greet the player on every login.
+  local remembered = AscentDB.settings.last_seen_version
+  if remembered == nil or remembered == "0.0.1" then
+    error("the version in hand was not written back: " .. tostring(remembered))
+  end
+  if not said:find(remembered, 1, true) then
+    error(("the notice named a different version than the one remembered: %s vs %s")
+      :format(said, remembered))
+  end
+end)
+
+step("the help names the changelog, because a command not in it does not exist", function()
+  local mark = #chatLines + 1
+  slash("help")
+
+  if chatSince(mark, "changelog") == nil then
+    error("the help does not offer the changelog")
+  end
+end)
+
+step("the changelog opens as text, headed by the version being played", function()
+  local dialog = _G["AscentCopyDialog"]
+  if dialog ~= nil then dialog.shown = false end
+
+  slash("changelog")
+
+  dialog = _G["AscentCopyDialog"]
+  if dialog == nil or not dialog.shown then
+    error("no window was opened for the changelog")
+  end
+
+  local text
+  for _, frame in ipairs(frames) do
+    if frame.kind == "EditBox" and frame.text ~= nil then
+      text = frame.text
+    end
+  end
+  if text == nil or not text:find("what changed", 1, true) then
+    error("the window did not open on the changelog: " .. tostring(text and text:sub(1, 80)))
+  end
+  -- Generated from CHANGELOG.md at build time, so the version in the TOC has to
+  -- be in there. If this fails, the embedded changelog and the build disagree.
+  if not text:find("running ", 1, true) then
+    error("the changelog does not say which build this is")
+  end
+end)
+
+step("the update check can be switched off from the options, both halves at once", function()
+  local check = _G["AscentOptionsUpdateCheckCheckButton"]
+  if check == nil then
+    error("the behaviour page has no switch for the update check")
+  end
+
+  local onClick = check:GetScript("OnClick")
+  if onClick == nil then
+    error("the switch was built without a handler")
+  end
+
+  -- Off, and the composition root has to have applied it to the watch itself --
+  -- not merely stored it -- or the addon would keep announcing after being told
+  -- to stop (design D74).
+  check.checked = false
+  onClick(check)
+  if context.settings()[ns.core.SettingKey.UPDATE_CHECK] ~= false then
+    error("switching it off did not reach the settings")
+  end
+
+  check.checked = true
+  onClick(check)
+  if context.settings()[ns.core.SettingKey.UPDATE_CHECK] ~= true then
+    error("switching it back on did not reach the settings")
   end
 end)
 

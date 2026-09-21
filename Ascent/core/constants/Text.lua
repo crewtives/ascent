@@ -182,6 +182,7 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   OPTIONS_SHOW_PENDING = "options_show_pending",
   OPTIONS_COLLECT_DAMAGE = "options_collect_damage",
   OPTIONS_DEBUG       = "options_debug",
+  OPTIONS_UPDATE_CHECK = "options_update_check",
   OPTIONS_SCALE       = "options_scale",
 
   -- Chat commands: help
@@ -196,6 +197,7 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   CMD_HELP_RESET      = "cmd_help_reset",
   CMD_HELP_DEBUG      = "cmd_help_debug",
   CMD_HELP_DEMO       = "cmd_help_demo",
+  CMD_HELP_CHANGELOG  = "cmd_help_changelog",
 
   -- Chat commands: output
   CMD_NO_LEVEL        = "cmd_no_level",
@@ -213,6 +215,14 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   CMD_QUESTS_OBJECTIVES = "cmd_quests_objectives",
   CMD_STRINGS_DUMPED  = "cmd_strings_dumped",
   CMD_DEBUG_FIRST     = "cmd_debug_first",
+
+  -- Versions: what the addon says about its own, and about other people's.
+  UPDATE_AVAILABLE    = "update_available",
+  UPDATE_INSTALLED    = "update_installed",
+  UPDATE_DOWNGRADED   = "update_downgraded",
+  CHANGELOG_HEADER    = "changelog_header",
+  CHANGELOG_RUNNING   = "changelog_running",
+  CHANGELOG_MISSING   = "changelog_missing",
 
   -- Chat commands: refusals
   CMD_BAD_SCALE       = "cmd_bad_scale",

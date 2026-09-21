@@ -40,6 +40,16 @@ ns.core.SettingKey = Frozen.enum("SettingKey", {
   -- A setting rather than a command because the request fires during the
   -- loading screen, so nothing typed afterwards could precede it.
   TIME_SYNC          = "time_sync",
+  -- The peer version check, and what it remembers between sessions. Both live in
+  -- the ACCOUNT settings and not per character: a player updates the addon once,
+  -- not once per alt, and the upgrade notice would otherwise fire on every one of
+  -- them (D72).
+  UPDATE_CHECK       = "update_check",
+  -- The version this addon last ran as. Empty means "never seen", which is what a
+  -- fresh install reads as -- and why the default is a string rather than nil: a
+  -- key with no default is a key `Settings.resolve` drops and `unknownKeys`
+  -- reports as junk.
+  LAST_SEEN_VERSION  = "last_seen_version",
   DEBUG              = "debug",
 })
 

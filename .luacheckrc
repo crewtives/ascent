@@ -51,6 +51,10 @@ local WOW_API = {
   -- world and group context
   "GetRealmName", "GetZoneText", "GetSubZoneText", "GetInstanceInfo", "IsInInstance",
   "IsInGroup", "IsInRaid", "GetNumGroupMembers", "C_Map", "C_Seasons", "C_GameRules",
+  "IsInGuild", "LE_PARTY_CATEGORY_INSTANCE",
+  -- addon messages: the only API this addon uses to reach another client, and the
+  -- only way "is there a newer version?" can be answered without a network request
+  "C_ChatInfo",
   -- spells
   "GetSpellInfo", "GetSpellTexture", "C_Spell",
   -- frames and widgets
@@ -125,3 +129,9 @@ files["Ascent/test/**/*.lua"]    = { std = "lua51+busted", globals = { "AscentTe
 -- entire job, so the rule that protects every other file would only get in the way.
 files["Ascent/test/smoke.lua"]  = { std = "lua51", allow_defined_top = true, max_line_length = false,
   ignore = { "11", "12", "13", "14", "21", "43", "63" } }
+-- The changelog is GENERATED from CHANGELOG.md (tools/changelog.lua) and its lines
+-- are prose, not code: one entry is a paragraph a person wrote. Wrapping them to
+-- 120 columns would mean the generator deciding where a sentence breaks, and the
+-- client re-wraps the text to the window anyway. `./dev.sh lint` checks this file
+-- a better way -- by regenerating it and diffing.
+files["Ascent/core/constants/Changelog.lua"] = { max_line_length = false }

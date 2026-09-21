@@ -5,6 +5,25 @@ All notable changes to Ascent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Saber que hay una versión más nueva.** Un addon no puede hacer peticiones de red, así que la única fuente
+  posible son los demás jugadores: Ascent anuncia su versión por el canal de addons a la hermandad y al grupo,
+  y escucha las de los demás. No se cree a uno solo —el contenido de esos mensajes lo escribe el cliente ajeno
+  y se puede falsificar—, así que hacen falta tres jugadores distintos anunciando la misma versión posterior
+  antes de decir nada, y lo dice una vez por sesión. Envía muy por debajo de lo que el cliente permite, no
+  reintenta un rechazo y nunca responde a un anuncio ajeno con otro.
+- **`/ascent changelog`**, que muestra qué cambió sin salir del juego, con la versión en ejecución arriba y
+  como texto seleccionable. Se genera desde este mismo archivo al empaquetar, así que no puede contar otra
+  cosa.
+- **Aviso al cambiar de versión.** Al entrar, el addon dice si se actualizó. Y si se volvió a una versión
+  anterior, dice lo que hasta ahora pasaba en silencio: el historial escrito por la versión posterior queda
+  **apartado, no borrado**, porque una migración sólo camina hacia adelante.
+- **Un interruptor** en Interface → AddOns para apagarlo, que silencia las dos mitades: deja de avisar y deja
+  de anunciar.
+
 ## [0.1.0] - 2026-09-21
 
 First public build, and an early beta rather than a finished thing: it has been played far less than

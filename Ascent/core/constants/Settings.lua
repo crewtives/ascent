@@ -43,6 +43,12 @@ ns.core.Defaults = Frozen.enum("Defaults", {
   },
 
   [SettingKey.COLLECT_DAMAGE] = true,
+
+  -- On: an addon this early is going to be corrected version by version, and a
+  -- player running a stale one reports bugs that were fixed weeks ago. Turning it
+  -- off silences BOTH halves -- the announcing and the warning (D74).
+  [SettingKey.UPDATE_CHECK] = true,
+  [SettingKey.LAST_SEEN_VERSION] = "",
   [SettingKey.SHOW_QUEST_PENDING] = true,
   [SettingKey.BAR_LOCKED] = false,
   [SettingKey.BAR_SCALE] = 1.0,

@@ -30,6 +30,8 @@ core/constants/Runtime.lua
 core/constants/Settings.lua
 core/constants/Text.lua
 core/constants/Appearance.lua
+core/constants/Update.lua
+core/constants/Changelog.lua
 
 # --- core: model -----------------------------------------------------------
 core/model/Guard.lua
@@ -38,6 +40,7 @@ core/model/Packed.lua
 core/model/CreatureKey.lua
 core/model/PlaceKey.lua
 core/model/XpGain.lua
+core/model/VersionNumber.lua
 core/model/AbilityUsage.lua
 core/model/QuestObjective.lua
 core/model/QuestForecast.lua
@@ -91,6 +94,9 @@ core/service/SkinResolver.lua
 core/service/XpBarText.lua
 core/service/BarTextFields.lua
 core/service/RedrawScheduler.lua
+core/service/SendBudget.lua
+core/service/UpdateWatch.lua
+core/service/ChangelogText.lua
 core/service/AbilityUsageCollector.lua
 core/service/CombatOutcomeCollector.lua
 core/service/DeathCollector.lua
@@ -124,6 +130,7 @@ adapter/inbound/WowEventRouter.lua
 adapter/inbound/CreatureGuid.lua
 adapter/inbound/CombatLogRouter.lua
 adapter/inbound/TimePlayedSync.lua
+adapter/inbound/VersionChannel.lua
 
 # --- ui --------------------------------------------------------------------
 ui/Effects.lua

@@ -181,6 +181,7 @@ ns.locale.tables.enUS = {
   [TextKey.OPTIONS_SHOW_PENDING]   = "Show pending experience from quests in progress",
   [TextKey.OPTIONS_COLLECT_DAMAGE] = "Collect damage data",
   [TextKey.OPTIONS_DEBUG]          = "Debug mode",
+  [TextKey.OPTIONS_UPDATE_CHECK]   = "Tell me when someone nearby is running a newer version",
   [TextKey.OPTIONS_SCALE]          = "Bar scale",
 
   [TextKey.CMD_HELP_HEADER]        = "Ascent commands:",
@@ -196,6 +197,7 @@ ns.locale.tables.enUS = {
                                   .. "attribution, places, quests and client strings. timesync on|off toggles "
                                   .. "the played-time request",
   [TextKey.CMD_HELP_DEMO]          = "step the bar through every visual state; off to stop",
+  [TextKey.CMD_HELP_CHANGELOG]     = "what changed, version by version",
 
   [TextKey.CMD_NO_LEVEL]           = "no level in progress (at the maximum level, or experience gain is disabled)",
   [TextKey.CMD_SUMMARY_HEADER]     = "level %d - %d / %s xp",
@@ -212,6 +214,21 @@ ns.locale.tables.enUS = {
   -- The two numbers differ only when the client words a kill objective in a way
   -- the template does not match, which is the one failure a suite cannot see.
   [TextKey.CMD_QUESTS_OBJECTIVES]  = "kill objectives: %d read of %d seen",
+  -- Says where the figure comes from, because the addon cannot check a server:
+  -- this is other players' clients talking, and the player should know that.
+  [TextKey.UPDATE_AVAILABLE]       = "version %s is out there - you are running %s. "
+                                  .. "(Seen from other players nearby; an addon cannot check for itself.)",
+  [TextKey.UPDATE_INSTALLED]       = "updated to %s. /ascent changelog for what it brings",
+  -- The one line in this addon that explains something which already happened
+  -- and was never reported: a history written by a newer build is archived on
+  -- load, not migrated backwards (D73).
+  [TextKey.UPDATE_DOWNGRADED]      = "this is %s, older than the %s you were running. "
+                                  .. "Level history written by the newer build has been set aside, "
+                                  .. "not deleted: install %s again to read it",
+  [TextKey.CHANGELOG_HEADER]       = "Ascent - what changed",
+  [TextKey.CHANGELOG_RUNNING]      = "running %s",
+  [TextKey.CHANGELOG_MISSING]      = "this build carries no changelog",
+
   [TextKey.CMD_STRINGS_DUMPED]     = "%d client strings dumped to AscentCharDB.globalStringDump "
                                   .. "(and to the debug log) -- /reload to write them to disk",
   [TextKey.CMD_DEBUG_FIRST]        = "turn debug on first: /ascent options debug on",

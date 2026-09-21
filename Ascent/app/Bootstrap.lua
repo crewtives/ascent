@@ -95,6 +95,11 @@ local ReportPanelView = ns.ui.ReportPanelView
 local OptionsPanel = ns.ui.OptionsPanel
 local CopyDialog = ns.ui.CopyDialog
 local CopyReport = ns.core.CopyReport
+-- The update check is reached through `ns` at the point of use rather than
+-- through file-local aliases like the lines above. Lua 5.1 allows a function 60
+-- upvalues and buildContext, which is this whole file, was already at 57: four
+-- more aliases is a SYNTAX error at load time, in the client, with nothing to
+-- read. Anything added here from now on has the same budget to respect.
 
 local LocaleTable = ns.locale.LocaleTable
 
@@ -296,6 +301,18 @@ local function buildContext()
   -- Gathered in one place because two paths need exactly the same environment:
   -- the one at startup, and the one the chat command takes when recording is
   -- switched on mid-session.
+  -- THE ADDON'S VERSION, READ ONCE, IN ONE PLACE.
+  --
+  -- Read through whichever accessor this client has. Three things now depend on
+  -- it -- the evidence file, the report header, and the update check -- and a
+  -- second declaration anywhere would be a build that reports one version and
+  -- compares another (spec addon-lifecycle, "Identidad del addon"). "unknown"
+  -- rather than nil: it is printed, and it must never read as a blank.
+  local addonVersion = (C_AddOns ~= nil and C_AddOns.GetAddOnMetadata ~= nil
+    and C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version"))
+    or (GetAddOnMetadata ~= nil and GetAddOnMetadata(ADDON_NAME, "Version"))
+    or "unknown"
+
   local function evidenceEnvironment()
     local templates = {}
     for _, entry in ipairs(eventRouter.patterns.xpFamily) do
@@ -305,13 +322,7 @@ local function buildContext()
       locale = GetLocale(),
       flavor = Compat.flavor(),
       maxLevel = Compat.maxLevel(),
-      -- Read through whichever accessor this client has: the addon's own version
-      -- is what tells apart evidence from two different builds, and a file that
-      -- cannot say which build produced it is worth much less.
-      addonVersion = (C_AddOns ~= nil and C_AddOns.GetAddOnMetadata ~= nil
-        and C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version"))
-        or (GetAddOnMetadata ~= nil and GetAddOnMetadata(ADDON_NAME, "Version"))
-        or "unknown",
+      addonVersion = addonVersion,
       xpTemplates = templates,
     }
   end
@@ -378,6 +389,28 @@ local function buildContext()
   capabilities:register("settings_canvas", function()
     return _G.Settings ~= nil and _G.Settings.RegisterCanvasLayoutCategory ~= nil
   end)
+  -- The addon channel. Absent, the addon loses exactly one thing -- hearing that
+  -- somebody nearby runs a newer build -- and keeps the changelog, the upgrade
+  -- notice and everything else. Named here so the diagnostic can say it was off.
+  capabilities:register("addon_messages", function() return ns.adapter.VersionChannel.isSupported() end)
+
+  -- THE VERSION CHECK. An addon cannot ask a server anything, so the only source
+  -- for "is there something newer" is the people already around the player. Three
+  -- pieces, and only the last one touches the client (design D64): what is newer
+  -- and who said so, how often this addon is allowed to speak, and the channel.
+  local updateWatch = ns.core.UpdateWatch.new({
+    version = addonVersion,
+    enabled = settings[SettingKey.UPDATE_CHECK],
+  })
+  ns.adapter.VersionChannel.new({
+    watch = updateWatch,
+    budget = ns.core.SendBudget.new({ clock = clock }),
+    -- The wording belongs here, where the locale is, and the threshold belongs to
+    -- the domain: by the time this runs, three distinct players have said it.
+    onNewer = function(version)
+      logger:info(locale:get(TextKey.UPDATE_AVAILABLE, version, tostring(addonVersion)))
+    end,
+  }):start()
 
   -- Every quest the addon can name, in one place for every surface that shows
   -- one. It is fed HERE, from both of the places a client ever says a name --
@@ -984,6 +1017,7 @@ local function buildContext()
     { "demo [off]", TextKey.CMD_HELP_DEMO },
     { "evidence [on|off|reset]", TextKey.CMD_HELP_EVIDENCE },
     { "copy [debug|summary|pending]", TextKey.CMD_HELP_COPY },
+    { "changelog", TextKey.CMD_HELP_CHANGELOG },
   }
 
   local function printHelp()
@@ -1474,6 +1508,24 @@ local function buildContext()
     }
   end
 
+  -- Built on first use: a player who never opens either window never pays a frame
+  -- for one, and a client that cannot build it costs the window rather than the
+  -- addon. Shared by the report and the changelog so there is one window, one
+  -- failure path, and one place that knows how to recover.
+  local function openWindow(text)
+    if copyDialog == nil then
+      local ok, built = pcall(CopyDialog.new, { locale = locale, settings = settings })
+      if not ok then
+        logger:warn(locale:get(TextKey.ERR_UI_FAILED, tostring(built)))
+        return false
+      end
+      copyDialog = built
+    end
+
+    copyDialog:show(text)
+    return true
+  end
+
   local COPY_SECTIONS = {
     debug = printDebug,
     summary = printSummary,
@@ -1497,25 +1549,36 @@ local function buildContext()
 
     local lines = logger:capture(printer)
 
-    if copyDialog == nil then
-      -- Built on first use: a player who never asks for a report never pays a
-      -- frame for one, and a client that cannot build the window costs the
-      -- window rather than the addon.
-      local ok, built = pcall(CopyDialog.new, { locale = locale, settings = settings })
-      if not ok then
-        logger:warn(locale:get(TextKey.ERR_UI_FAILED, tostring(built)))
-        -- The report was captured instead of printed, so without this the
-        -- diagnostics would vanish into a window that does not exist. Chat is
-        -- where they went before this command, and it is where they go now.
-        for _, line in ipairs(lines) do
-          logger:info(line)
-        end
-        return
+    if not openWindow(CopyReport.build({ header = reportHeader(), lines = lines })) then
+      -- The report was captured instead of printed, so without this the
+      -- diagnostics would vanish into a window that does not exist. Chat is
+      -- where they went before this command, and it is where they go now.
+      for _, line in ipairs(lines) do
+        logger:info(line)
       end
-      copyDialog = built
+    end
+  end
+
+  -- What changed, version by version, in the window that already knows how to
+  -- show text (design D71). The entries are generated from CHANGELOG.md at build
+  -- time, so this never parses markdown on a player's machine -- and a build
+  -- carrying none says so rather than opening empty.
+  local function handleChangelog()
+    local text = ns.core.ChangelogText.build(ns.core.CHANGELOG, addonVersion)
+    if text == nil then
+      logger:info(locale:get(TextKey.CHANGELOG_MISSING))
+      return
     end
 
-    copyDialog:show(CopyReport.build({ header = reportHeader(), lines = lines }))
+    local header = ("%s\n%s\n"):format(
+      locale:get(TextKey.CHANGELOG_HEADER),
+      locale:get(TextKey.CHANGELOG_RUNNING, tostring(addonVersion)))
+
+    if not openWindow(header .. "\n" .. text) then
+      -- No window, so the one thing worth saying goes to chat: which build this
+      -- is. The whole changelog there would be a wall nobody can scroll back to.
+      logger:info(locale:get(TextKey.CHANGELOG_RUNNING, tostring(addonVersion)))
+    end
   end
 
   -- The same door, opened from the options panel (which is built further down,
@@ -1523,6 +1586,10 @@ local function buildContext()
   -- context because `handleCopy` is a local defined just above: a closure written
   -- at line 919 would have captured a global nil instead.
   context.copyReport = function() handleCopy("") end
+  -- Applied live, in both directions: the watch stops counting reports AND the
+  -- channel stops announcing, because `announce` asks the same object whether it
+  -- speaks at all (design D74).
+  context.setUpdateCheck = function(enabled) updateWatch:enable(enabled) end
 
   SLASH_ASCENT1 = "/ascent"
   -- The commands that cannot do anything without a frame. Everything else --
@@ -1582,6 +1649,8 @@ local function buildContext()
       end
     elseif command == "copy" then
       handleCopy(rest)
+    elseif command == "changelog" then
+      handleChangelog()
     elseif command == "demo" then
       local sub = rest:lower()
       if sub == "off" or sub == "stop" then
@@ -1642,6 +1711,28 @@ local function buildContext()
   if context.optionsPages ~= nil then
     context.optionsCategory = registerOptionsPanel(context.optionsPages)
     optionsCategory = context.optionsCategory
+  end
+
+  -- WHAT CHANGED SINCE THE LAST SESSION. Last, so a session that had trouble
+  -- building its interface has already said so before this speaks.
+  --
+  -- The downgrade line is the only sentence in this addon that explains something
+  -- which ALREADY happened and was never reported: a history written by a newer
+  -- build cannot be migrated backwards, so RecordStore sets it aside on load
+  -- (core/service/RecordStore.lua). Until now the player just found it missing.
+  local lastSeen = settings[SettingKey.LAST_SEEN_VERSION]
+  local since = ns.core.UpdateWatch.compareSeen(lastSeen, addonVersion)
+
+  if since == "updated" then
+    logger:info(locale:get(TextKey.UPDATE_INSTALLED, tostring(addonVersion)))
+  elseif since == "downgraded" then
+    logger:info(locale:get(TextKey.UPDATE_DOWNGRADED,
+      tostring(addonVersion), tostring(lastSeen), tostring(lastSeen)))
+  end
+
+  -- A first install remembers the version without announcing itself as an update.
+  if since ~= "same" then
+    saveSetting(SettingKey.LAST_SEEN_VERSION, addonVersion)
   end
 end
 

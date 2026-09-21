@@ -62,6 +62,7 @@ ns.core.WowEvent = Frozen.enum("WowEvent", {
   DISABLE_XP_GAIN            = "DISABLE_XP_GAIN",
   CHAT_MSG_COMBAT_XP_GAIN    = "CHAT_MSG_COMBAT_XP_GAIN",
   CHAT_MSG_SYSTEM            = "CHAT_MSG_SYSTEM",
+  CHAT_MSG_ADDON             = "CHAT_MSG_ADDON",
   QUEST_TURNED_IN            = "QUEST_TURNED_IN",
   QUEST_ACCEPTED             = "QUEST_ACCEPTED",
   QUEST_REMOVED              = "QUEST_REMOVED",

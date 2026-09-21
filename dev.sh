@@ -66,6 +66,43 @@ check_toc() {
 # declared, so touching it fails lint). This covers the other: core/ must not reach
 # outward into the adapter, ui or app layers either. Both halves together are what
 # make "hexagonal" a property of this repo rather than an intention in a document.
+# The changelog the addon carries is GENERATED from CHANGELOG.md. Editing one and
+# not the other is invisible: the addon keeps showing the old text, in the client,
+# where nobody is looking at a diff. Same failure shape as check_toc, same answer.
+check_changelog() {
+  local generated="$ADDON/core/constants/Changelog.lua"
+  [ -f "$generated" ] || die "missing $generated -- run: luajit tools/changelog.lua"
+
+  local lua
+  if command -v luajit >/dev/null 2>&1; then
+    lua="luajit"
+  else
+    die "luajit not found; it is what the test suite runs on too"
+  fi
+
+  # Cleaned up on both paths by hand: a RETURN trap fires again in whatever
+  # function runs next, and under `set -u` that reads a variable that is gone.
+  local temp status
+  temp="$(mktemp)"
+
+  if ! "$lua" tools/changelog.lua "$temp" >/dev/null; then
+    rm -f "$temp"
+    die "the changelog generator failed"
+  fi
+
+  status=0
+  if ! diff -q "$generated" "$temp" >/dev/null; then
+    printf '\033[31m  %s disagrees with CHANGELOG.md:\033[0m\n' "$generated"
+    diff -u "$generated" "$temp" | head -40
+    printf '  regenerate it with: \033[1mluajit tools/changelog.lua\033[0m\n'
+    status=1
+  fi
+
+  rm -f "$temp"
+  [ "$status" -eq 0 ] || return 1
+  ok "the embedded changelog matches CHANGELOG.md"
+}
+
 check_layers() {
   local offenders
   offenders="$(grep -rnE 'ns\.(adapter|ui|app|fakes)\b' "$ADDON/core" 2>/dev/null || true)"
@@ -91,6 +128,8 @@ cmd_lint() {
   check_toc
   info "layer dependency rule"
   check_layers
+  info "embedded changelog"
+  check_changelog
 }
 
 # Loads every file the TOC declares, in TOC order, against a stand-in client, and

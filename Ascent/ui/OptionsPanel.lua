@@ -1029,6 +1029,17 @@ function OptionsPanel.new(context)
     locale, function(checked) saveSetting(SettingKey.COLLECT_DAMAGE, checked) end)
   view.debugCheck = createCheckbox(content, "Debug", TextKey.OPTIONS_DEBUG, view.damageCheck, locale,
     function(checked) saveSetting(SettingKey.DEBUG, checked) end)
+  -- Switching this off silences BOTH halves -- the announcing and the warning
+  -- (design D74) -- which is why the context is asked to apply it rather than
+  -- only saving it: a setting that needed a reload to take effect would leave the
+  -- addon talking to the channel after the player told it to stop.
+  view.updateCheck = createCheckbox(content, "UpdateCheck", TextKey.OPTIONS_UPDATE_CHECK, view.debugCheck,
+    locale, function(checked)
+      saveSetting(SettingKey.UPDATE_CHECK, checked)
+      if context.setUpdateCheck ~= nil then
+        context.setUpdateCheck(checked)
+      end
+    end)
 
   -- THE ONLY CHANNEL BACK, where a player actually looks for it.
   --
@@ -1201,6 +1212,7 @@ function OptionsPanel.new(context)
     view.questCheck:SetChecked(settings[SettingKey.SHOW_QUEST_PENDING])
     view.damageCheck:SetChecked(settings[SettingKey.COLLECT_DAMAGE])
     view.debugCheck:SetChecked(settings[SettingKey.DEBUG])
+    view.updateCheck:SetChecked(settings[SettingKey.UPDATE_CHECK])
     refreshing = false
   end
 

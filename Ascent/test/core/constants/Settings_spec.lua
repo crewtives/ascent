@@ -315,4 +315,35 @@ describe("Settings", function()
       assert.equal(10, settings[SettingKey.BAR_POSITION].x)
     end)
   end)
+
+  -- The update check arrives into profiles that were written before it existed,
+  -- which is every profile there is. Both of its keys have to survive that.
+  describe("the update check", function()
+    it("is on for a profile saved before it existed, without disturbing it", function()
+      local settings = Settings.resolve({ [SettingKey.BAR_WIDTH] = 520 })
+
+      assert.is_true(settings[SettingKey.UPDATE_CHECK])
+      assert.equal(520, settings[SettingKey.BAR_WIDTH])
+    end)
+
+    it("remembers no version until one is written, and does not call that junk", function()
+      local settings = Settings.resolve({})
+
+      -- Empty, not nil: a key with no default is dropped by resolve and then
+      -- reported as an unknown stored key, which is how a real setting would end
+      -- up being described to the player as rubbish in their saved variables.
+      assert.equal("", settings[SettingKey.LAST_SEEN_VERSION])
+      assert.same({}, Settings.unknownKeys({ [SettingKey.LAST_SEEN_VERSION] = "0.1.0" }))
+    end)
+
+    it("keeps a remembered version and an explicit off", function()
+      local settings = Settings.resolve({
+        [SettingKey.UPDATE_CHECK] = false,
+        [SettingKey.LAST_SEEN_VERSION] = "0.1.0",
+      })
+
+      assert.is_false(settings[SettingKey.UPDATE_CHECK])
+      assert.equal("0.1.0", settings[SettingKey.LAST_SEEN_VERSION])
+    end)
+  end)
 end)
