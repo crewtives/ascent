@@ -635,6 +635,49 @@ describe("XpAttribution", function()
 
       assert.equal(40, gains()[1].restedBonus)
     end)
+
+    -- A sentence that announced no rested state needs no stand-in: the client prints
+    -- the parenthetical whenever a bonus applies, so its absence is a zero. Standing
+    -- in anyway read the reserve, which is sampled off the chat line and therefore
+    -- describes the PREVIOUS kill.
+    it("does not stand in for a line that announced no rested state at all", function()
+      kill("Kobold Miner", 100, 10.0,
+        { restedAnnounced = false, restedBefore = 1000, restedAfter = 920 })
+      delta(100, 10.0)
+      settleAll()
+
+      assert.equal(0, gains()[1].restedBonus)
+      assert.equal(100, gains()[1]:baseAmount())
+    end)
+
+    -- The case the fallback exists for, and the reason the flag is three-valued: a
+    -- fatigue line, or a locale printing a percentage, announces the reserve moved
+    -- and names no figure.
+    it("still stands in for a line that announced rest without naming a figure", function()
+      kill("Kobold Miner", 100, 10.0,
+        { restedAnnounced = true, restedBefore = 1000, restedAfter = 920 })
+      delta(100, 10.0)
+      settleAll()
+
+      assert.equal(40, gains()[1].restedBonus)
+    end)
+
+    -- The sequence as the 2026-09-21 file recorded it, twice: a rested kill, then a
+    -- plain one whose reserve snapshot still shows the first one's drain. The bonus
+    -- belongs to the first kill and to that kill only.
+    it("charges a rested kill once, not again to the plain kill behind it", function()
+      kill("Crazed Dragonhawk", 46, 10.0,
+        { restedAnnounced = true, restedRaw = 7, restedBefore = 14, restedAfter = 14 })
+      delta(46, 10.0)
+      kill("Springpaw Stalker", 39, 20.0,
+        { restedAnnounced = false, restedBefore = 14, restedAfter = 0 })
+      delta(39, 20.0)
+      settleAll()
+
+      assert.equal(2, #gains())
+      assert.equal(7, gains()[1].restedBonus)
+      assert.equal(0, gains()[2].restedBonus)
+    end)
   end)
 
   describe("group and raid modifiers", function()

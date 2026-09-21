@@ -66,6 +66,9 @@ XpClassifiers.MOB_KILL = {
     return {
       creatureName = hint.creatureName,
       restedRaw = hint.restedRaw,       -- the parenthetical, read per RestedReading
+      -- Whether the sentence mentioned the reserve at all: false says the absence of
+      -- a magnitude IS the answer, nil says nobody read a sentence.
+      restedAnnounced = hint.restedAnnounced,
       restedBefore = hint.restedBefore, -- the reserve around the kill, for the cross-check
       restedAfter = hint.restedAfter,
       groupBonus = hint.groupBonus,

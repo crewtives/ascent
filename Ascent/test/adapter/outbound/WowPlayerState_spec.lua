@@ -31,6 +31,14 @@ describe("WowPlayerState", function()
     _G.GetZoneText = function() return overrides.zone or "Elwynn Forest" end
     _G.C_Map = overrides.noMapApi and {} or {
       GetBestMapForUnit = function() return overrides.mapId end,
+      -- Answers nothing unless a case asks for a map name, so the cases that do not
+      -- keep exercising the zone-text fallback.
+      GetMapInfo = function(mapId)
+        if overrides.mapName == nil then
+          return nil
+        end
+        return { mapID = mapId, name = overrides.mapName }
+      end,
     }
 
     local ns = AscentTest.loadWith("core/port/", "adapter/compat/", "adapter/outbound/WowPlayerState.lua")
@@ -95,6 +103,26 @@ describe("WowPlayerState", function()
       assert.equal("world", context)
       assert.equal(1429, areaId)
       assert.equal("Elwynn Forest", name)
+    end)
+
+    -- One map id, two zone names: an indoor area answers with its own name while the
+    -- id underneath stays the zone's. Taking the name from the id is what keeps a
+    -- level spent across Eversong Woods from being filed under a building in it.
+    it("names the map rather than the indoor area the client calls the zone", function()
+      load({ inInstance = false, mapId = 1941, mapName = "Eversong Woods",
+             zone = "Duskwither Spire" })
+
+      local context, areaId, name = state:place()
+
+      assert.equal("world", context)
+      assert.equal(1941, areaId)
+      assert.equal("Eversong Woods", name)
+    end)
+
+    it("falls back to the zone text where the map cannot name itself", function()
+      load({ inInstance = false, mapId = 1941, zone = "Duskwither Spire" })
+
+      assert.equal("Duskwither Spire", select(3, state:place()))
     end)
 
     it("is the instance id inside a dungeon, not the map id", function()

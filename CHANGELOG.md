@@ -31,6 +31,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   misma razón por la que antes se fundieron en una los tres volcados que había. La ayuda además dejaba de
   ofrecer `debug quests` y `debug strings`, que ya no existían desde aquella fusión.
 
+### Fixed
+
+- **El bonus de descanso se contaba dos veces.** La cifra del paréntesis se acreditaba a su muerte, y después
+  otra vez a la primera muerte sin descanso que viniera detrás. Al no ver paréntesis, el addon deducía el
+  bonus de cuánto había bajado la reserva, y esa lectura se toma de la línea de chat —que el cliente imprime
+  **antes** de aplicar la experiencia—, así que describía la muerte anterior. Una línea que no menciona el
+  descanso ahora significa cero, que es lo que significa. Los niveles ya guardados conservan la cifra
+  inflada: la corrección va hacia adelante y no reescribe el historial.
+- **Un nivel podía quedar etiquetado con el nombre de un interior.** El lugar se identifica por su mapa, pero
+  se mostraba con el nombre que el cliente daba a la zona en ese instante, y dentro de un edificio ese nombre
+  es el del edificio mientras el mapa sigue siendo el de la zona. Como un lugar sólo adopta el nombre que le
+  faltaba, el primero en llegar se quedaba para siempre: un nivel entero de Eversong Woods podía leerse como
+  «Duskwither Spire». Ahora el nombre lo da el mapa, uno por identidad.
+- **El grabador de sesión no decía qué nivel se había cerrado.** Anotaba que uno se completó y dejaba el
+  número en blanco, porque leía el nivel en el sitio equivocado del aviso.
+
 ## [0.1.0] - 2026-09-21
 
 First public build, and an early beta rather than a finished thing: it has been played far less than

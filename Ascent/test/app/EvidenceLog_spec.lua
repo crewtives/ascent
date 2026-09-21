@@ -433,6 +433,20 @@ describe("EvidenceLog", function()
     assert.equal(1, log.counters["attributed." .. ns.core.XpSource.MOB_KILL])
   end)
 
+  -- Wrapped like the verdict above, and read flat for a while: the file came back
+  -- with five level completions, not one of which could say which level had
+  -- completed. A real LevelRecord, for the same reason as the case above -- a
+  -- hand-written payload can only agree with the shape its author believed.
+  it("records which level completed, not merely that one did", function()
+    local log = newLog():start()
+
+    bus:publish(EventTopic.LEVEL_COMPLETED, { record = ns.core.LevelRecord.new(12, 1700000000) })
+
+    assert.equal("levelCompleted", log.samples[1].kind)
+    assert.equal(12, log.samples[1].completedLevel)
+    assert.equal(1, log.counters.levelCompleted)
+  end)
+
   it("summarises itself in one line, so recording can be confirmed without the file", function()
     local log = newLog():start()
 

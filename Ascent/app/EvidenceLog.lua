@@ -287,9 +287,15 @@ function EvidenceLog:start()
     })
   end)
 
+  -- Wrapped exactly like the verdict above -- the topic carries `{ record }` -- and
+  -- read flat here for a while, which cost the same thing in miniature: the file came
+  -- back with five level completions and not one of them could say WHICH level had
+  -- completed. The shape is taken from the publisher, and the test publishes a real
+  -- LevelRecord.
   whileEnabled(self, EventTopic.LEVEL_COMPLETED, function(payload)
+    local record = payload and payload.record
     self:count("levelCompleted")
-    self:push({ kind = "levelCompleted", completedLevel = payload and payload.level })
+    self:push({ kind = "levelCompleted", completedLevel = record and record.level })
   end)
 
   whileEnabled(self, EventTopic.REST_CHANGED, function(payload)

@@ -378,9 +378,15 @@ local function onChatCombatXpGain(self, message)
     creatureName = matched.creature,
     -- The figure the client printed, which is the only reading of the rested bonus
     -- that is anchored to THIS kill. nil whenever the template names no magnitude
-    -- (a fatigue line, a client whose parenthetical is a percentage), and the
-    -- domain falls back to the reserve on its own when it is absent.
+    -- (a fatigue line, a client whose parenthetical is a percentage).
     restedRaw = matched.restedAmount,
+    -- Whether the sentence announced a rested state AT ALL, which is a different
+    -- fact from the magnitude and the one that says what a missing magnitude means:
+    -- a line that mentions no reserve is a kill that paid no bonus, and a line that
+    -- mentions one without naming a figure is the case the reserve reading exists
+    -- for. Flattened to a boolean here rather than passed through, so that `nil`
+    -- keeps meaning the third thing downstream -- no sentence was read at all.
+    restedAnnounced = matched.rested == true,
     restedBefore = before,
     restedAfter = after,
     groupBonus = groupBonus,

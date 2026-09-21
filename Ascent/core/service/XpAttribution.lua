@@ -659,6 +659,21 @@ function XpAttribution:restedBonusFor(hint, payload)
     end
   end
 
+  -- A sentence that was read and announced no rested state settles this by itself,
+  -- and the reserve is not asked. It used to be, and that was a defect the file from
+  -- the 2026-09-21 session caught: the reserve is sampled off the chat line, which
+  -- the client prints BEFORE applying the gain, so the drop it shows belongs to the
+  -- PREVIOUS kill. Every rested kill was charged twice over -- once from its own
+  -- parenthetical and again to the first plain kill behind it -- and level 12 closed
+  -- with 32 points of rested bonus where the truth was 16.
+  --
+  -- `false` is not `nil` here. No sentence at all still falls back, because then the
+  -- reserve is the only reading there is; and `true` with no figure -- a fatigue
+  -- line, a locale that prints a percentage -- is the case the fallback exists for.
+  if parsed == nil and payload.restedAnnounced == false then
+    return 0
+  end
+
   local measured = XpAttribution.restedFromReserve(payload.restedBefore, payload.restedAfter, amount)
 
   -- Worth counting rather than resolving, and what it counts has changed. Spike 0.4

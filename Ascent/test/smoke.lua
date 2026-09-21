@@ -441,7 +441,10 @@ Constants = setmetatable({}, { __index = function() return setmetatable({}, { __
 Enum = setmetatable({}, { __index = function() return setmetatable({}, { __index = function() return 0 end }) end })
 ChatFrameUtil = { AddMessageEventFilter = function() end, RemoveMessageEventFilter = function() end }
 ChatFrame_DisplayTimePlayed = function() end
-C_Map = { GetBestMapForUnit = function() return 1 end }
+C_Map = {
+  GetBestMapForUnit = function() return 1 end,
+  GetMapInfo = function(mapId) return { mapID = mapId, name = "Elwynn Forest" } end,
+}
 C_Seasons = { GetActiveSeason = function() return 0 end }
 C_GameRules = {}
 C_Spell = {}

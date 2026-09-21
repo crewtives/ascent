@@ -48,6 +48,25 @@ local function displayName(text)
   return text
 end
 
+-- The name of the MAP, and not of whatever the client is calling the zone this
+-- instant. They are not the same string: step into an indoor area and `GetZoneText()`
+-- answers with the building's own name -- "Duskwither Spire" -- while the map id
+-- underneath stays the zone's. One identity then collects two names, and since a
+-- place adopts only a name it was MISSING (LevelRecord:placeEntry), whichever
+-- arrived first labels the level for good. That is how the 2026-09-21 session closed
+-- level 12 with all 9800 of its points filed under a building the character stepped
+-- into once, while level 13 -- same map id, opened outdoors -- read "Eversong Woods".
+--
+-- Asking the map for its own name gives one name per identity by construction. The
+-- zone text stays as the fallback, for a client that does not answer this at all.
+local function mapName(mapId)
+  if mapId == nil or C_Map == nil or C_Map.GetMapInfo == nil then
+    return nil
+  end
+  local info = C_Map.GetMapInfo(mapId)
+  return info ~= nil and info.name or nil
+end
+
 local WowPlayerState = {}
 WowPlayerState.__index = WowPlayerState
 
@@ -108,7 +127,8 @@ function WowPlayerState:place()
   if C_Map ~= nil and C_Map.GetBestMapForUnit ~= nil then
     mapId = C_Map.GetBestMapForUnit("player")
   end
-  return PlaceContext.WORLD, positiveId(mapId), displayName(GetZoneText())
+  local id = positiveId(mapId)
+  return PlaceContext.WORLD, id, displayName(mapName(id)) or displayName(GetZoneText())
 end
 
 function WowPlayerState:healthFraction()
