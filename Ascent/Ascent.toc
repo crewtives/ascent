@@ -141,3 +141,6 @@ locale/enUS.lua
 locale/LocaleTable.lua
 
 # --- app: composition root -------------------------------------------------
+app/EvidenceLog.lua
+app/DemoDriver.lua
+app/Bootstrap.lua
