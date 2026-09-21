@@ -1,0 +1,63 @@
+name: Something is wrong
+description: A number that looks wrong, an error, something that does not behave as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An addon cannot make a network request, so nothing from your game reaches the author unless you
+        send it. `/ascent copy` is that channel: it opens the diagnostics as selectable text, carrying
+        the build, the client flavour and the interface language — and **no character name and no
+        realm**. It is editable before you paste it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+      placeholder: |
+        The Sources tab said 41,200 for the level, but the bar's tooltip said 39,850 at the same moment.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Output of /ascent copy
+      description: >-
+        Type `/ascent copy` in game, press Ctrl-C, and paste it here. This is the single most useful
+        thing in the report — without it most numbers cannot be interpreted.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: flavour
+    attributes:
+      label: Which client
+      options:
+        - Classic Era (1.15.x)
+        - Burning Crusade Classic (2.5.x)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: What you were doing
+      description: >-
+        What you were doing when it happened — questing, a dungeon, in a group, turning in a quest. The
+        addon attributes experience from the client's own messages, and the situation is often the clue.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed anything from the pasted report I did not want to share
+          required: false
+        - label: I checked that no open issue already describes this
+          required: true

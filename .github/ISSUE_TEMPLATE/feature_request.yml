@@ -1,0 +1,30 @@
+name: Suggest something
+description: An idea for what the addon should show, measure or do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two limits worth knowing before you write, because they rule out a whole class of ideas:
+        an addon **cannot make a network request** of any kind, and this one ships **without external
+        libraries**.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to find out?
+      description: >-
+        The question you want answered while levelling, rather than the feature you imagine. A question
+        often has a better answer than the control it suggests.
+      placeholder: |
+        Whether the dungeon run I just did was actually faster per hour than questing in the same range.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you had in mind
+      description: How you pictured it working, if you pictured anything in particular.
+    validations:
+      required: false
