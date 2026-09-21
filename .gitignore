@@ -4,5 +4,10 @@
 # ./dev.sh package output
 dist/
 
+# local planning and tooling notes
+openspec/
+.claude/
+CLAUDE.md
+
 # macOS
 .DS_Store

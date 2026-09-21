@@ -69,16 +69,9 @@ done
 
 info "$ADDON $VERSION as $RELEASE_TYPE, for ${VERSION_NAMES[*]}"
 
-# The section at the top of the changelog, without its own heading: the file is
-# Keep a Changelog, so the first "## " block is always the one being released.
-CHANGELOG_BODY="$(awk '
-  /^## / { if (seen) exit; seen = 1; next }
-  # Reference-style link definitions are markdown plumbing for the file, not part
-  # of the release notes, and they read as a stray line once pasted.
-  /^\[[^]]+\]: / { next }
-  seen { print }
-' CHANGELOG.md)"
-[ -n "$CHANGELOG_BODY" ] || die "could not read a section out of CHANGELOG.md"
+# The same notes the GitHub release gets, read by the same script: two readers of
+# one changelog cannot disagree, two copies of the reader eventually do.
+CHANGELOG_BODY="$(./tools/release-notes.sh)" || die "could not read a section out of CHANGELOG.md"
 
 if [ "$DRY_RUN" -eq 1 ] && [ -z "${CF_API_TOKEN:-}" ]; then
   # Without a token the game version ids cannot be resolved, which is fine for a
