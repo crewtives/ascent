@@ -1,6 +1,5 @@
--- One property matters and everything else is a corollary of it: the numbers the
--- player reads add up to a hundred. A column of percentages summing to 99 is the
--- kind of small wrongness that costs trust in every other figure on the panel.
+-- The percentages the player reads always add up to a hundred; every other
+-- property here follows from that one.
 
 describe("Composition", function()
   local ns, Composition

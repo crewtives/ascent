@@ -121,11 +121,10 @@ describe("Settings", function()
     end)
   end)
 
-  -- A setting whose default is a map declares the SHAPE that setting must have.
-  -- This block is the regression suite for the bug that motivated it: the saved
-  -- table reached the views missing a key, the resolved settings are frozen, and
-  -- reading a missing key off a frozen table raises rather than returning nil --
-  -- so an incomplete position on disk broke the bar at login.
+  -- A setting whose default is a map declares the shape that setting must have.
+  -- The resolved settings are frozen, and reading a missing key off a frozen table
+  -- raises rather than returning nil, so an incomplete table on disk would break
+  -- the bar at login.
   describe("structured settings", function()
     it("completes a stored position that lost a key", function()
       local settings = Settings.resolve({ [SettingKey.BAR_POSITION] = { x = 5 } })
@@ -270,9 +269,8 @@ describe("Settings", function()
       assert.equal(2000, ns.core.Defaults[SettingKey.RETENTION_LIMIT])
     end)
   end)
-  -- The bar's slot is the first setting whose value is a closed vocabulary rather
-  -- than a number or a flag, and the first where a stored string of the right type
-  -- can still be meaningless.
+  -- The bar's slot is a closed vocabulary rather than a number or a flag: a
+  -- stored string of the right type can still be meaningless.
   describe("the bar slot", function()
     it("resolves to off for an install that has never had the setting", function()
       local settings = Settings.resolve({})
@@ -296,9 +294,9 @@ describe("Settings", function()
       assert.same({ SettingKey.BAR_SLOT }, Settings.invalidKeys({ [SettingKey.BAR_SLOT] = "sideways" }))
     end)
 
-    -- The migration the addon actually has: a profile written before the key
-    -- existed is completed key by key, so it receives the new default and nothing
-    -- it had configured moves.
+    -- Settings need no migration: a profile saved before the key existed is
+    -- completed key by key, so it receives the new default and nothing it had
+    -- configured moves.
     it("gives a profile saved before the key existed the default without touching the rest", function()
       local stored = {
         [SettingKey.BAR_WIDTH] = 520,
@@ -316,11 +314,10 @@ describe("Settings", function()
     end)
   end)
 
-  -- The plate is the addon's second surface and the first whose settings arrive
-  -- into profiles that already exist -- eight keys at once, with no migration and
-  -- none needed, because `resolve` walks the defaults. What that leaves to prove
-  -- is the SHAPE of each one: a number that clamps instead of falling back, a list
-  -- that survives a word from another build, and a map that is NOT completed.
+  -- The plate's keys reach existing profiles through `resolve`, which walks the
+  -- defaults, so what is left to prove is the shape of each: a number that clamps
+  -- instead of falling back, a list that survives a word from another build, and
+  -- a map that is not completed.
   describe("the pull plate", function()
     it("gives a profile written before it was configurable every default", function()
       local settings = Settings.resolve({ [SettingKey.BAR_WIDTH] = 520 })
@@ -334,8 +331,7 @@ describe("Settings", function()
       assert.equal(520, settings[SettingKey.BAR_WIDTH])
     end)
 
-    -- D88. Two keys, so locking the bar leaves the plate loose -- the declared
-    -- cost of the change, and this is what keeps it a decision rather than a
+    -- Two keys, so locking the bar leaves the plate loose: deliberate, not a
     -- coincidence of how the two happen to be named.
     it("does not take its lock from the bar's", function()
       local settings = Settings.resolve({ [SettingKey.BAR_LOCKED] = true })
@@ -344,7 +340,7 @@ describe("Settings", function()
       assert.is_false(settings[SettingKey.PLATE_LOCKED])
     end)
 
-    -- Each stored value below is outside its range AND different from its default,
+    -- Each stored value below is outside its range and different from its default,
     -- so an edge and a fallback cannot be confused for one another. Somebody who
     -- typed 5000 for a width wanted a very wide plate.
     it("pulls a stored number to the edge of its range rather than to its default", function()
@@ -363,10 +359,10 @@ describe("Settings", function()
       assert.equal(8, settings[SettingKey.PLATE_ROWS])
     end)
 
-    -- Two ranges, and the panel's is the narrower one on purpose: the setting's
-    -- range is the last line before a hand-edited file reaches a frame, the
-    -- panel's is what makes sense to drag. The bar has had both halves since its
-    -- width admitted 60..1600 while its slider offered 120..900.
+    -- Two ranges, the panel's narrower on purpose: the setting's range is the last
+    -- line before a hand-edited file reaches a frame, the panel's is what makes
+    -- sense to drag. The bar's width likewise admits 60..1600 while its slider
+    -- offers 120..900.
     it("offers less in the panel than the setting admits, on every plate slider", function()
       for _, key in ipairs(ns.core.Frozen.keys(ns.core.SettingPanelRange)) do
         local domain = ns.core.SettingRange[key]
@@ -379,9 +375,9 @@ describe("Settings", function()
       end
     end)
 
-    -- D89, stated on its own because it is the one range whose width is not
-    -- cosmetic: how long the plate stays is also how long a closed pull can be
-    -- resumed, so a hold of minutes would make every fight in a zone one pull.
+    -- The one range whose width is not cosmetic: how long the plate stays is also
+    -- how long a closed pull can be resumed, so a hold of minutes would make every
+    -- fight in a zone one pull.
     it("keeps the longest hold it offers well short of the one it admits", function()
       assert.is_true(ns.core.SettingPanelRange[SettingKey.PLATE_HOLD_SECONDS].max
         < ns.core.SettingRange[SettingKey.PLATE_HOLD_SECONDS].max)
@@ -421,7 +417,7 @@ describe("Settings", function()
     end)
 
     -- Every accessory zone off is a player who wants the headline and nothing
-    -- else (D90), not a corrupt file: it stays empty, stays indexable, and is not
+    -- else, not a corrupt file: it stays empty, stays indexable, and is not
     -- reported as junk.
     it("keeps an empty zone list as the choice it is", function()
       local zones = Settings.resolve({ [SettingKey.PLATE_ZONES] = {} })[SettingKey.PLATE_ZONES]
@@ -432,10 +428,9 @@ describe("Settings", function()
     end)
 
     -- `same` alone cannot tell the two shapes apart: a frozen map reads as an
-    -- empty table from the outside (Frozen's header), so a map-valued default
-    -- would sail straight through it. NOT being frozen is the observable
-    -- difference, and it is the very property that keeps this taken or rejected
-    -- whole instead of completed key by key.
+    -- empty table from the outside. Not being frozen is the observable difference,
+    -- and it is what keeps this value taken or rejected whole instead of completed
+    -- key by key.
     it("starts with no appearance of its own, and no shape either", function()
       local stored = Settings.resolve()[SettingKey.PLATE_APPEARANCE]
 
@@ -443,10 +438,10 @@ describe("Settings", function()
       assert.is_false(ns.core.Frozen.isFrozen(stored))
     end)
 
-    -- D87, and the trap the design named: a map-valued default would declare a
-    -- shape and `resolve` would complete this key by key, nailing the plate to
-    -- whichever skin the bar happened to be wearing when the tweak was made. What
-    -- is stored is one axis, and one axis is what has to survive a skin change.
+    -- A map-valued default would declare a shape and `resolve` would complete this
+    -- key by key, nailing the plate to whichever skin the bar wore when the tweak
+    -- was made. What is stored is one axis, and one axis is what has to survive a
+    -- skin change.
     it("keeps a partial plate appearance exactly as stored, without completing it", function()
       local stored = Settings.resolve({
         [SettingKey.PLATE_APPEARANCE] = { border = { thickness = 3 } },
@@ -465,8 +460,8 @@ describe("Settings", function()
     end)
   end)
 
-  -- The update check arrives into profiles that were written before it existed,
-  -- which is every profile there is. Both of its keys have to survive that.
+  -- Both keys of the update check have to survive a profile saved before they
+  -- existed.
   describe("the update check", function()
     it("is on for a profile saved before it existed, without disturbing it", function()
       local settings = Settings.resolve({ [SettingKey.BAR_WIDTH] = 520 })

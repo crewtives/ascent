@@ -1,20 +1,16 @@
 -- Ascent - CHANGELOG.md -> Ascent/core/constants/Changelog.lua
 --
--- The addon shows what changed without leaving the game, and the text it shows
--- has to be the text in CHANGELOG.md. Writing it twice means writing it once and
--- forgetting the other, which is the mistake `add-ascent-copy-report` already
--- avoided once by refusing to build the same report from two places (D2).
---
--- So this generates, and `./dev.sh lint` regenerates into a temporary file and
--- compares: editing the changelog without regenerating fails the lint, the same
--- way check_toc fails on a file that is not listed. Both failures are silent
--- inside the client, which is the whole reason either check exists.
+-- The in-game changelog is generated from CHANGELOG.md so that the two cannot
+-- disagree: `./dev.sh lint` regenerates it into a temporary file and fails if the
+-- result differs. Generation also refuses an entry over its length limit and a
+-- client tag it does not know.
 --
 --   luajit tools/changelog.lua [output-path]
---
--- Runs on LuaJIT because the test suite and the smoke harness already require it.
 
-local KEEP = 5 -- how many versions travel inside the addon (design D70)
+local KEEP = 5 -- how many versions travel inside the addon
+local ENTRY_LIMIT = 160 -- characters in one entry, once formatting is removed
+local STATUS_LIMIT = 200 -- characters in the line a version may open with
+local CLIENT_TAGS = { Era = true, TBC = true, Forever = true }
 
 local ROOT = arg[0]:match("^(.*)/tools/[^/]+$") or "."
 local SOURCE = ROOT .. "/CHANGELOG.md"
@@ -27,9 +23,8 @@ local function read(path)
   return body
 end
 
--- Markdown emphasis and code ticks are punctuation in a text box, not formatting.
--- Link syntax keeps the visible half: [Keep a Changelog](https://...) is read by a
--- person, and the URL is noise inside the game.
+-- A text box shows markdown as punctuation: emphasis and code ticks go, and a
+-- link keeps its visible text without the URL.
 local function plain(text)
   text = text:gsub("%[([^%]]+)%]%([^%)]+%)", "%1")
   text = text:gsub("%*%*(.-)%*%*", "%1")
@@ -37,24 +32,70 @@ local function plain(text)
   return (text:gsub("%s+$", ""))
 end
 
--- One entry per released version, newest first, each already rendered to the
--- lines the addon will show. Nothing is parsed at run time: a player's client
--- should not be reading markdown.
+-- Characters, not bytes: a dash or an arrow is one character and three bytes.
+local function length(text)
+  return select(2, text:gsub("[^\128-\191]", ""))
+end
+
+local problems = {}
+
+local function refuse(version, what, text)
+  local start = #text > 60 and (text:sub(1, 57) .. "...") or text
+  problems[#problems + 1] = ('%s: %s: "%s"'):format(version, what, start)
+end
+
+-- An entry is one sentence for a player, and says first which clients it is
+-- about when it is not all of them.
+local function checkEntry(version, text)
+  local size = length(text)
+  if size > ENTRY_LIMIT then
+    refuse(version, ("entry of %d characters, over %d"):format(size, ENTRY_LIMIT), text)
+  end
+  local rest = text
+  while true do
+    local tag, after = rest:match("^%[([^%]]+)%]%s*(.*)$")
+    if not tag then
+      break
+    end
+    if not CLIENT_TAGS[tag] then
+      refuse(version, "unknown client tag [" .. tag .. "]", text)
+      break
+    end
+    rest = after
+  end
+end
+
+local function checkStatus(entry, text)
+  entry.paragraphs = (entry.paragraphs or 0) + 1
+  if entry.paragraphs > 1 then
+    refuse(entry.version, "more than one status line", text)
+  end
+  local size = length(text)
+  if size > STATUS_LIMIT then
+    refuse(entry.version, ("status line of %d characters, over %d"):format(size, STATUS_LIMIT), text)
+  end
+end
+
+-- One entry per released version, newest first, already rendered to the lines
+-- the addon shows, so the client never parses markdown.
 local function parse(body)
   local versions = {}
   local current, bullet, paragraph
 
-  -- A bullet or a paragraph may be written across several source lines; both are
-  -- one sentence to the reader, and the client wraps them again to the width of
-  -- the window they end up in. Held open until a blank line, a new item or a new
-  -- section closes them.
+  -- A bullet or a paragraph may span several source lines. It stays open until a
+  -- blank line, a new item or a new section, and becomes one line that the client
+  -- wraps to its window.
   local function flush()
     if bullet ~= nil then
-      current.lines[#current.lines + 1] = "- " .. plain(bullet)
+      local text = plain(bullet)
+      checkEntry(current.version, text)
+      current.lines[#current.lines + 1] = "- " .. text
       bullet = nil
     end
     if paragraph ~= nil then
-      current.lines[#current.lines + 1] = plain(paragraph)
+      local text = plain(paragraph)
+      checkStatus(current, text)
+      current.lines[#current.lines + 1] = text
       paragraph = nil
     end
   end
@@ -89,9 +130,8 @@ local function parse(body)
       elseif line:match("^%s*$") then
         flush()
       elseif not line:match("^%[") then
-        -- Prose between the heading and the first section: the paragraph the
-        -- author wrote for whoever is reading the release, which is exactly the
-        -- audience here. Reference-style link definitions are skipped above.
+        -- Prose outside a list is the version's status line. Reference-style link
+        -- definitions are skipped above.
         if bullet ~= nil then
           bullet = bullet .. " " .. line:gsub("^%s+", "")
         else
@@ -112,6 +152,13 @@ end
 local versions = parse(read(SOURCE))
 assert(#versions > 0, "no released version found in " .. SOURCE)
 
+if #problems > 0 then
+  for _, problem in ipairs(problems) do
+    io.stderr:write("CHANGELOG.md " .. problem .. "\n")
+  end
+  os.exit(1)
+end
+
 local out = {}
 local function emit(line) out[#out + 1] = line end
 
@@ -122,7 +169,7 @@ emit("-- `./dev.sh lint` regenerates it and fails if this file disagrees with th
 emit("-- changelog it came from.")
 emit("--")
 emit(("-- The last %d released versions travel with the addon; older ones stay in the"):format(KEEP))
-emit("-- repository, where nobody's client pays for them (design D70).")
+emit("-- repository, where nobody's client pays for them.")
 emit("")
 emit("local _, ns = ...")
 emit("ns.core = ns.core or {}")

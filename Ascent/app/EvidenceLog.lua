@@ -1,32 +1,16 @@
--- Ascent - the flight recorder (design D45, and every open question after it).
+-- Ascent - the flight recorder: a bounded log of play, kept in the saved variables.
 --
--- Several things about this addon cannot be settled by reading: whether the
--- number in a group-kill parenthetical is already inside the credited total, how
--- often the client can say where the player is standing when experience lands,
--- whether the fatigue templates ever appear at all, whether the rested figure in
--- a message is the bonus or the base. Every one of them is answered by watching a
--- real player play for an hour.
---
--- So this records what happened, to the saved variables file, where it can be
--- read afterwards. Three rules shape it:
---
---   IT NEVER WRITES TO THE CHAT. The existing debug mode prints, which is fine
---   for a two-minute check and unusable for a levelling session. Evidence is a
---   separate switch for exactly that reason: it is meant to be left on while
---   playing normally, and a player should not notice it is there.
---
---   IT RECORDS FACTS, NOT CONCLUSIONS. Each sample carries the authoritative
---   delta AND the parsed figures side by side, rather than the difference between
---   them. Whoever reads the file draws the conclusion; the addon does not decide
---   in advance which of the two it believes, because that is the very thing under
---   question.
---
---   IT IS BOUNDED. A ring of the most recent samples plus counters that never
---   grow. The counters answer "how often"; the ring answers "show me one".
+-- It answers what reading the code cannot: whether a group-kill figure is
+-- already inside the credited total, how often the client can name the place
+-- when experience lands, whether the fatigue templates ever appear, whether a
+-- message's rested figure is the bonus or the base. It never writes to the chat
+-- (debug mode is the switch that prints), so it can stay on for a whole session.
+-- It records facts, not conclusions: the authoritative delta and the parsed
+-- figures side by side, never their difference. It is bounded: a ring of recent
+-- samples ("show me one") plus counters ("how often").
 --
 -- It lives in app/ because it reads the client directly and correlates topics
--- from several layers -- exactly the composition root's business, and nobody
--- else's.
+-- from several layers.
 
 local _, ns = ...
 ns.app = ns.app or {}
@@ -37,31 +21,22 @@ local EventTopic = ns.core.EventTopic
 -- file stays openable. Each sample is about fifteen short fields.
 local DEFAULT_LIMIT = 400
 
--- The shape of what gets written to the saved variables. It is checked before
--- carrying anything forward from a previous session, because samples recorded by
--- a different build of this recorder are not comparable with these ones: version
--- 1 wrote every verdict blank and kept no raw lines. Dropping them on a version
--- change is the honest move; mixing them silently is how a counter ends up
--- summarising two different meanings under one name.
+-- The shape of what is written to the saved variables. Data carried from a
+-- previous session is dropped when the version differs: samples from another
+-- build of the recorder are not comparable, and mixing them would make one
+-- counter summarise two meanings under one name.
 local VERSION = 3
 
--- Counting and keeping are two decisions, and the KIND of fact makes it -- not
--- the volume seen at runtime (D75). A dynamic threshold would make the evidence
--- depend on how long that session happened to run: the same fact would occupy a
--- sample one day and not the next, and two files would stop being comparable.
--- Declared up front, a reader knows before opening the file which kinds could
--- have been in it.
+-- Kinds that are counted but never kept in the ring. The kind of fact decides,
+-- not the volume seen at runtime: a dynamic threshold would make the same fact
+-- occupy a sample in one session and not the next, and two files would stop
+-- being comparable. Declared up front, a reader knows which kinds a file can
+-- hold.
 --
--- A kind belongs here only if it meets BOTH conditions (D76): it happens many
--- times in a session, AND its n-th occurrence says nothing the first did not.
--- Nothing on the experience path qualifies however frequent it gets -- there the
--- n-th occurrence is the case being hunted, and the volume is the whole reason
--- the ring exists.
---
--- What this fixes: of the 400 samples the session of 2026-09-21 left behind, 132
--- were time played received, 34 requested and 32 session markers. Half the file,
--- leaving 131 samples of experience -- four hours of clock turned into nine
--- minutes of readable play.
+-- A kind belongs here only if it happens many times in a session and its n-th
+-- occurrence says nothing the first did not. Time played and session markers
+-- would otherwise fill half the ring. Nothing on the experience path qualifies,
+-- however frequent: there the n-th occurrence is the case being looked for.
 local COUNTER_ONLY = {
   timePlayedReceived = true,
   timePlayedRequested = true,
@@ -75,15 +50,11 @@ local COUNTER_ONLY = {
   nameplateSweep = true,
 }
 
--- A FAMILY of counter-only kinds, for the case the declaration above cannot
--- express: a kind whose name is not known here in advance. The census of combat
--- log subevents this addon does not handle is named by the client's own
--- vocabulary, and enumerating it here would mean this file learning every line
--- the combat log can write -- which is the opposite of what the census is for.
---
--- Still a declaration and still explicit: a prefix is registered on purpose, one
--- at a time, and a kind that does not start with one is not counter-only. It is
--- not a rule about volume, which is the thing D75 refuses.
+-- Families of counter-only kinds whose names are not known in advance. The
+-- census of combat log subevents this addon does not handle is named by the
+-- client's own vocabulary, and listing it here would mean this file learning
+-- every line the combat log can write. Each prefix is still declared on its
+-- own: this is a rule about the kind, never about volume.
 local COUNTER_ONLY_PREFIX = {
   ["subevent."] = true,
   -- What the pull plate was handed, by phase and by how many creatures were in
@@ -107,17 +78,15 @@ end
 local EvidenceLog = {}
 EvidenceLog.__index = EvidenceLog
 
--- Exposed so the declaration can be enumerated by a test rather than trusted.
--- Getting a kind wrong here is not the risk; getting it wrong WITHOUT NOTICING
--- is, and it would only show up as a session that recorded the wrong half.
+-- Exposed so a test can enumerate the declaration: a wrong entry would
+-- otherwise only show up as a session that recorded the wrong half.
 EvidenceLog.COUNTER_ONLY = COUNTER_ONLY
 EvidenceLog.COUNTER_ONLY_PREFIX = COUNTER_ONLY_PREFIX
 EvidenceLog.isCounterOnly = isCounterOnly
 
--- Where the player is, as the client will tell it at this instant. Read here
--- rather than through the player-state port on purpose: the port does not carry
--- a place yet (that is the next group of work), and this file exists precisely
--- to find out what the client answers before committing to a model for it.
+-- Where the player is, as the client answers at this instant. Read from the
+-- client rather than through the player-state port: the recorder keeps the raw
+-- answers, not the model the port builds on them.
 local function placeNow()
   local place = {}
 
@@ -171,15 +140,12 @@ function EvidenceLog:isEnabled()
   return self.enabled
 end
 
--- Switched on from the chat command without a reload: recording begins at the
--- next event rather than at the next session. And switched OFF the same way --
--- which used to be a lie. `enabled` was read once, while subscribing, and never
--- again, so a recorder told to stop kept recording and kept rotating its bounded
--- ring over the very evidence the player switched it off to keep.
+-- Switched from the chat command without a reload, in both directions: on,
+-- recording begins at the next event; off, it stops at once, so the bounded ring
+-- does not rotate over the evidence the player switched it off to keep.
 --
--- Both edges are written into the file, on the inside of the switch. A gap with no
--- marker either side of it cannot be told from an hour in which nothing happened,
--- and "the recorder was off" is an answer the person reading the file needs.
+-- Both edges are written into the file, on the inside of the switch: a gap with
+-- no marker cannot be told from an hour in which nothing happened.
 function EvidenceLog:enable(enabled)
   enabled = enabled == true
   if enabled == self.enabled then
@@ -197,10 +163,9 @@ function EvidenceLog:enable(enabled)
   return self
 end
 
--- The door for a fact the bus does not carry: a spike's own measurement, taken
--- where the code that knows it runs. Kinds and fields, never a formatted
--- sentence -- the moment this accepts a line of prose it has become the bounded
--- chat ring it exists to replace.
+-- The entry point for a fact the bus does not carry, taken where the code that
+-- knows it runs. Kinds and fields, never a formatted sentence: prose would turn
+-- the file into a chat log.
 function EvidenceLog:record(kind, fields)
   if not self.enabled then
     return self
@@ -208,10 +173,8 @@ function EvidenceLog:record(kind, fields)
 
   self:count(kind)
 
-  -- Counted, never kept. The tally still answers "how often"; the ring is left
-  -- for what can only be understood by seeing one whole (D75). Returning here
-  -- rather than inside push() also skips building the sample at all, and
-  -- placeNow() costs eight client calls.
+  -- Counted, never kept. Returning here rather than inside push() also skips
+  -- building the sample, and placeNow() costs eight client calls.
   if isCounterOnly(kind) then
     return self
   end
@@ -231,12 +194,10 @@ function EvidenceLog:count(name)
   self.counters[name] = (self.counters[name] or 0) + 1
 end
 
--- Bounded, and bounded by dropping the OLDEST: what matters is the last hour of
--- play, not the first. Written as append-then-trim rather than as a ring on
--- purpose -- the table stays in chronological order, which means it can be handed
--- to the saved variables by reference and read straight out of the file without
--- any unwrapping. Moving four hundred references once per kill is nothing next to
--- what a redraw already does.
+-- Bounded by dropping the oldest: the last hour of play matters, not the first.
+-- Append-then-trim rather than a ring buffer keeps the table in chronological
+-- order, so the saved variables can hold it by reference and the file reads
+-- without unwrapping. Moving 400 references per sample is cheap next to a redraw.
 function EvidenceLog:push(sample)
   sample.t = self.clock:now()
   sample.level = self.playerState:level()
@@ -248,15 +209,13 @@ function EvidenceLog:push(sample)
   end
 end
 
--- Every subscription below goes through this, and the flag is read at DELIVERY
--- rather than at subscribe time. That distinction is the whole of `/ascent
--- evidence off`: a subscription outlives the switch that made it, so checking
--- `enabled` only while subscribing stops nothing.
+-- Every subscription below goes through this, and the flag is read at delivery,
+-- not at subscribe time: a subscription outlives the switch that made it, so a
+-- check made only while subscribing would never stop the recorder.
 --
--- Guarding here rather than inside push() is deliberate. Building push's argument
--- already costs eight client calls through placeNow(), so a guard further in would
--- pay for samples it then throws away -- and attachTo's session marker
--- legitimately goes through push while the recorder is off.
+-- The guard sits here rather than inside push() because building push's argument
+-- already costs eight client calls through placeNow(); a guard further in would
+-- pay for samples it then throws away.
 local function whileEnabled(self, topic, handler)
   self.bus:subscribe(topic, function(payload)
     if not self.enabled then
@@ -266,10 +225,8 @@ local function whileEnabled(self, topic, handler)
   end)
 end
 
--- Idempotent, because the chat command switches recording on mid-session and
--- subscribing twice would record every event twice -- which would not fail, it
--- would quietly double every counter in the file and make the evidence wrong in
--- the one way that is hard to notice afterwards.
+-- Idempotent: the chat command can switch recording on mid-session, and
+-- subscribing twice would silently double every counter in the file.
 function EvidenceLog:start()
   if not self.enabled or self.started then
     return self
@@ -278,9 +235,8 @@ function EvidenceLog:start()
 
   self.startedAt = self.clock:now()
 
-  -- The authoritative amount. Recorded on its own rather than merged with the
-  -- hint: whether the two agree is the question, so they are never written as
-  -- one number.
+  -- The authoritative amount, recorded apart from the hint: whether the two
+  -- agree is the question, so they are never written as one number.
   whileEnabled(self, EventTopic.XP_DELTA_OBSERVED, function(payload)
     self:count("delta")
     self:push({
@@ -314,28 +270,16 @@ function EvidenceLog:start()
       restedBefore = payload.restedBefore,
       restedAfter = payload.restedAfter,
       questId = payload.questId,
-      -- The client's own sentence, kept verbatim next to what was made of it.
-      -- Whoever reads the file can re-parse it by eye; without it they can only
-      -- take the parser's word for what it was looking at.
+      -- The client's own sentence, verbatim next to what was parsed from it, so
+      -- a reader can re-parse it by eye instead of trusting the parser.
       template = payload.template,
       raw = payload.raw,
       place = placeNow(),
     })
   end)
 
-  -- What the reconciler decided in the end, which is the third leg: delta, claim,
-  -- verdict. A disagreement between any two of them is a bug worth seeing.
-  --
-  -- The verdict arrives wrapped: the topic carries `{ gain = XpGain }`, not the
-  -- gain's fields spread across the payload. Reading it flat cost the first
-  -- recorded session its entire third leg -- every sample said "attributed" and
-  -- nothing else -- so the shape is taken from the publisher here, and the test
-  -- publishes a real XpGain rather than a hand-written table that can agree with
-  -- a mistaken reader.
-  -- The sentence no template claimed. Counted AND kept: the counter answers "does
-  -- this client print something we do not know about, and how often", and the ring
-  -- answers "show me one" -- which is the whole shape of this recorder, applied for
-  -- the first time to the case it was most needed for.
+  -- A sentence no template claimed. Counted and kept: the counter says whether
+  -- and how often this client prints something unknown, the ring shows one.
   whileEnabled(self, EventTopic.XP_LINE_UNMATCHED, function(payload)
     self:count("unmatchedLine")
     self:push({
@@ -348,6 +292,11 @@ function EvidenceLog:start()
     })
   end)
 
+  -- The reconciler's verdict, the third leg after delta and claim; a
+  -- disagreement between any two is a bug. The topic carries
+  -- `{ gain = XpGain }`, not the gain's fields spread across the payload, and the
+  -- test publishes a real XpGain so a hand-written table cannot agree with a
+  -- mistaken reader.
   whileEnabled(self, EventTopic.XP_ATTRIBUTED, function(payload)
     local gain = payload and payload.gain
     self:count("attributed")
@@ -359,30 +308,24 @@ function EvidenceLog:start()
       groupBonus = gain and gain.groupBonus,
       raidPenalty = gain and gain.raidPenalty,
       restedBonus = gain and gain.restedBonus,
-      -- How many shared this one, which is NOT derivable from groupBonus above --
-      -- that is the bonus, not the population, and telling a two-man from a
-      -- five-man is the whole point. Without it the session that has to confirm
-      -- each kill was filed under the right size cannot do it from the file, which
-      -- is the only way anything here has ever been confirmed.
+      -- How many shared the kill. Not derivable from groupBonus, which is the
+      -- bonus and not the group size; without it the file cannot confirm that
+      -- each kill was filed under the right size.
       sharedBy = gain and gain.sharedBy,
     })
   end)
 
-  -- Wrapped exactly like the verdict above -- the topic carries `{ record }` -- and
-  -- read flat here for a while, which cost the same thing in miniature: the file came
-  -- back with five level completions and not one of them could say WHICH level had
-  -- completed. The shape is taken from the publisher, and the test publishes a real
-  -- LevelRecord.
+  -- Wrapped like the verdict above: the topic carries `{ record = LevelRecord }`,
+  -- and the test publishes a real LevelRecord for the same reason.
   whileEnabled(self, EventTopic.LEVEL_COMPLETED, function(payload)
     local record = payload and payload.record
     self:count("levelCompleted")
     self:push({ kind = "levelCompleted", completedLevel = record and record.level })
   end)
 
-  -- Who the pull enrolled and from where. The two paths -- a line of the combat
-  -- log, and a nameplate seen coming -- publish the same topic on purpose, so what
-  -- this answers afterwards is "did anything enrol at all", which is the first
-  -- question when a player reports a pull that stayed empty.
+  -- Who the pull enrolled and from where. Both paths, a combat log line and a
+  -- nameplate seen coming, publish this topic, so the file answers whether
+  -- anything enrolled at all: the first question about a pull that stayed empty.
   whileEnabled(self, EventTopic.ENEMY_ENGAGED, function(payload)
     self:count("engaged")
     self:push({
@@ -401,31 +344,24 @@ function EvidenceLog:start()
   return self
 end
 
--- Hands the live tables to the saved-variables store BY REFERENCE, so everything
--- recorded from here on is already in the file when the client writes it at
--- logout. No periodic flush, nothing to forget to call, and nothing lost to a
--- crash beyond what the client itself loses.
+-- Hands the live tables to the saved-variables store by reference, so everything
+-- recorded is already in the file when the client writes it at logout: no flush
+-- to call, and nothing lost to a crash beyond what the client itself loses.
 --
--- It also ADOPTS whatever a previous session left there. A recorder that starts
--- empty every time is not a flight recorder: a reload is the single most common
--- thing a player does while an addon is being worked on, and the first real
--- session was lost to exactly that -- an hour of play, including the only group
--- kill in it, replaced by three samples because /reload came before anyone read
--- the file. Carrying forward makes the file cumulative and still bounded: the
--- ring trims to the same limit whether its samples came from this session or the
--- last four.
+-- It also adopts what a previous session left there, because /reload is the
+-- most common thing a player does while an addon is being tested and a recorder
+-- that starts empty loses the session to it. The file becomes cumulative and
+-- stays bounded: the ring trims to the same limit wherever its samples came from.
 --
--- `environment` is the part that cannot be derived from the samples: which
--- client, which language, and the templates it actually carries. Without it the
--- samples are uninterpretable by anyone who does not already know the machine
--- they came from. It is always the CURRENT session's, never the carried one: a
--- file that says which client it came from must mean the client running now.
+-- `environment` is what the samples cannot say: which client, which language,
+-- and the templates it carries. It is always the current session's, never the
+-- carried one, so it describes the client running now.
 function EvidenceLog:attachTo(store, environment)
   local carried = store.evidence
 
-  -- The identity check is the guard against attaching twice -- the startup path
-  -- and the chat command both call this -- because after the first attach the
-  -- stored table IS this one, and adopting it would append the ring to itself.
+  -- The identity check guards against attaching twice (the startup path and the
+  -- chat command both call this): after the first attach the stored table is
+  -- this one, and adopting it would append the ring to itself.
   if type(carried) == "table" and carried.version == VERSION
     and type(carried.samples) == "table" and carried.samples ~= self.samples then
     local adopted = {}
@@ -455,12 +391,9 @@ function EvidenceLog:attachTo(store, environment)
       end
     end
 
-    -- Counted, not kept (D76). The seam still matters -- without it a reader
-    -- cannot tell a gap in the timestamps caused by a reload from one caused by
-    -- the player walking away -- but the tally says it happened, and keeping one
-    -- sample per reload is precisely what drowned the ring: a reload is the
-    -- single most common thing a player does while an addon is being worked on,
-    -- so this marker scaled with the noise instead of with the evidence.
+    -- Counted, not kept. The count still tells a reader that reloads explain
+    -- some gaps in the timestamps, while a sample per reload would scale with
+    -- the noise and crowd the evidence out of the ring.
     self:count("sessionStarted")
   end
 

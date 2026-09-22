@@ -2,8 +2,7 @@
 --
 -- Adapters publish, services and views subscribe, and neither knows the other
 -- exists. Topics are always constants from EventTopic: publishing a bare string
--- is an error, because a typo in a topic is otherwise a message nobody receives
--- and nobody notices.
+-- is an error, because a mistyped topic would otherwise fail silently.
 
 local _, ns = ...
 ns.core = ns.core or {}

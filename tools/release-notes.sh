@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
 #
-# Ascent - the release notes for the version at the top of CHANGELOG.md.
+# Ascent - the release notes for a version of CHANGELOG.md, the newest by default.
 #
-# One reader, two consumers: the CurseForge upload and the GitHub release. A
-# second copy of this awk is a second set of release notes the day somebody edits
-# one of them, and the one that goes stale is whichever nobody was looking at.
+# The CurseForge upload and the GitHub release both read their notes through
+# this script, so the two cannot drift apart.
 #
 #   ./tools/release-notes.sh            the newest section, without its heading
+#   ./tools/release-notes.sh 0.2.0      that version's section, to rewrite a published release
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The file is Keep a Changelog, so the first "## " block is always the one being
-# released. Reference-style link definitions are markdown plumbing for the file,
-# not part of the notes, and they read as a stray line once pasted.
-BODY="$(awk '
-  /^## / { if (seen) exit; seen = 1; next }
+# The file is Keep a Changelog, so the first "## " block is the newest version.
+# Reference-style link definitions are left out: pasted, they read as a stray line.
+VERSION="${1:-}"
+BODY="$(awk -v want="$VERSION" '
+  /^## / {
+    if (seen) exit
+    if (want == "" || index($0, "## [" want "]") == 1) seen = 1
+    next
+  }
   /^\[[^]]+\]: / { next }
   seen { print }
 ' "$ROOT/CHANGELOG.md")"
 
 if [ -z "$BODY" ]; then
-  echo "could not read a section out of CHANGELOG.md" >&2
+  echo "could not read ${VERSION:+the $VERSION }section out of CHANGELOG.md" >&2
   exit 1
 fi
 

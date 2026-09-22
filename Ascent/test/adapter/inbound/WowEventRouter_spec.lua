@@ -1,13 +1,8 @@
--- The router's own contract is the payload shapes XpAttribution and LevelTracker
--- already expect (read straight off their source, not guessed): XP_DELTA_OBSERVED
--- is {amount, at, place, sharedBy}, an XP_HINT_RECEIVED carries `kind` plus whatever its
--- channel can say, CREATURE_DIED is out of scope entirely (CombatLogRouter's job).
---
--- Group and raid kill messages ARE exercised here now. They used to be left out
--- because the router compiled no pattern for them -- which turned out to be only
--- half the story: it matched them against the plain kill template by prefix, so
--- the amount was right and the modifier vanished. These tests exist to keep that
--- from coming back.
+-- The router's contract is the payload shapes XpAttribution and LevelTracker expect:
+-- XP_DELTA_OBSERVED is {amount, at, place, sharedBy}, an XP_HINT_RECEIVED carries
+-- `kind` plus whatever its channel can say. CREATURE_DIED is CombatLogRouter's job.
+-- Group and raid kill lines matched against the plain kill template by prefix would
+-- keep the amount and lose the modifier.
 
 local FIRSTPERSON = "%s dies, you gain %d experience."
 local FIRSTPERSON_GROUP = "%s dies, you gain %d experience. (+%d group bonus)"
@@ -32,7 +27,8 @@ describe("WowEventRouter", function()
   local bus, clock, player, router
 
   local function load()
-    return AscentTest.loadWith("core/model/", "core/port/",
+    return AscentTest.loadWith("core/model/", "core/port/", "adapter/compat/Readable.lua",
+      "adapter/compat/Capabilities.lua",
       "adapter/inbound/GlobalStringPattern.lua", "adapter/inbound/WowEventRouter.lua",
       "test/fakes/FakeClock.lua", "test/fakes/FakePlayerState.lua", "test/fakes/RecordingEventBus.lua")
   end
@@ -116,9 +112,9 @@ describe("WowEventRouter", function()
       assert.equal(clock:now(), payload.at)
     end)
 
-    -- D43: the place belongs to the instant the experience was granted. The
-    -- announcement that explains it may arrive a window and a half either side,
-    -- by which time the character can be somewhere else entirely.
+    -- The place belongs to the instant the experience was granted: the announcement
+    -- that explains it may arrive a window and a half either side, by which time the
+    -- character can be somewhere else entirely.
     it("stamps the delta with where the character is at that instant", function()
       player:set("place", { context = ns.core.PlaceContext.DUNGEON, areaId = 389, name = "Ragefire Chasm" })
       router:dispatch(WowEvent.PLAYER_ENTERING_WORLD)
@@ -129,11 +125,9 @@ describe("WowEventRouter", function()
       assert.equal("dungeon:389", bus:lastOn(EventTopic.XP_DELTA_OBSERVED).place:id())
     end)
 
-    -- D81, and the same argument as the place above: the size is read at the one
-    -- instant the server is known to have decided the split, because the addon
-    -- settles a delta two windows after it arrives and the party can be left in
-    -- between. The port already answers one for a character playing alone, so
-    -- nothing here has to remember the client's zero.
+    -- The group size is read at the instant the server decided the split: a delta
+    -- settles two windows after it arrives, and the party can be left in between.
+    -- The port answers one for a character alone, never GetNumGroupMembers's zero.
     it("stamps the delta with how many shared it at that instant", function()
       player:set("sharedBy", 5)
       router:dispatch(WowEvent.PLAYER_ENTERING_WORLD)
@@ -273,7 +267,7 @@ describe("WowEventRouter", function()
     end)
   end)
 
-  describe("quest reward seen from the open dialogue (D15 level 2)", function()
+  describe("quest reward seen from the open dialogue", function()
     it("publishes the reward read from QUEST_DETAIL", function()
       _G.GetQuestID = function() return 1234 end
       _G.GetRewardXP = function() return 250 end
@@ -375,12 +369,9 @@ describe("WowEventRouter", function()
       assert.is_nil(hint.creatureName)
     end)
 
-    -- The two readings are still carried, and the shape below is still what the
-    -- router publishes. What the 2026-09-17 session changed is what they MEAN: the
-    -- client prints the line before applying the gain, so this window is shifted one
-    -- kill and cannot be the source of the bonus. It is the cross-check input, and
-    -- naming it after the kill it sits beside is the mistake that hid the defect for
-    -- a whole change. See "reads the rested bonus off the parenthetical" below.
+    -- The client prints the line before it applies the gain, so the reserve sampled
+    -- around it is shifted one kill: a cross-check input, never the source of the
+    -- bonus, which is read off the parenthetical (see the test below).
     it("carries the rested reserve either side of the sampling point (cross-check input)", function()
       player:set("restedXp", 300)
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN, "Boar dies, you gain 12 experience.")
@@ -397,13 +388,9 @@ describe("WowEventRouter", function()
       assert.equal(280, second.restedAfter)
     end)
 
-    -- The regression test for the defect the 2026-09-17 session exposed. Both kills
-    -- and both figures are transcribed from that file; only the reserve is rounded
-    -- for legibility. Before the parenthetical was read, the recorded bonus was
-    -- whatever the reserve diff said -- and the reserve diff is one kill behind, so
-    -- Vishas's 522-point kill was filed with the Torturer's 101-point bonus. Over
-    -- that session it under-reported the rested bonus by 1104 experience, 16.9%,
-    -- and the panel showed the wrong figure with the suite fully green.
+    -- Both kills and their figures are transcribed from a real client's lines; only
+    -- the reserve is rounded. Read off the reserve diff, which is one kill behind,
+    -- Vishas's 522-point kill would be filed with the Torturer's 101-point bonus.
     it("reads the rested bonus off the parenthetical, not off the reserve behind it", function()
       player:set("restedXp", 45370)
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN,
@@ -413,15 +400,15 @@ describe("WowEventRouter", function()
       assert.equal(202, first.amount)
       assert.equal(101, first.restedRaw)
 
-      -- The client applies the gain only now: this is what makes the window lie.
+      -- The client applies the Torturer's gain only now, after its line.
       player:set("restedXp", 45168)
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN,
         "Interrogator Vishas dies, you gain 522 experience. (+261 exp Rested bonus)")
 
       local second = bus:lastOn(EventTopic.XP_HINT_RECEIVED)
       assert.equal(261, second.restedRaw)
-      -- ...while the reserve this line bounds still describes the Torturer: a drop
-      -- of 202, half of which is the 101 the previous line announced.
+      -- The reserve this line bounds still describes the Torturer: a drop of 202,
+      -- half of which is the 101 the previous line announced.
       assert.equal(101, (second.restedBefore - second.restedAfter) / 2)
     end)
 
@@ -452,11 +439,9 @@ describe("WowEventRouter", function()
       assert.equal(0, bus:countOf(EventTopic.XP_HINT_RECEIVED))
     end)
 
-    -- But it does say so, verbatim and on the bus. That line is the only thing that
-    -- can answer what this client prints for a case the family does not cover, and
-    -- sending it only to the debug log put it in the one place it could not be read
-    -- back from -- while the flight recorder, whose whole purpose is keeping the
-    -- client's own sentences, never saw it.
+    -- An unmatched line is the only record of what this client prints for a case
+    -- the family does not cover, so it goes on the bus verbatim, where the evidence
+    -- recorder keeps it.
     it("publishes a line that matched no template, with the sentence intact", function()
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN, "Something unrelated happened.")
 
@@ -509,6 +494,37 @@ describe("WowEventRouter", function()
     router:dispatch(WowEvent.GROUP_ROSTER_UPDATE)
 
     assert.same({}, bus:topicsInOrder())
+  end)
+
+  -- The channel that names a gain's source, read the way the diagnostic reads it:
+  -- through the registry, as the reason it prints.
+  describe("whether this client offers the channel that names a gain", function()
+    local function reasonOn(scoped)
+      local capabilities = scoped.adapter.Capabilities.new()
+      capabilities:register("xp_chat", scoped.adapter.WowEventRouter.isXpChatSupported)
+      return capabilities:reasonFor("xp_chat")
+    end
+
+    it("is present when the client carries the kill template", function()
+      assert.equal("present", reasonOn(ns))
+    end)
+
+    it("is absent when it does not", function()
+      _G.COMBATLOG_XPGAIN_FIRSTPERSON = nil
+
+      assert.equal("absent", reasonOn(ns))
+    end)
+
+    it("is unreadable when the template itself is closed", function()
+      local reason
+      AscentTest.withSecretRegime(function()
+        local scoped = load()
+        _G.COMBATLOG_XPGAIN_FIRSTPERSON = AscentTest.secret(FIRSTPERSON)
+        reason = reasonOn(scoped)
+      end)
+
+      assert.equal("unreadable", reason)
+    end)
   end)
 
   describe("a GlobalString the client does not provide", function()
@@ -568,10 +584,8 @@ describe("WowEventRouter", function()
     end)
   end)
 
-  -- An optional diagnostic, added after the two chat-XP templates -- never
-  -- verified against a real client (D5's Open Questions) -- turned out not to
-  -- match a real kill line. Without a logger, none of this changes anything: the
-  -- router works exactly as it did before this was added.
+  -- An optional logger that says which chat-XP templates compiled and what each
+  -- line matched. Without one, the router behaves exactly the same.
   describe("diagnostics (optional logger)", function()
     local function fakeLogger()
       local messages = {}
@@ -627,20 +641,18 @@ describe("WowEventRouter", function()
 
       local joined = table.concat(messages, "\n")
       assert.is_not_nil(joined:find("hint (kill_message) at", 1, true))
-      -- The template that matched rides along: it is what the group-bonus
-      -- question is answered with (design D45).
+      -- The template that matched rides along: it says whether a kill carried a
+      -- group bonus.
       assert.is_not_nil(joined:find("template=FIRSTPERSON", 1, true))
       assert.is_not_nil(joined:find("Boar", 1, true))
-      -- Spike 0.4 needs the raw text too: real play showed a rested-bonus kill
-      -- matching this branch on its prefix alone, with the trailing parenthetical
-      -- unparsed and, before this, unlogged entirely.
+      -- And the raw text, so a line matched on its prefix alone still shows the
+      -- trailing parenthetical it left unparsed.
       assert.is_not_nil(joined:find("raw=", 1, true))
       assert.is_not_nil(joined:find("Boar dies, you gain 12 experience.", 1, true))
     end)
 
-    -- A player reported exploration XP landing half in EXPLORATION and half in
-    -- UNKNOWN with nothing to diagnose it by: this channel had no debug line at
-    -- all before now, unlike the kill message above.
+    -- Without it, exploration experience that lands in UNKNOWN instead of
+    -- EXPLORATION leaves nothing to diagnose it by.
     it("logs a zone discovery hint the same timestamped way as a kill", function()
       local logger, messages = fakeLogger()
       local diagnosed = ns.adapter.WowEventRouter.new({
@@ -654,9 +666,8 @@ describe("WowEventRouter", function()
       assert.is_not_nil(joined:find("Westfall", 1, true))
     end)
 
-    -- Spike 0.2 needs a timestamp on the quest hint too, to determine the order
-    -- between it and the XP delta -- the same open question already partly
-    -- answered for kills.
+    -- The timestamp orders the quest hint against the experience delta, an order
+    -- not yet confirmed on the client.
     it("logs a quest turn-in hint timestamped the same way as a kill", function()
       local logger, messages = fakeLogger()
       local diagnosed = ns.adapter.WowEventRouter.new({
@@ -709,12 +720,8 @@ describe("WowEventRouter", function()
       assert.is_not_nil(joined:find("hint (anonymous_message) at", 1, true))
     end)
 
-    -- A rested-bonus kill whose text still shares `firstPerson`'s prefix matches
-    -- that branch (unanchored matching), which already samples the reserve --
-    -- covered by the "logs a successful match too" test above, updated to check
-    -- for it. This test is for a line that shares nothing with any compiled
-    -- template at all: the reserve still has to be sampled here too, in case the
-    -- real EXHAUSTION wording diverges from the very first word.
+    -- A line that shares nothing with any compiled template still samples the
+    -- reserve, in case a client's EXHAUSTION wording diverges from the first word.
     it("samples the rested reserve alongside a fully unmatched line", function()
       local logger, messages = fakeLogger()
       local diagnosed = ns.adapter.WowEventRouter.new({
@@ -731,7 +738,6 @@ describe("WowEventRouter", function()
     end)
   end)
 
-  -- The defect this change exists to fix, kept from coming back.
   describe("kill modifiers", function()
     it("records the group bonus of a kill in a group", function()
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN, "Boar dies, you gain 120 experience. (+18 group bonus)")
@@ -753,7 +759,7 @@ describe("WowEventRouter", function()
     end)
 
     -- The amount is the experience actually credited; the modifier is an
-    -- annotation on it and never changes it (design D41).
+    -- annotation on it and never changes it.
     it("keeps the amount the same whether or not there is a modifier", function()
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN, "Boar dies, you gain 120 experience.")
       local plain = bus:lastOn(EventTopic.XP_HINT_RECEIVED).amount
@@ -765,8 +771,8 @@ describe("WowEventRouter", function()
       assert.equal(120, grouped.amount)
     end)
 
-    -- The regression itself: before anchoring, this line matched the plain kill
-    -- template on its prefix and arrived with no modifier at all.
+    -- The plain kill template is a prefix of this line; only an anchored match
+    -- keeps the modifier.
     it("does not swallow a modified line into the plain template", function()
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN, "Boar dies, you gain 120 experience. (+18 group bonus)")
 
@@ -781,10 +787,8 @@ describe("WowEventRouter", function()
       assert.is_nil(hint.raidPenalty)
     end)
 
-    -- The first recorded session could not say whether a group line had a
-    -- parenthetical at all: the file held only the parse, so the parser was the
-    -- sole witness to its own work. These two fields are what let the raw line
-    -- be re-read by eye afterwards, and the decision checked against it.
+    -- With only the parse in the evidence file, the parser is the sole witness to
+    -- its own work; the template and the raw line let a reader check it by eye.
     it("carries the template it matched and the client's own line to the recorder", function()
       router:dispatch(WowEvent.CHAT_MSG_COMBAT_XP_GAIN, "Boar dies, you gain 120 experience. (+18 group bonus)")
 
@@ -810,6 +814,117 @@ describe("WowEventRouter", function()
       assert.equal(1, hits.FIRSTPERSON)
       assert.equal(2, hits.FIRSTPERSON_GROUP)
       assert.is_nil(hits.FIRSTPERSON_RAID)
+    end)
+  end)
+
+  -- What an event carries is a client read too. On the 12.0 engine (World of
+  -- Warcraft: Forever) the experience line may come closed: a string that raises on
+  -- the match, which the stand-in secret, a table, reproduces only under
+  -- withClientTypes.
+  describe("on a client that closes what an event carries", function()
+    local scoped, closedBus, closedRouter
+
+    before_each(function()
+      AscentTest.withSecretRegime(function()
+        scoped = load()
+        closedBus = scoped.fakes.RecordingEventBus.new()
+        closedRouter = scoped.adapter.WowEventRouter.new({
+          bus = closedBus,
+          clock = scoped.fakes.FakeClock.new(1000),
+          playerState = scoped.fakes.FakePlayerState.new({ level = 10, xp = 100, xpMax = 1000, restedXp = 0 }),
+        })
+      end)
+    end)
+
+    -- The line that would have named the source is not read, so nothing is named.
+    -- The experience itself arrives on PLAYER_XP_UPDATE and is not this line's to lose.
+    it("names no source from an experience line it cannot read", function()
+      local line = AscentTest.secret("Boar dies, you gain 12 experience.")
+
+      AscentTest.withClientTypes(function()
+        assert.has_no.errors(function()
+          closedRouter:dispatch(scoped.core.WowEvent.CHAT_MSG_COMBAT_XP_GAIN, line)
+          closedRouter:dispatch(scoped.core.WowEvent.CHAT_MSG_SYSTEM, line)
+        end)
+      end)
+
+      assert.same({}, closedBus:topicsInOrder())
+    end)
+
+    it("carries no closed field of a quest turn-in into the domain", function()
+      AscentTest.withClientTypes(function()
+        assert.has_no.errors(function()
+          closedRouter:dispatch(scoped.core.WowEvent.QUEST_TURNED_IN,
+            AscentTest.secret(1234), AscentTest.secret(250), AscentTest.secret(0))
+        end)
+      end)
+
+      assert.same({ {} }, { closedBus:lastOn(scoped.core.EventTopic.QUEST_COMPLETED) })
+      assert.equal(0, closedBus:countOf(scoped.core.EventTopic.XP_HINT_RECEIVED))
+    end)
+
+    it("learns nothing from a quest dialogue whose answers it cannot read", function()
+      _G.GetQuestID = function() return AscentTest.secret(1234) end
+      _G.GetRewardXP = function() return AscentTest.secret(250) end
+      _G.GetTitleText = function() return AscentTest.secret("Wanted: Hogger") end
+
+      AscentTest.withClientTypes(function()
+        assert.has_no.errors(function()
+          closedRouter:dispatch(scoped.core.WowEvent.QUEST_DETAIL)
+        end)
+      end)
+
+      assert.equal(0, closedBus:countOf(scoped.core.EventTopic.QUEST_REWARD_SEEN))
+    end)
+
+    -- The experience line is the channel, so its first closed arrival is the
+    -- capability closing. Said once; everything else keeps being routed, because
+    -- the experience itself does not travel on this line.
+    it("reports the first experience line it cannot read, once, and keeps routing", function()
+      local told = 0
+      closedRouter.onUnreadable = function() told = told + 1 end
+      local line = AscentTest.secret("Boar dies, you gain 12 experience.")
+      local Scoped = scoped.core.WowEvent
+
+      closedRouter:dispatch(Scoped.PLAYER_ENTERING_WORLD)
+      closedRouter:dispatch(Scoped.CHAT_MSG_COMBAT_XP_GAIN, line)
+      closedRouter:dispatch(Scoped.CHAT_MSG_COMBAT_XP_GAIN, line)
+      closedRouter:dispatch(Scoped.PLAYER_LOGOUT)
+
+      assert.equal(1, told)
+      assert.equal(1, closedBus:countOf(scoped.core.EventTopic.SESSION_ENDED))
+    end)
+
+    -- Any other event's closed argument is that event's business, not the channel's.
+    it("does not read a closed system line as the experience channel closing", function()
+      local told = 0
+      closedRouter.onUnreadable = function() told = told + 1 end
+
+      closedRouter:dispatch(scoped.core.WowEvent.CHAT_MSG_SYSTEM, AscentTest.secret("Discovered Goldshire"))
+      closedRouter:dispatch(scoped.core.WowEvent.CHAT_MSG_COMBAT_XP_GAIN, nil)
+
+      assert.equal(0, told)
+    end)
+
+    -- Read once, at construction, and compiled into a pattern: a closed template
+    -- is a channel this client does not offer, the same as a missing one.
+    it("compiles no pattern from a template the client closes", function()
+      _G.COMBATLOG_XPGAIN_FIRSTPERSON = AscentTest.secret(FIRSTPERSON)
+
+      local built
+      AscentTest.withClientTypes(function()
+        assert.has_no.errors(function()
+          built = scoped.adapter.WowEventRouter.new({
+            bus = closedBus,
+            clock = scoped.fakes.FakeClock.new(1000),
+            playerState = scoped.fakes.FakePlayerState.new({ level = 10, xp = 100, xpMax = 1000 }),
+          })
+        end)
+      end)
+
+      for _, entry in ipairs(built.patterns.xpFamily) do
+        assert.are_not.equal("FIRSTPERSON", entry.name)
+      end
     end)
   end)
 end)

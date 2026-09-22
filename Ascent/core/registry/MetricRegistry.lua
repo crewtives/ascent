@@ -1,4 +1,4 @@
--- Ascent - the registry of combat metric collectors (D10, D23).
+-- Ascent - the registry of combat metric collectors.
 --
 -- Adding a metric means registering a descriptor and nothing else:
 --

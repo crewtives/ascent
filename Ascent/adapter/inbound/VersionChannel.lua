@@ -1,17 +1,14 @@
 -- Ascent - the only part of this addon that talks to other clients.
 --
 -- It says one thing, "this is the version I am", and listens for other people
--- saying it. Everything that DECIDES anything -- whether a version is newer,
--- whether enough distinct players said so, whether there is any allowance left to
--- speak -- lives in core/ and is tested on a desktop. This file is the mouth and
--- the ear (design D64).
+-- saying it. Every decision -- whether a version is newer, whether enough
+-- distinct players said so, whether there is allowance left to speak -- lives in
+-- core/ and is tested on a desktop.
 --
--- THE CLIENT IS ASSUMED TO OFFER NOTHING. Every call is checked for existence
--- before it is made and wrapped so that a client that answers differently costs
--- the announcement rather than the addon: spikes 0.1 and 0.2 have not been run
--- against a real client yet, so nothing here depends on WHAT SendAddonMessage
--- returns -- only on whether calling it raised. When those spikes close, this
--- file is where their answers land.
+-- The client is assumed to offer nothing. Every call is checked for existence and
+-- wrapped, so a client that answers differently costs the announcement rather
+-- than the addon. What SendAddonMessage returns is unverified on a live client,
+-- so nothing here depends on it, only on whether calling it raised.
 
 local _, ns = ...
 ns.adapter = ns.adapter or {}
@@ -20,13 +17,16 @@ local WowEvent = ns.core.WowEvent
 local UpdateChannel = ns.core.UpdateChannel
 local UPDATE_PREFIX = ns.core.UPDATE_PREFIX
 local UpdateWatch = ns.core.UpdateWatch
+-- Another player's message is a client read like any other, and its sender
+-- becomes a table key in the watch's tally, an operation a closed value raises on.
+local readable = ns.adapter.Readable.value
 
 local VersionChannel = {}
 VersionChannel.__index = VersionChannel
 
--- The client's own group predicates, read through a guard: Burning Crusade and
--- Era both have these, but this layer's rule is that a missing client function
--- degrades the one feature that wanted it.
+-- The client's own group predicates, read through a guard: Burning Crusade Classic
+-- and Classic Era both have these, but a missing client function degrades only the
+-- feature that wanted it.
 local function isInGuild()
   return type(IsInGuild) == "function" and IsInGuild() and true or false
 end
@@ -45,7 +45,7 @@ local function isInGroup(category)
   return IsInGroup() and true or false
 end
 
--- Where an announcement can go right now: the guild, plus AT MOST ONE group
+-- Where an announcement can go right now: the guild, plus at most one group
 -- channel. Sending to both RAID and INSTANCE_CHAT would reach the same people
 -- twice and spend twice the allowance for it.
 local function availableChannels()
@@ -90,8 +90,8 @@ function VersionChannel.isSupported()
 end
 
 -- One round: the same sentence to every channel available now. The budget is
--- asked ONCE for the round rather than once per channel, because the round is
--- what an event produces and a half-announced round helps nobody.
+-- asked once for the round, not per channel: an event produces a round, and a
+-- half-announced one helps nobody.
 function VersionChannel:announce()
   if self.frame == nil or not self.watch:speaks() then
     return 0
@@ -129,13 +129,13 @@ end
 function VersionChannel:onEvent(event, ...)
   if event == WowEvent.CHAT_MSG_ADDON then
     local prefix, message, _, sender = ...
+    prefix, message, sender = readable(prefix), readable(message), readable(sender)
     if prefix ~= UPDATE_PREFIX then
       return
     end
 
-    -- A round of one's own is NEVER the answer to someone else's (D66). In a
-    -- forty-player raid, replying turns one arrival into sixteen hundred
-    -- messages.
+    -- Never answered with a round of one's own: in a forty-player raid, replying
+    -- turns one arrival into sixteen hundred messages.
     local newer = self.watch:record(sender, message)
     if newer ~= nil then
       self.onNewer(newer)

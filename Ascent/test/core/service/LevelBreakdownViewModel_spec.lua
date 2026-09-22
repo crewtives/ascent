@@ -1,8 +1,7 @@
--- The guarantee under test mirrors XpBarViewModel's: the per-source fractions
--- have to sum to exactly the level's own completed percentage, and the rested
--- bonus -- already folded into whichever source carried it -- must never be
--- added again on top of that sum. The two rankings (quests by xp, creatures by
--- kill count) are checked separately because they order by different things.
+-- As in XpBarViewModel, the per-source fractions sum to exactly the level's own
+-- completed percentage, and the rested bonus, already inside whichever source
+-- carried it, is never added again on top. The two rankings (quests by xp,
+-- creatures by kill count) are checked separately: they order by different things.
 
 describe("LevelBreakdownViewModel", function()
   local ns, LevelBreakdownViewModel, XpLedger, LevelRecord, XpGain, XpSource, CreatureKey
@@ -159,11 +158,9 @@ describe("LevelBreakdownViewModel", function()
       assert.equal(2, viewModel.topCreatures[3].kills)
     end)
 
-    -- 2.4: one row per population, not per creature. Adding the two back together
-    -- here would print the mixed average this change exists to stop showing --
-    -- separated in the file and mixed again on the screen is the worst of both --
-    -- so each row says which group it was measured in, and the panel is told which
-    -- of them is the group of now.
+    -- One row per population, not per creature: adding the two back together
+    -- would print a mixed average true of neither. Each row says which group it
+    -- was measured in, and the panel is told which of them is the group of now.
     it("keeps a creature's two populations apart and marks the one being played now", function()
       local record = level(10, 1000)
       local lynx = CreatureKey.new(15343, 6, "Springpaw Lynx")
@@ -190,14 +187,14 @@ describe("LevelBreakdownViewModel", function()
       assert.equal(156, paid, "and the two together are still what the creature paid")
 
       -- Same record, a character now playing alone: nothing recorded moved, only
-      -- which population describes what it is doing (D81).
+      -- which population describes what it is doing.
       for _, row in ipairs(LevelBreakdownViewModel.build(record, 1).topCreatures) do
         assert.equal(row.sharedBy == 1, row.current)
       end
     end)
 
-    -- D84: the context nobody counted is its own population, and a row for it must
-    -- not be dressed up as the one measured while playing alone.
+    -- The context nobody counted is its own population, and a row for it must not
+    -- be dressed up as the one measured while playing alone.
     it("never marks kills nobody counted as the group of now", function()
       local record = level(10, 1000)
       XpLedger.post(record, gain({ amount = 42, creature = CreatureKey.new(15343, 6, "Springpaw Lynx") }))
@@ -241,9 +238,9 @@ describe("LevelBreakdownViewModel", function()
     end)
   end)
 
-  -- Design D36: the panel answers two questions that look like one number. The
-  -- level's percentage may legitimately sum to less than a hundred; the
-  -- composition of what was observed may not.
+  -- The panel answers two questions that look like one number. The level's
+  -- percentage may legitimately sum to less than a hundred; the composition of
+  -- what was observed may not.
   describe("the two percentages", function()
     -- A level with `required` experience needed and `amounts` actually earned.
     local function levelWith(amounts, required)
@@ -294,11 +291,9 @@ describe("LevelBreakdownViewModel", function()
     end)
   end)
 
-  -- The group and raid figures follow the rested bonus exactly: a portion of what
-  -- was already credited, reported and never added (design D41).
-  -- The second dimension (D39). The rules that differ from the sources block are
-  -- the interesting ones: a place that paid nothing still gets a row, and the
-  -- rate divides by that place's own time and by nothing else.
+  -- The second dimension. Where it differs from the sources block: a place that
+  -- paid nothing still gets a row, and the rate divides by that place's own time
+  -- and by nothing else.
   describe("places", function()
     local PlaceKey, PlaceContext
 
@@ -361,8 +356,8 @@ describe("LevelBreakdownViewModel", function()
     end)
 
     -- The reserved entry is the ledger's bucket for experience nobody could
-    -- locate, not somewhere the character was. Empty, it is the moment a portal
-    -- takes to resolve, and a real report showed it as a row of zeroes.
+    -- locate, not somewhere the character was. Empty, it is only the moment a
+    -- portal takes to resolve, and would show as a row of zeroes.
     it("drops the reserved entry when no experience landed in it", function()
       local record = level(10, 1000)
       XpLedger.post(record, gain({ amount = 300 }), nil, place(PlaceContext.DUNGEON, 389))
@@ -519,6 +514,8 @@ describe("LevelBreakdownViewModel", function()
     end)
   end)
 
+  -- The group and raid figures follow the rested bonus exactly: a portion of what
+  -- was already credited, reported and never added.
   describe("the group and raid annotations", function()
     local function levelWithModifier(modifier, amount)
       local record = level(30, 10000)
@@ -557,6 +554,26 @@ describe("LevelBreakdownViewModel", function()
       for _, source in ipairs(model.sources) do sum = sum + source.fraction end
 
       assert.is_true(math.abs(sum - model.percentComplete) < 1e-12)
+    end)
+  end)
+
+  -- The kill line is the one channel that names a creature. Without it the rest
+  -- of the breakdown still stands (quests and discoveries arrive by other ways),
+  -- and the view model carries why creatures cannot be told apart.
+  describe("a level recorded without the kill line", function()
+    it("keeps the sources it has and says why creatures are not among them", function()
+      local record = ns.core.LevelRecord.new(10, 0)
+      record.xpRequired = 1000
+      ns.core.XpLedger.post(record, XpGain.new({ amount = 300, source = XpSource.QUEST_TURNIN, at = 1 }))
+      ns.core.XpLedger.post(record, XpGain.new({ amount = 200, source = XpSource.UNKNOWN, at = 2 }))
+      local before = ns.core.LevelBreakdownViewModel.build(record)
+      record:markUnavailable(ns.core.RecordedSource.XP_CHAT, "absent")
+
+      local viewModel = ns.core.LevelBreakdownViewModel.build(record)
+
+      assert.equal("absent", viewModel.sourcesUnavailable)
+      assert.same(before.sources, viewModel.sources)
+      assert.is_nil(before.sourcesUnavailable)
     end)
   end)
 end)

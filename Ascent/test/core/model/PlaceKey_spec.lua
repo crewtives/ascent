@@ -17,8 +17,8 @@ describe("PlaceKey", function()
     assert.equal("world:1429", key:id())
   end)
 
-  -- The property the whole per-place aggregate rests on: walk out of a zone and
-  -- back in, and the experience has to land in the entry it landed in before.
+  -- The per-place aggregate rests on this: walk out of a zone and back in, and
+  -- the experience lands in the entry it landed in before.
   it("gives two readings of the same place the same key", function()
     local first = PlaceKey.new(PlaceContext.DUNGEON, 389, "Ragefire Chasm")
     local second = PlaceKey.new(PlaceContext.DUNGEON, 389, "Ragefire Chasm")

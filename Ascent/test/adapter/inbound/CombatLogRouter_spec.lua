@@ -1,9 +1,6 @@
--- CREATURE_DIED's payload is not invented here: it is the {name, npcId, level, at}
--- shape XpAttribution (group 4) already consumes. ABILITY_USED/DAMAGE_*/
--- HEALING_RECEIVED are deliberately minimal -- group 6, their consumer, does not
--- exist yet -- so these tests check what the router itself promises: the right
--- topic, for the right side of the fight, and nothing for an event neither the
--- player nor their pet were part of (D6's early-filter budget).
+-- What the router promises: the right topic, for the right side of the fight, and
+-- nothing for a line neither the player nor their pet is part of. CREATURE_DIED
+-- carries the {name, npcId, level, at} shape XpAttribution consumes.
 
 local PLAYER_GUID = "Player-1-00000001"
 local PET_GUID = "Pet-0-3661-0-11-9999-00000002"
@@ -15,7 +12,7 @@ describe("CombatLogRouter", function()
   local bus, clock, player, router
 
   local function load()
-    return AscentTest.loadWith("core/port/",
+    return AscentTest.loadWith("core/port/", "adapter/compat/Readable.lua", "adapter/compat/Capabilities.lua",
       "adapter/inbound/CreatureGuid.lua", "adapter/inbound/CombatLogRouter.lua",
       "test/fakes/FakeClock.lua", "test/fakes/FakePlayerState.lua", "test/fakes/RecordingEventBus.lua")
   end
@@ -58,16 +55,15 @@ describe("CombatLogRouter", function()
     _G.UnitLevel = nil
   end)
 
-  describe("the early filter (D6's budget)", function()
+  describe("the early filter that keeps the combat log cheap", function()
     it("discards an event where neither the player nor their pet is involved", function()
       emit(CombatLogSubevent.SPELL_CAST_SUCCESS, OTHER_CREATURE_GUID, BOAR_GUID, "Boar", 111, "Enemy Spell")
 
       assert.same({}, bus:topicsInOrder())
     end)
 
-    -- The example used to be SPELL_AURA_APPLIED, which is dispatched now: a debuff
-    -- landing names a creature that is fighting you, which is the one thing this
-    -- router wants from it. Any subevent outside the table still costs nothing.
+    -- Not SPELL_AURA_APPLIED: a debuff landing is dispatched, because it names a
+    -- creature that is fighting you. A subevent outside the table costs nothing.
     it("discards a subevent nobody dispatches, even one involving the player", function()
       emit("SPELL_ENERGIZE", PLAYER_GUID, BOAR_GUID, "Boar")
 
@@ -122,9 +118,9 @@ describe("CombatLogRouter", function()
       assert.equal(15, bus:lastOn(EventTopic.DAMAGE_DEALT).amount)
     end)
 
-    -- The defect these two hold: a wand reports every shot twice -- once as its
-    -- own cast, once as ranged damage carrying the same spell -- and both used to
-    -- be counted, so twelve shots read as "Shoot x12" AND "Ranged attack x12".
+    -- A wand reports every shot twice: as its own SPELL_CAST_SUCCESS and as a
+    -- RANGE_DAMAGE carrying the same spell. Counting both would read twelve shots
+    -- as "Shoot x12" and "Ranged attack x12".
     it("does not count a shot again when it announced its own cast", function()
       emit(CombatLogSubevent.SPELL_CAST_SUCCESS, PLAYER_GUID, BOAR_GUID, "Boar", 5019, "Shoot", 1)
       emit(CombatLogSubevent.RANGE_DAMAGE, PLAYER_GUID, BOAR_GUID, "Boar", 5019, "Shoot", 1, 15)
@@ -226,9 +222,8 @@ describe("CombatLogRouter", function()
       assert.equal(0, bus:countOf(EventTopic.ABILITY_USED))
     end)
 
-    -- The other end of the line, and the reason this matters: a creature beating
-    -- on the player is the only thing that names a fight the player did not start.
-    -- Without it the pull plate could only list what the player had hit back.
+    -- A creature hitting the player is the only thing that names a fight the player
+    -- did not start; without it the pull plate lists only what the player hit back.
     it("names the creature that landed the blow", function()
       emit(CombatLogSubevent.SWING_DAMAGE, BOAR_GUID, PLAYER_GUID, "Player", 30)
 
@@ -272,7 +267,7 @@ describe("CombatLogRouter", function()
     end)
   end)
 
-  describe("creature deaths (feeding the correlator, D19 -- already wired by group 4)", function()
+  describe("creature deaths (feeding the kill correlator)", function()
     it("publishes CREATURE_DIED with the name and npc id from the GUID", function()
       emit(CombatLogSubevent.UNIT_DIED, PLAYER_GUID, BOAR_GUID, "Boar")
 
@@ -282,10 +277,9 @@ describe("CombatLogRouter", function()
       )
     end)
 
-    -- The one client call in the addon that runs inside the combat-log handler,
-    -- once per death. A flavour without the function would have raised there on
-    -- the first creature killed -- and with Lua errors off, which is the default,
-    -- silently, while every kill after it went unattributed.
+    -- UnitTokenFromGUID is the only client call made inside the combat-log handler,
+    -- once per death. A client without it would raise on the first kill and, with
+    -- Lua errors off (the default), silently leave every later kill unattributed.
     it("still reports the death on a client that has no UnitTokenFromGUID", function()
       _G.UnitTokenFromGUID = nil
 
@@ -310,12 +304,10 @@ describe("CombatLogRouter", function()
       assert.is_nil(bus:lastOn(EventTopic.CREATURE_DIED).level)
     end)
 
-    -- Found from a real trace (group 0): WoW fires PARTY_KILL alongside UNIT_DIED
-    -- for the same death, same GUID, same instant, whenever the player or their
-    -- group caused it -- never alone. Dispatching both to onCreatureDied used to
-    -- publish CREATURE_DIED twice per kill: the second, unclaimed copy expired
-    -- and was counted as an unproductive kill, so a session with two real kills
-    -- reported killsWithXp=2 AND killsWithoutXp=2 for the same two creatures.
+    -- The client fires PARTY_KILL alongside UNIT_DIED for the same death (same GUID,
+    -- same instant) whenever the player or their group caused it, never alone.
+    -- Publishing both would book each kill twice, and the unclaimed copy would
+    -- expire as a kill that paid no experience.
     it("ignores PARTY_KILL entirely -- UNIT_DIED alone already covers every death it would report", function()
       emit(CombatLogSubevent.PARTY_KILL, PLAYER_GUID, BOAR_GUID, "Boar")
 
@@ -329,11 +321,8 @@ describe("CombatLogRouter", function()
       assert.equal(1, bus:countOf(EventTopic.CREATURE_DIED))
     end)
 
-    -- Confirmed against a real client: a killing blow fires both UNIT_DIED and
-    -- PARTY_KILL for the same creature, at the same GetTime() reading. Both are
-    -- dispatched here, so without this the correlator would see one death book
-    -- twice, double-counting both the kill and, once the second copy expired
-    -- unclaimed, the unproductive-kill count.
+    -- A killing blow fires UNIT_DIED and PARTY_KILL for the same creature at the
+    -- same GetTime() reading.
     it("does not publish CREATURE_DIED twice for one kill's UNIT_DIED and PARTY_KILL pair", function()
       emit(CombatLogSubevent.UNIT_DIED, PLAYER_GUID, BOAR_GUID, "Boar")
       emit(CombatLogSubevent.PARTY_KILL, PLAYER_GUID, BOAR_GUID, "Boar")
@@ -375,6 +364,78 @@ describe("CombatLogRouter", function()
     assert.equal(1, bus:countOf(EventTopic.CREATURE_DIED))
   end)
 
+  -- CombatLogGetCurrentEventInfo is not in the World of Warcraft: Forever API, so
+  -- the promise is that it is not even looked up. Every read of a name _G does not
+  -- hold goes through __index, so a watcher there sees a lookup either way.
+  it("never looks the deprecated global up on a client that has the modern reader", function()
+    local looked = 0
+    local saved = getmetatable(_G)
+    setmetatable(_G, { __index = function(_, name)
+      if name == "CombatLogGetCurrentEventInfo" then looked = looked + 1 end
+    end })
+
+    local ok, err = pcall(function()
+      emit(CombatLogSubevent.UNIT_DIED, PLAYER_GUID, BOAR_GUID, "Boar")
+      ns.adapter.CombatLogRouter.isSupported()
+    end)
+    setmetatable(_G, saved)
+    assert(ok, err)
+
+    assert.equal(1, bus:countOf(EventTopic.CREATURE_DIED))
+    assert.equal(0, looked)
+  end)
+
+  it("reads nothing, and raises nothing, on a client with neither reader", function()
+    _G.C_CombatLog = nil
+
+    assert.has_no.errors(function() router:handleCombatLogEvent() end)
+    assert.same({}, bus:topicsInOrder())
+  end)
+
+  -- The capability every combat metric hangs from, read the way the diagnostic
+  -- reads it: through the registry, as the reason it prints.
+  describe("whether this client offers it", function()
+    local function reasonOn()
+      local capabilities = ns.adapter.Capabilities.new()
+      capabilities:register("combat_log", ns.adapter.CombatLogRouter.isSupported)
+      return capabilities:reasonFor("combat_log")
+    end
+
+    it("is present with the modern reader and nothing on hand", function()
+      _G.C_CombatLog = { GetCurrentEventInfo = function() end }
+
+      assert.equal("present", reasonOn())
+    end)
+
+    it("is present with only the classic global", function()
+      _G.C_CombatLog = nil
+      _G.CombatLogGetCurrentEventInfo = function() end
+
+      assert.equal("present", reasonOn())
+    end)
+
+    it("is absent with neither", function()
+      _G.C_CombatLog = nil
+
+      assert.equal("absent", reasonOn())
+    end)
+
+    -- The only way a probe at login can see a closed combat log: a line already on
+    -- hand whose subevent it may not read.
+    it("is unreadable when the line on hand is closed", function()
+      local reason
+      AscentTest.withSecretRegime(function()
+        ns = load()
+        _G.C_CombatLog = { GetCurrentEventInfo = function()
+          return 1000, AscentTest.secret("SWING_DAMAGE")
+        end }
+        reason = reasonOn()
+      end)
+
+      assert.equal("unreadable", reason)
+    end)
+  end)
+
   describe("start/stop", function()
     local function stubFrame()
       local frame = { registered = {} }
@@ -387,21 +448,36 @@ describe("CombatLogRouter", function()
     it("registers only COMBAT_LOG_EVENT_UNFILTERED and dispatches through it", function()
       local frame = stubFrame()
       _G.CreateFrame = function() return frame end
+      -- A client with a reader and nothing on hand yet, which is the state at login.
+      local line
+      _G.C_CombatLog = { GetCurrentEventInfo = function() if line then return line() end end }
 
       router:start()
       assert.is_true(frame.registered.COMBAT_LOG_EVENT_UNFILTERED)
 
-      -- Set up the stub without invoking it directly: the point of this test is
+      -- Set up the line without invoking it directly: the point of this test is
       -- that firing the frame's own OnEvent is what triggers the read.
-      _G.C_CombatLog = {
-        GetCurrentEventInfo = function()
-          return clock:now(), CombatLogSubevent.UNIT_DIED, false, PLAYER_GUID, "Source", 0, 0,
-            BOAR_GUID, "Boar", 0, 0
-        end,
-      }
+      line = function()
+        return clock:now(), CombatLogSubevent.UNIT_DIED, false, PLAYER_GUID, "Source", 0, 0,
+          BOAR_GUID, "Boar", 0, 0
+      end
       frame.onEvent()
 
       assert.equal(1, bus:countOf(EventTopic.CREATURE_DIED))
+      _G.CreateFrame = nil
+    end)
+
+    -- World of Warcraft: Forever has C_CombatLog without GetCurrentEventInfo, and no
+    -- CombatLogGetCurrentEventInfo global: nothing to read, so nothing is asked for.
+    it("registers nothing on a client with no reader", function()
+      local built = 0
+      _G.CreateFrame = function() built = built + 1 return stubFrame() end
+      _G.C_CombatLog = {}
+
+      router:start()
+
+      assert.equal(0, built)
+      assert.is_nil(router.frame)
       _G.CreateFrame = nil
     end)
 
@@ -416,11 +492,9 @@ describe("CombatLogRouter", function()
       _G.CreateFrame = nil
     end)
   end)
-  -- Enrolment used to sit BELOW the handler lookup, so a subevent with no handler
-  -- was dropped three lines in and never reached it. That made "this line only
-  -- answers who is fighting me" impossible to express without also remembering a
-  -- do-nothing handler -- and the owner's report that an absorbed hit does not
-  -- count was exactly that trap, from the outside.
+
+  -- Enrolment runs before the handler lookup, so a subevent with no handler, such
+  -- as SPELL_ABSORBED, still names who is fighting whom.
   describe("a line that only says who is fighting whom", function()
     local CREATURE = "Creature-0-1-1-1-15636-0000000001"
 
@@ -451,10 +525,8 @@ describe("CombatLogRouter", function()
     end)
   end)
 
-  -- Which lines are being thrown away, named by the client rather than guessed at
-  -- here. SPELL_ABSORBED was not in this addon's vocabulary at all, and neither
-  -- were half a dozen others that mean a creature is fighting you; one session
-  -- with the recorder on ends the guessing.
+  -- The subevents the router drops, counted by the name the client gives them, so a
+  -- session with the evidence recorder on lists what is being thrown away.
   describe("the census of what it does not handle", function()
     local CREATURE = "Creature-0-1-1-1-15636-0000000001"
     local kinds
@@ -486,4 +558,102 @@ describe("CombatLogRouter", function()
     end)
   end)
 
+  -- A client that hands back fields this addon may not read. Each field is compared,
+  -- added up or used as a table key soon after it is read, and on that client each
+  -- of those operations raises.
+  describe("on a client that closes the fields of a line", function()
+    local scoped, closedBus, closedRouter
+
+    local function emitClosed(subevent, sourceGUID, destGUID, destName, ...)
+      local extra = { ... }
+      _G.C_CombatLog = {
+        GetCurrentEventInfo = function()
+          return 1000, subevent, false, sourceGUID, "Source", 0, 0, destGUID, destName, 0, 0,
+            unpack(extra)
+        end,
+      }
+      closedRouter:handleCombatLogEvent()
+    end
+
+    before_each(function()
+      AscentTest.withSecretRegime(function()
+        scoped = load()
+        closedBus = scoped.fakes.RecordingEventBus.new()
+        closedRouter = scoped.adapter.CombatLogRouter.new({
+          bus = closedBus,
+          clock = scoped.fakes.FakeClock.new(1000),
+          playerState = scoped.fakes.FakePlayerState.new({ guid = PLAYER_GUID }),
+        })
+      end)
+    end)
+
+    -- An unreadable death must not become a kill nobody claimed: that number means
+    -- "you killed something and were paid nothing for it", and an unreadable line
+    -- is evidence of neither half.
+    it("drops a death whose destination it cannot read", function()
+      local CLOSED = scoped.core.CombatLogSubevent.UNIT_DIED
+
+      assert.has_no.errors(function()
+        emitClosed(CLOSED, nil, AscentTest.secret(BOAR_GUID), AscentTest.secret("Boar"))
+      end)
+
+      assert.equal(0, #closedBus.published)
+    end)
+
+    -- The first line nothing can be read from says the source closed, once, and the
+    -- router stops there: nothing it feeds accumulates, not even from a later
+    -- readable line.
+    it("reports the first line it cannot read at all, once, and reads nothing after it", function()
+      local told = 0
+      AscentTest.withSecretRegime(function()
+        closedRouter = scoped.adapter.CombatLogRouter.new({
+          bus = closedBus,
+          clock = scoped.fakes.FakeClock.new(1000),
+          playerState = scoped.fakes.FakePlayerState.new({ guid = PLAYER_GUID }),
+          onUnreadable = function() told = told + 1 end,
+        })
+      end)
+      local CAST = scoped.core.CombatLogSubevent.SPELL_CAST_SUCCESS
+
+      emitClosed(AscentTest.secret(CAST), PLAYER_GUID, BOAR_GUID, "Boar", 133, "Fireball")
+      emitClosed(AscentTest.secret(CAST), PLAYER_GUID, BOAR_GUID, "Boar", 133, "Fireball")
+      emitClosed(CAST, PLAYER_GUID, BOAR_GUID, "Boar", 133, "Fireball")
+
+      assert.equal(1, told)
+      assert.equal(0, #closedBus.published)
+    end)
+
+    -- A closed name or a closed spell id is a sample lost, not a source lost: the
+    -- line itself could still be routed.
+    it("does not call a line with only its extras closed a closed source", function()
+      local told = 0
+      AscentTest.withSecretRegime(function()
+        closedRouter = scoped.adapter.CombatLogRouter.new({
+          bus = closedBus,
+          clock = scoped.fakes.FakeClock.new(1000),
+          playerState = scoped.fakes.FakePlayerState.new({ guid = PLAYER_GUID }),
+          onUnreadable = function() told = told + 1 end,
+        })
+      end)
+
+      emitClosed(scoped.core.CombatLogSubevent.SWING_DAMAGE, PLAYER_GUID, BOAR_GUID, AscentTest.secret("Boar"), 42)
+
+      assert.equal(0, told)
+      assert.equal(1, closedBus:countOf(scoped.core.EventTopic.DAMAGE_DEALT))
+    end)
+
+    -- An unguarded closed spell id is truthy, not a number, and never type-tested,
+    -- so it would ride the payload into core/ and become a key in the collector's
+    -- own table.
+    it("counts no ability whose identity it cannot read", function()
+      local CAST = scoped.core.CombatLogSubevent.SPELL_CAST_SUCCESS
+
+      assert.has_no.errors(function()
+        emitClosed(CAST, PLAYER_GUID, BOAR_GUID, "Boar",
+          AscentTest.secret(133), AscentTest.secret("Fireball"))
+      end)
+
+      assert.equal(0, closedBus:countOf(scoped.core.EventTopic.ABILITY_USED))
+    end)
+  end)
 end)

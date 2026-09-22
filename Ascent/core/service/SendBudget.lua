@@ -1,21 +1,17 @@
--- Ascent - how often the addon is allowed to speak (design D67).
+-- Ascent - how often the addon is allowed to speak.
 --
--- The client hands each registered prefix ten messages back at one per second,
--- and going past that returns AddonMessageThrottle -- or, with enough traffic on
--- enough prefixes, disconnects the player. Nothing this addon has to say is worth
--- that, so it spends far less than it is given: a couple of announcements in
--- reserve, refilled every fifteen seconds.
+-- The client gives each registered prefix ten messages, refilled at one per
+-- second; past that C_ChatInfo.SendAddonMessage returns AddonMessageThrottle, and
+-- enough traffic across prefixes can disconnect the player. This spends far less:
+-- a couple of announcements in reserve, refilled every fifteen seconds.
 --
--- What it counts is ROUNDS, not messages. One round announces to whichever of the
--- channels are available at that moment, and a player is realistically in at most
--- two of them at once -- a guild and one kind of group. So a burst at full reserve
--- costs about four messages against an allowance of ten, and steady state costs
--- one round a quarter of a minute.
+-- It counts rounds, not messages. A round announces to whichever channels are
+-- available, realistically at most two (a guild and one kind of group), so a
+-- burst at full reserve costs about four messages of the ten.
 --
--- A refused round is DROPPED, never queued. A queue drains at the worst possible
--- moment, which for this addon means during a pull; and an announcement that never
--- goes out costs nobody anything, because the next client to log in says the same
--- thing.
+-- A refused round is dropped, never queued: a queue could drain during a pull,
+-- and a missed announcement costs nothing because the next client to log in
+-- sends the same one.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -38,18 +34,15 @@ function SendBudget.new(options)
     clock = options.clock,
     capacity = capacity,
     refillSeconds = refillSeconds,
-    -- Starts full: the first thing the addon does after logging in is announce
-    -- itself, and a bucket that filled up over the following minute would make
-    -- the one moment that matters the one moment it cannot speak.
+    -- Starts full: the addon announces itself right after login.
     tokens = capacity,
     lastRefill = options.clock:now(),
   }, SendBudget)
 end
 
--- Monotonic seconds, so this is immune to the player's clock moving. The refill
--- advances `lastRefill` by whole periods only -- moving it to `now` would throw
--- away the fraction already accumulated and make the real rate slower than the
--- stated one, indefinitely.
+-- Monotonic seconds, immune to the player's clock moving. `lastRefill` advances
+-- by whole periods only; moving it to `now` would discard the accumulated
+-- fraction and make the real rate slower than the stated one.
 function SendBudget:refill()
   local elapsed = self.clock:now() - self.lastRefill
   if elapsed < self.refillSeconds then
@@ -61,8 +54,8 @@ function SendBudget:refill()
   self.lastRefill = self.lastRefill + (earned * self.refillSeconds)
 end
 
--- True exactly when a round may go out now, and it consumes the allowance.
--- Callers do not retry a false: the budget is the answer, not a suggestion.
+-- True exactly when a round may go out now, consuming the allowance. Callers do
+-- not retry a false.
 function SendBudget:allow()
   self:refill()
 

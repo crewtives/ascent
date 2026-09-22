@@ -1,13 +1,9 @@
--- busted configuration.
+-- Ascent - busted configuration.
 --
--- The suite runs on LuaJIT, which implements Lua 5.1 *runtime semantics* -- the
--- same the client runs -- so behaviour that differs between 5.1 and later versions
--- is caught here. What it does NOT catch is syntax: LuaJIT also accepts a few 5.2
--- constructs (`goto`, labels) and extensions of its own that the client would
--- reject at load time. Treat that as the known gap, not as covered. The interpreter
--- is not forced here: busted was installed into the Lua 5.1 rock tree, so its
--- launcher already execs LuaJIT with the right package paths. `harness_spec.lua`
--- asserts _VERSION, so a wrong interpreter fails the suite instead of passing quietly.
+-- The suite runs on LuaJIT, which has the Lua 5.1 runtime semantics of the client.
+-- It does not check syntax: LuaJIT accepts `goto`, labels and extensions that the
+-- client rejects at load time. busted is installed in the Lua 5.1 rock tree, so its
+-- launcher runs LuaJIT; harness_spec.lua asserts _VERSION in case it does not.
 return {
   default = {
     ROOT = { "Ascent/test" },

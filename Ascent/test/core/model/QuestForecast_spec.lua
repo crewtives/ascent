@@ -7,8 +7,8 @@ describe("QuestForecast", function()
     QuestXpOrigin = ns.core.QuestXpOrigin
   end)
 
-  -- "We do not know" and "it pays nothing" are different answers, and conflating
-  -- them is how a forecast quietly under-reports instead of admitting a gap.
+  -- Conflating the two would make a forecast under-report instead of showing
+  -- the gap.
   describe("an unknown reward is not a zero reward", function()
     it("reports a quest with no reward data as unknown", function()
       local quest = QuestForecast.unknown(1234, 20)

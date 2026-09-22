@@ -1,10 +1,8 @@
--- The flight recorder has to be trustworthy in a specific way: it is read AFTER
--- the fact, by someone who was not there, to settle questions the code itself
--- cannot answer. So what is asserted here is not that it records something --
--- it is that what it records stays truthful and bounded: samples in order, the
--- authoritative delta kept apart from the parsed claim, the saved-variables
--- store seeing later samples without anyone remembering to flush, and the whole
--- thing costing nothing at all when it is switched off.
+-- The flight recorder is read after the fact, by someone who was not there, to
+-- settle questions the code itself cannot answer. So what it records has to stay
+-- truthful and bounded: samples in order, the authoritative delta kept apart from
+-- the parsed claim, the saved-variables store seeing later samples without a
+-- flush, and no cost at all when it is switched off.
 
 describe("EvidenceLog", function()
   local ns, EvidenceLog, EventBus, EventTopic, bus, clock
@@ -68,15 +66,8 @@ describe("EvidenceLog", function()
     assert.has_error(function() EvidenceLog.new({ bus = bus, clock = clock }) end)
   end)
 
-  -- Retitled, because what it actually proves is narrower than what it claimed.
-  -- start() returns before subscribing when the recorder was never switched on, so
-  -- this is the normal login path: a player who never typed the command pays for
-  -- nothing. It says nothing about a RUNNING recorder being stopped, which is the
-  -- case below and the one that was broken.
-  -- The sentence the family did not recognise. It used to go only to the debug log,
-  -- which is the one place it could not be read back from afterwards -- so the line
-  -- carrying the answer to "what does this client actually print" was the single
-  -- line the recorder did not keep.
+  -- A sentence no template recognised answers "what does this client actually
+  -- print", and the debug log cannot be read back afterwards, so the file keeps it.
   it("keeps a line that matched no template, verbatim", function()
     local log = newLog({ enabled = true }):start()
 
@@ -91,6 +82,9 @@ describe("EvidenceLog", function()
     assert.equal(1, log.counters.unmatchedLine)
   end)
 
+  -- start() returns before subscribing when the recorder was never switched on:
+  -- the normal login path, where a player who never typed the command pays for
+  -- nothing. Stopping a running recorder is the case below.
   it("subscribes to nothing when it was never switched on", function()
     local log = newLog({ enabled = false }):start()
 
@@ -101,9 +95,8 @@ describe("EvidenceLog", function()
   end)
 
   describe("switching it off while it is running", function()
-    -- The bug this covers: `enabled` was read once, at subscribe time, and the
-    -- five live subscriptions never looked at it again. `/ascent evidence off`
-    -- changed a flag and nothing else.
+    -- The live subscriptions must read `enabled` on every event: read once at
+    -- subscribe time, `/ascent evidence off` would change a flag and nothing else.
     it("stops recording", function()
       local log = newLog():start()
       bus:publish(EventTopic.XP_DELTA_OBSERVED, { amount = 120 })
@@ -121,9 +114,8 @@ describe("EvidenceLog", function()
       assert.is_false(log.samples[#log.samples].on)
     end)
 
-    -- The harm, stated as a test. The ring is bounded and drops the oldest, so a
-    -- recorder that keeps running after being switched off does not merely waste
-    -- work: it evicts the evidence the player stopped it to preserve.
+    -- The ring is bounded and drops the oldest, so a recorder that keeps running
+    -- after being switched off evicts the evidence the player stopped it to keep.
     it("does not rotate the ring over what it already captured", function()
       local log = newLog({ limit = 3 }):start()
       bus:publish(EventTopic.XP_DELTA_OBSERVED, { amount = 11 })
@@ -203,9 +195,8 @@ describe("EvidenceLog", function()
     end)
   end)
 
-  -- D75/D76. The ring is the scarce thing; the counters are not. A fact that
-  -- happens constantly and says the same thing every time should spend the one
-  -- it does not need.
+  -- The ring is scarce and the counters are not: a fact that happens constantly
+  -- and says the same thing every time is counted without spending a sample.
   describe("counting without keeping", function()
     it("tallies a counter-only kind without spending a sample on it", function()
       local log = newLog():start()
@@ -237,10 +228,9 @@ describe("EvidenceLog", function()
       assert.equal(1, #log.samples)
     end)
 
-    -- The guard that matters. Declaring a kind of the experience path
-    -- counter-only would not fail anything -- it would quietly record the wrong
-    -- half of the next session, and nobody would find out until they went to
-    -- read the file and the evidence was not there.
+    -- Declaring a kind of the experience path counter-only would fail nothing:
+    -- it would quietly drop the evidence, and nobody would find out until they
+    -- read the file.
     it("declares nothing on the experience path as counter-only", function()
       for _, kind in ipairs({ "delta", "hint", "attributed", "gain", "levelCompleted",
         "restChanged", "engaged", "unmatchedLine", "recordingChanged" }) do
@@ -249,10 +239,9 @@ describe("EvidenceLog", function()
       end
     end)
 
-    -- The defect itself, reproduced at the shape of the session of 2026-09-21:
-    -- a ring dominated by time-played answers and reload markers, with the
-    -- experience it existed to capture pushed off the oldest end. Without the
-    -- split this leaves one delta out of five; with it, all five survive.
+    -- The shape of a real session: every delta followed by four time-played
+    -- answers and a reload marker. If those took samples, the experience the ring
+    -- exists to capture would be pushed off its oldest end.
     it("does not let predictable noise evict the evidence", function()
       local log = newLog({ limit = 5 }):start()
 
@@ -276,8 +265,8 @@ describe("EvidenceLog", function()
   end)
 
   it("keeps the authoritative delta and the parsed claim as separate samples", function()
-    -- The whole point: whether the two agree is the open question, so they are
-    -- never folded into one number by the recorder itself.
+    -- Whether the two agree is the open question, so the recorder never folds
+    -- them into one number.
     local log = newLog():start()
 
     bus:publish(EventTopic.XP_DELTA_OBSERVED, { amount = 138 })
@@ -358,9 +347,8 @@ describe("EvidenceLog", function()
     assert.equal(5, log.samples[3].amount)
   end)
 
-  -- The property that makes it work with no flushing anywhere: the store holds
-  -- the live tables, so anything recorded after attaching is already in the file
-  -- when the client writes it at logout.
+  -- No flushing anywhere: the store holds the live tables, so anything recorded
+  -- after attaching is already in the file when the client writes it at logout.
   it("lets the store see samples recorded after it was attached", function()
     local store = {}
     local log = newLog():start()
@@ -374,10 +362,9 @@ describe("EvidenceLog", function()
     assert.equal("enUS", store.evidence.environment.locale)
   end)
 
-  -- What a flight recorder is FOR. The first real session was lost because a
-  -- reload emptied the file before anyone had read it, so this is the property
-  -- that has to hold: a new recorder attaching to a store that already has
-  -- samples continues the ring instead of replacing it.
+  -- A reload must not empty the file before anyone has read it: a new recorder
+  -- attaching to a store that already has samples continues the ring instead of
+  -- replacing it.
   describe("surviving a reload", function()
     -- A session: a fresh recorder over the same saved-variables store.
     local function session(store)
@@ -399,10 +386,8 @@ describe("EvidenceLog", function()
       for _, sample in ipairs(store.evidence.samples) do
         amounts[#amounts + 1] = sample.amount or sample.kind
       end
-      -- The session marker used to sit between the two as a sample. It is
-      -- counted now and not kept (D76): this assertion WAS the defect, because
-      -- one marker per reload is what left the real session with nine readable
-      -- minutes out of four hours.
+      -- The session marker is counted and not kept: one marker sample per
+      -- reload is enough to crowd a long session's evidence out of the ring.
       assert.same({ 11, 22 }, amounts)
       assert.equal(1, store.evidence.counters.sessionStarted)
       assert.equal(second.samples, store.evidence.samples)
@@ -421,7 +406,7 @@ describe("EvidenceLog", function()
     end)
 
     -- Both the startup path and the chat command attach; after the first one the
-    -- store's table IS the recorder's own, and adopting it would append the ring
+    -- store's table is the recorder's own, and adopting it would append the ring
     -- to itself.
     it("does not duplicate anything when the same recorder attaches twice", function()
       local store = {}
@@ -446,10 +431,9 @@ describe("EvidenceLog", function()
       assert.is_nil(store.evidence.counters.delta)
     end)
 
-    -- The version this change replaced. A ring written before the split holds
-    -- session markers as samples and counters that cannot say which of the two
-    -- they came from, so half of its samples are noise and half are not, with
-    -- nothing to tell them apart. Dropping it is the honest move (D79).
+    -- Version 2 kept session markers as samples, with counters that cannot say
+    -- which of the two they came from: its noise cannot be told apart from its
+    -- evidence, so it is dropped.
     it("drops evidence written before counting and keeping were separated", function()
       local store = { evidence = { version = 2,
         samples = { { kind = "sessionStarted" }, { kind = "delta", amount = 999 } },
@@ -462,9 +446,8 @@ describe("EvidenceLog", function()
       assert.is_nil(store.evidence.counters.sessionStarted)
     end)
 
-    -- Adoption is the path that changed shape most, and the one nothing covered
-    -- on its own: carrying forward now has to leave the counter-only tallies
-    -- summed while the ring keeps only what was kept.
+    -- Carrying forward sums the counter-only tallies while the ring keeps only
+    -- what was kept.
     it("carries counter-only tallies forward without carrying samples for them", function()
       local store = {}
       local first = session(store)
@@ -496,9 +479,8 @@ describe("EvidenceLog", function()
       local second = newLog({ limit = 3 }):start()
       second:attachTo(store, {})
 
-      -- Three carried and nothing else: the session marker no longer spends a
-      -- sample, so the limit now buys three samples of evidence instead of two
-      -- plus a marker. That difference, once per reload, is the whole change.
+      -- Three carried and nothing else: the session marker does not spend a
+      -- sample, so the limit buys three samples of evidence, not two plus a marker.
       assert.equal(3, #store.evidence.samples)
       assert.equal(1, store.evidence.samples[1].amount)
       assert.equal(3, store.evidence.samples[3].amount)
@@ -531,11 +513,9 @@ describe("EvidenceLog", function()
     assert.equal(2, store.evidence.samples[1].amount)
   end)
 
-  -- Published with a REAL XpGain, wrapped the way XpAttribution wraps it. The
-  -- first version of this test hand-wrote a flat payload, which agreed with a
-  -- reader that was looking in the wrong place: both were wrong together, the
-  -- test passed, and an entire recorded session came back with the verdict leg
-  -- blank. A fake payload can only confirm the shape its author already believed.
+  -- Published with a real XpGain, wrapped the way XpAttribution wraps it: a
+  -- hand-written flat payload would agree with a reader looking in the wrong
+  -- place. A fake payload can only confirm the shape its author already believed.
   it("records what the reconciler finally decided, alongside the other two", function()
     local log = newLog():start()
 
@@ -552,10 +532,8 @@ describe("EvidenceLog", function()
     assert.equal(1, log.counters["attributed." .. ns.core.XpSource.MOB_KILL])
   end)
 
-  -- Wrapped like the verdict above, and read flat for a while: the file came back
-  -- with five level completions, not one of which could say which level had
-  -- completed. A real LevelRecord, for the same reason as the case above -- a
-  -- hand-written payload can only agree with the shape its author believed.
+  -- LEVEL_COMPLETED carries the level inside `record`, wrapped like the verdict
+  -- above, and a real LevelRecord is published for the same reason.
   it("records which level completed, not merely that one did", function()
     local log = newLog():start()
 

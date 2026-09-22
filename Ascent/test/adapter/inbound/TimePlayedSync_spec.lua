@@ -1,8 +1,8 @@
--- D14's three awkward parts, each with its own case below: the server never
--- pushes the figure (cadence), the response cannot be filtered out of chat
--- (silencing), and it is a round trip that may never come back (the safety timer,
--- told apart from a live response by a generation counter rather than a cancel
--- handle Lua's timers do not have).
+-- Three awkward parts, each with its own block below: the server never pushes
+-- the figure (cadence), TIME_PLAYED_MSG cannot be filtered out of chat
+-- (silencing), and RequestTimePlayed is a round trip that may never come back
+-- (the safety timer, told apart from a live response by a generation counter:
+-- C_Timer.After has no cancel handle).
 
 describe("TimePlayedSync", function()
   local ns, EventTopic
@@ -17,7 +17,7 @@ describe("TimePlayedSync", function()
   end
 
   local function load()
-    return AscentTest.loadWith("core/port/", "adapter/inbound/TimePlayedSync.lua",
+    return AscentTest.loadWith("core/port/", "adapter/compat/Readable.lua", "adapter/inbound/TimePlayedSync.lua",
       "test/fakes/FakeClock.lua", "test/fakes/RecordingEventBus.lua")
   end
 
@@ -87,10 +87,9 @@ describe("TimePlayedSync", function()
       assert.is_false(chatFrames[2].registered)
     end)
 
-    -- This used to assert that the first answer released them, and that
-    -- assertion WAS the defect (D77): restoring here re-registers the frames
-    -- inside the client's own dispatch, so the two to four repetitions that
-    -- follow print. The silence is held until the window closes.
+    -- Restoring on the first answer would re-register the frames inside the
+    -- client's own dispatch of TIME_PLAYED_MSG, so the repetitions that follow
+    -- would print. The silence is held until the settle window closes.
     it("keeps them silenced when the first response arrives, and releases them after", function()
       sync:request()
 
@@ -104,10 +103,9 @@ describe("TimePlayedSync", function()
       assert.is_true(chatFrames[2].registered)
     end)
 
-    -- The case the whole change exists for. The count is not known -- two to
-    -- four seen in BC Classic, never measured in Era -- so this asserts the
-    -- property that does not depend on it: however many arrive, none is on
-    -- screen.
+    -- One request is answered two to four times on Burning Crusade Classic, and
+    -- the count is unmeasured on Classic Era, so this asserts what does not
+    -- depend on it: however many arrive, none is on screen.
     it("keeps them silenced through every repetition, whatever their number", function()
       sync:request()
 
@@ -198,10 +196,8 @@ describe("TimePlayedSync", function()
       assert.is_false(sync:request())
     end)
 
-    -- Holding the silence past the first answer opened a second way to be stuck
-    -- silenced: if the window's own timer never ran, nothing else would release
-    -- the frames. This timer is what promises that cannot happen, so it has to
-    -- know about the new state as well as the old one.
+    -- After the first answer the frames stay silenced until the settle window
+    -- closes; if its timer never ran, the safety timer must release them.
     it("releases the chat frames if the window's own timer never ran", function()
       sync:request()
       local safetyTimer = #timers
@@ -300,10 +296,9 @@ describe("TimePlayedSync", function()
       _G.CreateFrame = nil
     end)
 
-    -- The same promise one state later. Between the first answer and the window
-    -- closing the frames are still silenced, and this frame is the only thing
-    -- that could ever release them -- so stopping there without restoring would
-    -- leave the player muted with nobody left to undo it.
+    -- Between the first answer and the window closing the frames are still
+    -- silenced, and nothing else would release them: stopping without restoring
+    -- would leave the chat muted for good.
     it("restores the chat frames if stopped while the window is still open", function()
       local frame = stubFrame()
       _G.CreateFrame = function() return frame end
@@ -333,10 +328,10 @@ describe("TimePlayedSync", function()
     end)
   end)
 
-  -- Spike 0.6: does the server ever send TIME_PLAYED_MSG without being asked?
-  -- The answer is exactly a receipt logged while inFlight is false, which the
-  -- early return in onTimePlayedMsg would otherwise make invisible.
-  describe("spike 0.6 diagnostics (optional logger)", function()
+  -- A TIME_PLAYED_MSG the server sent unprompted shows up as a receipt logged
+  -- while inFlight is false, which the early return in onTimePlayedMsg would
+  -- otherwise hide.
+  describe("request diagnostics (optional logger)", function()
     local function fakeLogger()
       local messages = {}
       return { debug = function(_, message) messages[#messages + 1] = message end }, messages
@@ -370,11 +365,10 @@ describe("TimePlayedSync", function()
     end)
   end)
 
-  -- Spike 0.6 asks whether the server sends time played unprompted. It could not
-  -- be asked at all while the addon requested it on entering the world, and its
-  -- answer could not survive a session while it went to a 500-line chat ring
-  -- shared with three lines per kill.
-  describe("running spike 0.6", function()
+  -- Telling whether the server sends time played unprompted needs the addon to
+  -- stop requesting it on entering the world (requests = false), and the answer
+  -- goes to the evidence recorder, where a session of kills cannot push it out.
+  describe("with requests off, listening for an answer nobody asked for", function()
     local function recorder()
       local samples = {}
       return function(kind, fields)
@@ -400,8 +394,8 @@ describe("TimePlayedSync", function()
       assert.is_false(quiet.inFlight)
     end)
 
-    -- Load-bearing: silencing without requesting would strand the chat frames
-    -- until the safety timer, which is a worse bug than the one being diagnosed.
+    -- Silencing without requesting would strand the chat frames until the safety
+    -- timer.
     it("leaves the chat frames alone when it suppresses a request", function()
       suppressed():request()
 
@@ -438,11 +432,8 @@ describe("TimePlayedSync", function()
       assert.equal(1, bus:countOf(EventTopic.TIME_PLAYED_SYNCED))
     end)
 
-    -- Counting one answer per request while the client sends four is how "what
-    -- the player sees in the chat" ended up unmeasured. Every one is counted
-    -- now, and the repetitions are marked as such so the file can say how many
-    -- a single request really produces -- which is the number spike 0.1 goes
-    -- looking for in Classic Era.
+    -- Every answer is counted and the repetitions are marked, so an evidence file
+    -- says how many a single request produces; on Classic Era that is unmeasured.
     it("counts every repetition, not just the first, and marks them as repeats", function()
       local record, samples = recorder()
       local asking = ns.adapter.TimePlayedSync.new({ bus = bus, clock = clock, recordEvidence = record })
@@ -463,10 +454,9 @@ describe("TimePlayedSync", function()
       assert.equal(3, repeats)
     end)
 
-    -- The mitigation D77 owes for holding the silence on a timer instead of on a
-    -- count: if the window is too short on some client, the straggler that got
-    -- through has to leave a trace. Without this counter that failure would look
-    -- exactly like the player typing /played, and nobody would ever find it.
+    -- The silence is held on a timer, not a count: if the window is too short on
+    -- some client, the straggler that got through must leave a trace, or it would
+    -- look exactly like the player typing /played.
     it("counts an answer that arrives just after the window as late, not as unrequested", function()
       local record, samples = recorder()
       local asking = ns.adapter.TimePlayedSync.new({ bus = bus, clock = clock, recordEvidence = record })
@@ -495,13 +485,45 @@ describe("TimePlayedSync", function()
       assert.is_true(chatFrames[1].registered)
     end)
 
-    -- The pin: suppression is opt-in, and a recorder is optional.
+    -- Suppression is opt-in, and a recorder is optional.
     it("requests exactly once when nothing was asked of it", function()
       local sent = 0
       _G.RequestTimePlayed = function() sent = sent + 1 end
 
       assert.is_true(ns.adapter.TimePlayedSync.new({ bus = bus, clock = clock }):request())
       assert.equal(1, sent)
+    end)
+  end)
+
+  -- A closed time played is a figure this addon does not have: nothing is anchored
+  -- to it, and the recorder, which writes to the saved variables file, is not
+  -- handed a value it cannot keep.
+  describe("on a client that closes the figure", function()
+    it("anchors nothing to a time played it cannot read", function()
+      local recorded = {}
+      local closed
+      AscentTest.withSecretRegime(function()
+        local scoped = load()
+        closed = scoped.adapter.TimePlayedSync.new({
+          bus = bus, clock = clock,
+          recordEvidence = function(kind, fields) recorded[#recorded + 1] = { kind = kind, fields = fields } end,
+        })
+      end)
+      closed:request()
+
+      AscentTest.withClientTypes(function()
+        assert.has_no.errors(function()
+          closed:onTimePlayedMsg(AscentTest.secret(9999), AscentTest.secret(450))
+        end)
+      end)
+
+      assert.equal(0, bus:countOf(EventTopic.TIME_PLAYED_SYNCED))
+      local received
+      for _, entry in ipairs(recorded) do
+        if entry.kind == "timePlayedReceived" then received = entry end
+      end
+      assert.is_not_nil(received)
+      assert.is_nil(received.fields.levelSeconds)
     end)
   end)
 end)

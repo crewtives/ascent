@@ -143,12 +143,9 @@ describe("Frozen", function()
     end)
   end)
 
-  -- The regression that took the whole addon down. A list handed to Frozen.enum
-  -- came back as a proxy, and a proxy is an empty carrier table with an __index:
-  -- `#` is zero, `next` is nil, `ipairs` walks nothing. The data was all there,
-  -- behind an interface raw access cannot see -- so the failure did not look like
-  -- an error, it looked like a constant that was inexplicably empty, four hundred
-  -- lines away from where the UI gave up and took the slash commands with it.
+  -- A proxy is an empty carrier table with an __index: `#` is zero, `next` is
+  -- nil, `ipairs` walks nothing. A list frozen into one does not raise, it reads
+  -- as a constant that is inexplicably empty, so lists are left plain.
   describe("a constant declared as a list", function()
     it("can be counted, which a proxy cannot", function()
       local Channels = Frozen.enum("Channels", { "first", "second", "third" })
@@ -193,10 +190,9 @@ describe("Frozen", function()
     end)
   end)
 
-  -- The way out of a frozen table for a caller that has to MUTATE what it read or
-  -- STORE it somewhere. Both readers of this are resets writing a default back
-  -- into the saved variables, which is the case where getting it wrong is silent:
-  -- a proxy reaches disk as the empty carrier it is.
+  -- The way out of a frozen table for a caller that has to mutate what it read
+  -- or store it, such as a reset writing a default back into the saved
+  -- variables: a proxy would reach disk as the empty carrier it is.
   describe("copying", function()
     it("comes back walkable with pairs, which a proxy is not", function()
       local Position = Frozen.enum("Position", { point = "CENTER", x = 0 })
@@ -232,9 +228,9 @@ describe("Frozen", function()
       assert.is_false(Frozen.isFrozen(copy.position))
     end)
 
-    -- The array a frozen table answers with IS its backing store (this file's
-    -- header), so a copy that stopped at the top level would leave the caller
-    -- holding the addon's own constants.
+    -- The array a frozen table answers with is its backing store, so a copy that
+    -- stopped at the top level would leave the caller holding the addon's own
+    -- constants.
     it("copies a nested list, which is the backing store itself", function()
       local Defaults = Frozen.enum("Defaults", { zones = { "clock", "footer" } })
 

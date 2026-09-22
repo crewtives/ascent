@@ -1,7 +1,6 @@
--- The rule under test is two conditions and neither is enough alone: a creature is
--- in YOUR pull when it is FIGHTING and it is AIMING at you or your pet. Fighting
--- alone takes in somebody else's fight across the clearing; aiming alone takes in
--- one the player merely clicked, which must never join the pull.
+-- A creature is in the player's pull when it is fighting and aiming at the player
+-- or their pet; neither is enough alone. Fighting alone takes in somebody else's
+-- fight across the clearing; aiming alone takes in one the player merely clicked.
 
 describe("NameplateWatch", function()
   local ns, EventTopic, bus, watch
@@ -9,7 +8,7 @@ describe("NameplateWatch", function()
   local units
 
   local function load()
-    return AscentTest.loadWith("core/port/",
+    return AscentTest.loadWith("core/port/", "adapter/compat/Readable.lua",
       "adapter/inbound/CreatureGuid.lua", "adapter/inbound/NameplateWatch.lua",
       "test/fakes/RecordingEventBus.lua")
   end
@@ -62,8 +61,8 @@ describe("NameplateWatch", function()
     end
   end)
 
-  -- The whole point: three creatures aggroed by one shot, two of them still
-  -- crossing the ground. The combat log has written nothing about those two.
+  -- Three creatures aggroed by one shot, two still crossing the ground: the combat
+  -- log has written nothing about those two.
   it("names every hostile creature already coming for the player", function()
     showing(
       plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper"),
@@ -75,9 +74,8 @@ describe("NameplateWatch", function()
     assert.equal("Withered Green Keeper", bus:lastOn(EventTopic.ENEMY_ENGAGED).name)
   end)
 
-  -- The failure that shaped the rule. Clicking a creature makes it YOUR target,
-  -- which is not this test and never was -- and it is not fighting either, so both
-  -- halves say no.
+  -- Clicking a creature makes it the player's target, not the player its target,
+  -- and it is not fighting either: both halves say no.
   it("does not enrol a creature the player merely clicked", function()
     showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Keeper",
       { inCombat = false, aimingAt = "nobody" }))
@@ -122,8 +120,7 @@ describe("NameplateWatch", function()
   end)
 
   -- Nameplates switched off in the client's own options: no tokens, nobody seen,
-  -- nothing raised. The pull is then whatever the combat log saw, which is exactly
-  -- what it was before this file existed.
+  -- nothing raised. The pull is then whatever the combat log saw.
   it("sees nobody, and does not raise, where the client has no nameplates", function()
     _G.C_NamePlate = nil
 
@@ -131,9 +128,9 @@ describe("NameplateWatch", function()
     assert.equal(0, watch:sweep())
   end)
 
-  -- Every test above hands the token over on the frame, and the real client does
-  -- not. That is why eight passing tests sat on top of a file that had never
-  -- enrolled anybody: the fake was answering a question the client refuses.
+  -- The tests above hand the token over on the frame; the real client does not. The
+  -- frames C_NamePlate.GetNamePlates returns carry no namePlateUnitToken, and the
+  -- token arrives with NAME_PLATE_UNIT_ADDED.
   describe("where the token comes from", function()
     local frames
 
@@ -152,9 +149,7 @@ describe("NameplateWatch", function()
 
     after_each(function() _G.CreateFrame = nil end)
 
-    -- The session of 2026-09-22, reproduced: plates on screen, every one of them
-    -- without the field this used to read. Before the event path this was the
-    -- whole story -- 168 seen, 168 rejected, nobody enrolled, ever.
+    -- What the real client hands over: plates on screen, none of them with a token.
     it("finds nobody when the client's frames carry no token", function()
       plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper")
       _G.C_NamePlate = { GetNamePlates = function() return { {}, {}, {} } end }
@@ -187,9 +182,9 @@ describe("NameplateWatch", function()
     end)
   end)
 
-  -- Keyed on aggro, the rule answers "elsewhere" to every creature in a party
-  -- pull, because they are all aiming at the tank. Experience credit has nothing
-  -- to do with who is being hit.
+  -- In a party pull every creature aims at the tank, so a rule keyed on aggro alone
+  -- would answer "elsewhere" to all of them. Experience credit has nothing to do
+  -- with who is being hit.
   describe("a creature held by somebody else in the group", function()
     before_each(function()
       _G.IsInGroup = function() return true end
@@ -215,8 +210,6 @@ describe("NameplateWatch", function()
       assert.equal(1, watch:sweep())
     end)
 
-    -- The objection the narrow rule was built for survives: somebody else's fight
-    -- across the clearing is still not this pull.
     it("still leaves out a creature fighting nobody in the group", function()
       showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper",
         { aimingAt = "party9" }))
@@ -225,10 +218,8 @@ describe("NameplateWatch", function()
     end)
   end)
 
-  -- One creature produced 45 announcements in the session of 2026-09-22, four a
-  -- second for as long as it stayed on screen. Nothing broke, because the pull
-  -- record deduplicates -- and a design that works only because somebody
-  -- downstream is cleaning up after it is one edit away from not working.
+  -- The sweep runs four times a second; announcing on every sweep would lean on the
+  -- pull record downstream to deduplicate.
   describe("saying it once", function()
     it("announces a creature once however many sweeps can still see it", function()
       showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper"))
@@ -245,10 +236,8 @@ describe("NameplateWatch", function()
       assert.equal(1, watch:sweep())
     end)
 
-    -- An EDGE, bounded by what this adapter can see for itself. It used to be
-    -- bounded by the pull's generation, which is a domain concept an adapter
-    -- looking at nameplates has no business holding a copy of -- and the pull
-    -- already decides whether an engagement is news to it.
+    -- An announcement is an edge, bounded by what this adapter can see for itself;
+    -- whether an engagement is news to the pull is the pull's decision.
     it("announces it again after it stops qualifying and starts again", function()
       showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper"))
       watch:sweep()
@@ -299,10 +288,9 @@ describe("NameplateWatch", function()
     end)
   end)
 
-  -- Being on its threat list is true from the moment it came for you and stays
-  -- true whoever it is swinging at. "Aiming at you" is one frame's photograph,
-  -- and over the same stretch of play on 2026-09-22 it matched five times against
-  -- threat's twenty-five.
+  -- Being on its threat list (UnitThreatSituation) is true from the moment it came
+  -- for you and stays true whoever it is swinging at; "aiming at you" is one
+  -- frame's photograph, and matches far less often.
   describe("a creature that has the player on its threat list", function()
     after_each(function() _G.UnitThreatSituation = nil end)
 
@@ -314,10 +302,8 @@ describe("NameplateWatch", function()
       assert.equal(1, watch:sweep())
     end)
 
-    -- The order of the checks, pinned. Threat sat BELOW the combat flag for one
-    -- session and the file measured exactly what that costs: 62 readings with the
-    -- player on a creature's threat list, and only 2 of them ever reached the
-    -- threat check, because `idle` threw out 102 plates first.
+    -- Threat is checked before the combat flag: most readings with the player on a
+    -- creature's threat list come with UnitAffectingCombat false.
     it("counts one on its threat list even when the combat flag says otherwise", function()
       _G.UnitThreatSituation = function() return 2 end
       showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper",
@@ -326,9 +312,7 @@ describe("NameplateWatch", function()
       assert.equal(1, watch:sweep())
     end)
 
-    -- And the objection the narrow rule was built for, answered by the new
-    -- criterion rather than in spite of it: clicking a creature does not put you
-    -- on its threat list.
+    -- Clicking a creature does not put the player on its threat list.
     it("still ignores one the player merely clicked", function()
       _G.UnitThreatSituation = function() return nil end
       showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Keeper",
@@ -345,9 +329,8 @@ describe("NameplateWatch", function()
       assert.equal(0, watch:sweep())
     end)
 
-    -- The target rule stays underneath rather than being deleted: this API
-    -- belongs to a later client than the two supported here, and the day it is
-    -- missing the old rule is what carries the fight.
+    -- UnitThreatSituation belongs to a later client than Classic Era and Burning
+    -- Crusade Classic; where it is missing, the target rule carries the fight.
     it("still falls back to the target when the client cannot be asked", function()
       showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper"))
 
@@ -362,9 +345,8 @@ describe("NameplateWatch", function()
     end)
   end)
 
-  -- Verified present on 2026-09-22 and verified useless as an enrolment test in
-  -- the same reading: all forty creatures came back unclaimed, including the ones
-  -- grazing in a field. It excludes, and that is all it does.
+  -- UnitIsTapDenied is present on the client but useless for enrolment: it answers
+  -- "unclaimed" for creatures grazing in a field too. It only excludes.
   describe("a creature somebody else has claimed", function()
     it("leaves out one that cannot pay this player", function()
       _G.UnitIsTapDenied = function() return true end
@@ -389,9 +371,8 @@ describe("NameplateWatch", function()
     end)
   end)
 
-  -- The sweep runs four times a second and its tally is already a summary, so a
-  -- sample per sweep is the instrument drowning the evidence -- 105 of 108
-  -- samples on 2026-09-22, every one identical.
+  -- The sweep runs four times a second and its tally is already a summary: a sample
+  -- per sweep would fill the evidence log with identical samples.
   describe("what the sweep writes down", function()
     local kinds
 
@@ -420,9 +401,8 @@ describe("NameplateWatch", function()
       assert.equal(2, mixes)
     end)
 
-    -- The question the rule cannot ask yet. Written down and never consulted:
-    -- "aiming at you" is one frame's photograph, "am I on its threat list" is the
-    -- thing itself, and whether these clients can answer it is for a file to say.
+    -- The tally records what UnitThreatSituation answered (no API, on the list, not
+    -- on it), so an evidence file says whether this client can answer at all.
     it("writes down whether the client can be asked about threat, without asking it", function()
       local tallies = {}
       watch = ns.adapter.NameplateWatch.new({
@@ -444,7 +424,7 @@ describe("NameplateWatch", function()
       watch:sweep()
       assert.equal(1, tallies[3].threatNone)
 
-      -- Recorded, never acted on: the verdict is the same either way.
+      -- The creature aims at the player, so it is enrolled whatever threat says.
       assert.equal(1, tallies[3].enrolled)
       _G.UnitThreatSituation = nil
     end)
@@ -462,6 +442,74 @@ describe("NameplateWatch", function()
         if kind == "nameplateMix" then mixes = mixes + 1 end
       end
       assert.equal(2, mixes)
+    end)
+  end)
+
+  -- A client whose unit calls hand back values this addon may not read. Each is
+  -- compared on the line it is made, and on that client the comparison raises, so
+  -- the guard converts first: a sweep that finds nobody is the correct outcome.
+  describe("on a client that closes its unit reads", function()
+    local tallies, recording
+
+    local function watching()
+      local scoped = load()
+      tallies = {}
+      recording = scoped.fakes.RecordingEventBus.new()
+      return scoped.adapter.NameplateWatch.new({
+        bus = recording,
+        recordEvidence = function(kind, fields)
+          if kind == "nameplateMix" then tallies[#tallies + 1] = fields end
+        end,
+      })
+    end
+
+    local function close(...)
+      for _, name in ipairs({ ... }) do
+        local answer = _G[name]
+        -- Only what this client actually has: wrapping a name nobody defined
+        -- would hand the file a function where it expects an absent API.
+        if answer ~= nil then
+          _G[name] = function(...) return AscentTest.secret(answer(...)) end
+        end
+      end
+    end
+
+    -- An unreadable value is not falsy, so an unguarded `if UnitIsDead(token)`
+    -- reads every closed answer as yes. The sweep must conclude it cannot see
+    -- the creature.
+    it("reads a closed answer as an absent one, never as a yes", function()
+      AscentTest.withSecretRegime(function()
+        local closedWatch = watching()
+        showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper"))
+        close("UnitExists", "UnitCanAttack", "UnitIsDead", "UnitIsTapDenied",
+          "UnitAffectingCombat", "UnitIsUnit", "UnitGUID", "UnitName")
+
+        local found
+        assert.has_no.errors(function() found = closedWatch:sweep() end)
+
+        assert.equal(0, found)
+        assert.equal(1, tallies[1].gone)
+        assert.is_nil(tallies[1].dead)
+      end)
+    end)
+
+    -- Every condition passes, then the identity comes back closed. The harness's
+    -- secret is a table where the client's would be a string that raises when
+    -- matched against a pattern, so this pins only the outcome: the creature is
+    -- skipped and nothing is published.
+    it("skips a creature whose identity it cannot read", function()
+      AscentTest.withSecretRegime(function()
+        local closedWatch = watching()
+        showing(plate("nameplate1", "Creature-0-1-1-1-15636-A", "Withered Green Keeper"))
+        close("UnitGUID", "UnitName")
+
+        local found
+        assert.has_no.errors(function() found = closedWatch:sweep() end)
+
+        assert.equal(0, found)
+        assert.equal(1, tallies[1].notACreature)
+        assert.equal(0, #recording.published)
+      end)
     end)
   end)
 end)

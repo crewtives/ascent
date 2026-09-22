@@ -1,7 +1,8 @@
 -- Ascent - Clock port.
 --
--- Two clocks, because they answer different questions and mixing them is how a
--- level ends up claiming it took nine hours because the player went to bed.
+-- Two clocks that must not be mixed: `now` measures durations inside a session,
+-- `timestamp` dates persisted instants. A duration taken from `timestamp` counts
+-- the time the client was closed.
 
 local _, ns = ...
 ns.core = ns.core or {}

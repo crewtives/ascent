@@ -110,10 +110,10 @@ describe("the serialization boundary", function()
       assert.equal("5644:6", restored.creature:id())
     end)
 
-    -- D81: what a kill paid is only comparable to what another kill paid when both
-    -- were split between the same number of people, so the size travels with the
-    -- gain to disk and back. Written as its own field and read back as a number,
-    -- not inferred from the group bonus, which says nothing about how many shared.
+    -- What a kill paid is only comparable to what another kill paid when both were
+    -- split between the same number of people, so the size travels with the gain
+    -- to disk and back: its own field, read back as a number, not inferred from the
+    -- group bonus, which says nothing about how many shared.
     it("round-trips the group a kill's experience was split between", function()
       local live = gain({
         amount = 100, sharedBy = 5,
@@ -131,11 +131,10 @@ describe("the serialization boundary", function()
       assert.equal(1, restored.sharedBy)
     end)
 
-    -- The half of D84 that has to hold at this boundary: every gain in every
-    -- history written before this version has no such field, and what it means is
-    -- that nobody counted -- not that the character was alone. Restoring it as one
-    -- would invent an observation, and the averages built on it would be wrong in
-    -- the direction hardest to notice, because most of it probably WAS solo.
+    -- Gains saved by older versions have no such field, which means nobody
+    -- counted, not that the character was alone. Restoring it as alone would
+    -- invent an observation, wrong in the direction hardest to notice, because
+    -- most of it probably was solo.
     it("restores a gain written without a group size as unknown, never as alone", function()
       local restored = ns.core.XpGain.restore("44,mob_kill,100.5,,,,5644,6")
 
@@ -144,10 +143,9 @@ describe("the serialization boundary", function()
       assert.equal("5644:6", restored.creature:id())
     end)
 
-    -- The client's own answer out of a group, which the adapter is supposed to have
-    -- translated. Arriving here it is not a population, so it restores as unknown
-    -- rather than dividing an average by nobody -- and the live constructor raises
-    -- on it, which is where that bug would be found.
+    -- 0 is the client's answer out of a group, which the adapter translates.
+    -- Arriving here it is not a population, so it restores as unknown rather than
+    -- dividing an average by nobody, and the live constructor raises on it.
     it("refuses a group of nobody, from disk and from a caller alike", function()
       assert.is_nil(ns.core.XpGain.restore("44,mob_kill,100.5,,,,,,,0").sharedBy)
       assert.has_error(function() return gain({ amount = 44, sharedBy = 0 }) end)
@@ -162,17 +160,15 @@ describe("the serialization boundary", function()
       assert.is_nil(restored.creature)
     end)
 
-    -- Individual gains are the highest-cardinality thing the addon saves, so the
-    -- three modifiers that are almost always zero are not written at all.
-    -- One line, nine fields in a fixed order, and the ones nobody filled in are not
-    -- written at all. A gain is the thing there are tens of thousands of.
+    -- Individual gains are the highest-cardinality thing the addon saves: one
+    -- line, fields in a fixed order, and the trailing ones nobody filled in (the
+    -- three modifiers are almost always zero) are not written at all.
     it("writes a plain gain as a short line", function()
       assert.equal("44,mob_kill,100.5", gain({ amount = 44 }):toStored())
       assert.equal("250,quest_turnin,100.5,,,,,,1234",
         gain({ amount = 250, source = ns.core.XpSource.QUEST_TURNIN, questId = 1234 }):toStored())
-      -- The group size is the tenth field and nothing else moved to make room for
-      -- it, so a gain nobody counted still writes the same three fields it always
-      -- did -- and a counted one pays for the blanks in between.
+      -- The group size is the tenth field, so a gain nobody counted writes only
+      -- its first three fields and a counted one pays for the blanks in between.
       assert.equal("44,mob_kill,100.5,,,,,,,3", gain({ amount = 44, sharedBy = 3 }):toStored())
     end)
 
@@ -376,9 +372,9 @@ describe("the serialization boundary", function()
     end)
 
     -- Both operands survive the file already, so the figure does too without a
-    -- field of its own. What this pins is that it survives INTACT: derive it
-    -- from anything that does not round-trip and a level would answer one thing
-    -- in the session that recorded it and another after a reload.
+    -- field of its own. What this pins is that it survives intact: derived from
+    -- anything that does not round-trip, a level would answer one thing in the
+    -- session that recorded it and another after a reload.
     it("still knows what time it could not place after a trip through the file", function()
       local restored = assertRoundTrips(ns.core.LevelRecord, populated(), "LevelRecord")
 
@@ -435,11 +431,10 @@ describe("the serialization boundary", function()
       assert.same({ mob_kill = 400 }, restored.places["world:1429"].xpBySource)
     end)
 
-    -- The pairs encoding was chosen over columns so a source added later costs no
-    -- migration. It only buys that if an unreadable pair is stepped over: the
-    -- pairs are written in the enumeration's sorted order, so a future source
-    -- lands in the MIDDLE, and stopping at it would wipe everything behind it --
-    -- and write the loss back to disk at the next logout.
+    -- Pairs rather than columns, so a source added later costs no migration. That
+    -- holds only if an unreadable pair is stepped over: pairs are written in the
+    -- enumeration's sorted order, so a future source lands in the middle, and
+    -- stopping at it would lose everything behind it at the next logout.
     it("steps over a source it cannot read and keeps the pairs behind it", function()
       local restored = ns.core.LevelRecord.restore({
         level = 24, places = "900,120.0,world,1429,Elwynn,tourism,300,mob_kill,400,quest_turnin,200",
@@ -451,7 +446,7 @@ describe("the serialization boundary", function()
 
     -- PlaceKey.fromFields collapses every line it cannot fully read onto the one
     -- reserved entry, so two stored lines can arrive as the same place. Assigning
-    -- instead of merging deleted the first one's experience without a word.
+    -- instead of merging would delete the first one's experience without a word.
     it("merges two stored lines that collapse onto the same place", function()
       local restored = ns.core.LevelRecord.restore({
         level = 24, xpTotal = 1500, xpBySource = { mob_kill = 1500 },
@@ -473,9 +468,9 @@ describe("the serialization boundary", function()
       assert.same({}, restored.places["world:1433"].xpBySource)
     end)
 
-    -- The migration plan, in one test. A level recorded before places existed did
-    -- not fail to observe where its experience came from; it never tried, and an
-    -- unknown entry would claim otherwise.
+    -- A level recorded before places existed did not fail to observe where its
+    -- experience came from; it never tried, and an unknown entry would claim
+    -- otherwise.
     it("restores a record saved without places with no places at all", function()
       local restored = ns.core.LevelRecord.restore({
         level = 24, xpTotal = 1000, xpBySource = { mob_kill = 1000 },
@@ -505,12 +500,10 @@ describe("the serialization boundary", function()
       assert.equal(1, restored.quests[1234].turnIns)
     end)
 
-    -- The line, spelled out: kills, experience, the group the kill was paid to,
-    -- and then the creature's own three fields. The group sits AHEAD of the key
-    -- because the key is the line's tail and a tail has no fixed position -- an
-    -- unidentified creature ends the line two fields in. Blank in that third
-    -- field is the context nobody counted, which is exactly what tells a level
-    -- recorded before this distinction from one played alone.
+    -- The line: kills, experience, the group the kill was paid to, then the
+    -- creature's own three fields. The group sits ahead of the key because the key
+    -- is the line's tail and has no fixed position: an unidentified creature ends
+    -- the line two fields in. A blank third field is the context nobody counted.
     it("writes the group a creature was killed in ahead of the creature", function()
       local record = ns.core.LevelRecord.new(24, 0)
       record.xpRequired = 8800
@@ -531,10 +524,9 @@ describe("the serialization boundary", function()
         record:toStored().creatures)
     end)
 
-    -- The first of the three nets the schema step needs: version 4 rewrites every
-    -- stored creature line into this shape, so a shape that did not survive its own
-    -- write and read would convert a character's history into something the next
-    -- login cannot use -- and there is no going back from a conversion.
+    -- Format 4 rewrites every stored creature line into this shape, so a shape that
+    -- did not survive its own write and read would turn a character's history into
+    -- something the next login cannot use, with no going back.
     it("carries both of a creature's contexts through a round trip", function()
       local record = ns.core.LevelRecord.new(24, 0)
       record.xpRequired = 8800
@@ -558,9 +550,9 @@ describe("the serialization boundary", function()
       assert.equal(84, restored.creatures["15343:6@?"].xpTotal)
     end)
 
-    -- Two lines for one creature is the whole point, and restore ASSIGNS each
-    -- bucket into the map: read under a key that left the group out, the second
-    -- line would silently delete the first one's kills and experience.
+    -- Two lines for one creature, and restore assigns each bucket into the map:
+    -- read under a key that left the group out, the second line would silently
+    -- delete the first one's kills and experience.
     it("brings a creature's two contexts back as two aggregates", function()
       local restored = ns.core.LevelRecord.restore({
         level = 24,
@@ -677,10 +669,9 @@ describe("the serialization boundary", function()
       end
     end)
 
-    -- A collector that put a live object into the metrics table under any key OTHER
-    -- than COMBAT_OUTCOME is the addon's own bug: the file would drop it in silence
-    -- and hand back half a record next login. COMBAT_OUTCOME is the one legitimate
-    -- exception (D23, packMetrics) -- covered separately below.
+    -- A live object in the metrics table under any key other than COMBAT_OUTCOME
+    -- is the addon's own bug: the file would drop it in silence and hand back half
+    -- a record next login. COMBAT_OUTCOME is the one exception, covered below.
     it("refuses to store a metric that is not plain data", function()
       local record = ns.core.LevelRecord.new(24, 0)
       record.metrics = { combat = ns.core.CombatSummary.new() }
@@ -688,9 +679,8 @@ describe("the serialization boundary", function()
       assert.has_error(function() return record:toStored() end)
     end)
 
-    -- The one key of metrics that is a live object on the way in (D23, D20): it
-    -- gets its own toStored()/restore() at the boundary instead of tripping the
-    -- guard above.
+    -- The one key of metrics that is a live object on the way in: it gets its own
+    -- toStored()/restore() at the boundary instead of tripping the guard above.
     it("round-trips a real CombatSummary under COMBAT_OUTCOME without raising", function()
       local record = ns.core.LevelRecord.new(24, 0)
       local summary = ns.core.CombatSummary.new()

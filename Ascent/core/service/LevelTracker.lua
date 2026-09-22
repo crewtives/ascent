@@ -5,24 +5,20 @@
 -- closing it when it fills, and reconciling what was persisted against what the
 -- character actually looks like at startup.
 --
--- Three ideas are worth reading before the code.
+-- A record carries two marks about what was observed rather than deduced, and
+-- the panel reports both. `partial` means the addon did not watch the whole level
+-- (installed mid-level, or levels went by while it was not running), so the
+-- sources add up to the client's total only because the gap was seeded into
+-- UNKNOWN. `timeAnchored` means the time on the level was confirmed against the
+-- server's own played-time figure rather than only measured here.
 --
--- WHAT IT OBSERVED VERSUS WHAT IT DEDUCED. A record carries two marks that are not
--- data but honesty. `partial` means the addon did not watch this whole level -- it
--- was installed mid-level, or levels went by while it was not running -- so the
--- sources still add up to the client's total only because the gap was seeded into
--- UNKNOWN. `timeAnchored` means the time on this level was confirmed against the
--- server's own played-time figure rather than only measured here. Neither is shown
--- as a footnote; the panel says so.
+-- A level that went by unwatched is closed without being topped up to a hundred
+-- percent: the addon did not see that experience.
 --
--- A LEVEL THAT WENT BY UNWATCHED IS NOT DECLARED COMPLETE. Closing a record because
--- the character is now two levels higher does NOT top it up to a hundred percent.
--- The addon did not see that experience and does not pretend it did.
---
--- THE TWO TERMINAL STATES ARE NOT THE SAME. At the client's maximum level the last
--- record closes and no new one opens: there is no level after it. With experience
--- gain switched off the level in progress stays open and simply stops moving -- it
--- is frozen, not finished, and switching gain back on continues it.
+-- The two terminal states differ. At the client's maximum level the last record
+-- closes and no new one opens. With experience gain switched off the level in
+-- progress stays open and stops moving: frozen, not finished, and switching gain
+-- back on continues it.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -58,9 +54,8 @@ function LevelTracker.new(options)
     retention = options.retention or RetentionPolicy.new(options.settings),
 
     -- Diagnostic only: optional, and everything below works the same without one.
-    -- A debug line for each reconciliation branch is how a player or a smoke-test
-    -- checklist can see which one fired instead of inferring it from the saved
-    -- state afterward.
+    -- A debug line for each reconciliation branch shows which one fired instead of
+    -- leaving it to be inferred from the saved state afterward.
     logger = options.logger,
 
     -- What a level costs, for levels the client is not currently on. The client only
@@ -142,11 +137,11 @@ function LevelTracker:anchorTime(payload)
     return
   end
 
-  -- The server's figure is for the level the character is on NOW. Attribution settles
+  -- The server's figure is for the level the character is on now. Attribution settles
   -- two windows after the experience arrives, so between the client's level-up and
-  -- the ledger closing this record they are not the same level, and applying it there
-  -- would trade a measured level's duration for the few seconds spent on the next one
-  -- -- and call the result confirmed.
+  -- the ledger closing this record they are not the same level, and applying it here
+  -- would replace a measured level's duration with the few seconds spent on the next
+  -- one, marked as confirmed.
   if self.record.level ~= self.playerState:level() then
     if self.logger ~= nil then
       self.logger:debug(("time anchor ignored: record level=%d client level=%d")
@@ -168,11 +163,11 @@ end
 -- Opening and closing
 -- ---------------------------------------------------------------------------
 
--- A level requirement the addon can trust, or nil. Guards against the client
--- reporting a stale 0 for a beat right after a level transition (UnitXPMax not
--- yet repopulated) -- treating that as a real requirement instead of "unknown"
--- is what let XpLedger.post's own "level requires no experience" error fire on
--- the very next gain, silently, with nothing left to redraw the bar afterwards.
+-- A level requirement the addon can trust, or nil. Right after a level transition
+-- the client can report a stale 0 for a beat (UnitXPMax not yet repopulated);
+-- taken as a real requirement instead of "unknown", it makes XpLedger.post raise
+-- its "level requires no experience" error on the next gain, and nothing redraws
+-- the bar afterwards.
 local function positiveOrNil(value)
   if type(value) == "number" and value > 0 then
     return value
@@ -199,19 +194,17 @@ function LevelTracker:openLevel(level, seedXp)
 
   if seedXp ~= nil then
     -- A level the addon did not see begin. Whatever the character already had goes
-    -- in whole as unclassified -- without that seed the promise that the sources add
-    -- up to the level total would be false from the first minute -- and the record
-    -- says it is partial, because the time and the breakdown before now are not
-    -- things this addon watched.
+    -- in whole as unclassified, so the sources add up to the level total from the
+    -- first minute, and the record says it is partial, because the time and the
+    -- breakdown before now were not watched.
     --
-    -- No group size on it either, deliberately (D81): this experience was paid at
-    -- instants nobody counted, and stamping the group of right now on it would be
-    -- reading the present as if it were the past -- the exact reclassification the
-    -- decision exists to prevent. The gain leaves here with the size unknown.
+    -- No group size on it: this experience was paid at instants nobody counted, and
+    -- stamping the current group on it would read the present as the past. The
+    -- gain leaves here with the size unknown.
     record.partial = true
     -- The amount, not only the fact. Zero is recorded as zero rather than left nil:
-    -- a level opened with nothing carried in WAS seeded, and saying so is what lets
-    -- a surface tell it from a record too old to know either way.
+    -- a level opened with nothing carried in was seeded, and saying so lets a
+    -- surface tell it from a record too old to know either way.
     record.seededXp = seedXp
     if seedXp > 0 then
       XpLedger.post(record, XpGain.new({
@@ -348,17 +341,17 @@ function LevelTracker:start()
 end
 
 -- Pick up a record that was already for this level. Anything the character gained
--- while the addon was not watching -- a reload, a late start -- shows up as a
--- positive difference and goes where every unexplained gain goes, with no group
--- size for the same reason the seed above has none: it was earned while nobody was
--- counting, and the group of this second is not evidence about it (D81).
+-- while the addon was not watching (a reload, a late start) shows up as a positive
+-- difference and goes where every unexplained gain goes, with no group size for
+-- the same reason the seed in openLevel has none: the group of this second is not
+-- evidence about experience earned while nobody was counting.
 function LevelTracker:resume(record, fromStore)
   local player = self.playerState
 
   -- Whatever has been measured so far belongs to the level whether or not this is the
   -- first time the record is being picked up. Resetting the mark below without
-  -- folding it in first would throw the session away every time reconciliation ran
-  -- again, which is exactly what happens when gain is switched back on mid-session.
+  -- folding it in first would discard the session every time reconciliation runs
+  -- again, as it does when gain is switched back on mid-session.
   self:accrue(self.clock:now())
 
   record.xpRequired = positiveOrNil(player:xpMax())
@@ -369,10 +362,9 @@ function LevelTracker:resume(record, fromStore)
       amount = difference, source = XpSource.UNKNOWN, at = self.clock:now(),
     }))
 
-    -- Experience earned while the addon was not running is experience it did NOT
-    -- observe, and the record has to say so. Posting it to UNKNOWN and leaving the
-    -- marks alone is how the breakdown ends up claiming the addon watched this and
-    -- could not classify it -- the accusation the mark exists to prevent.
+    -- Experience earned while the addon was not running was not observed, and the
+    -- record has to say so: posting it to UNKNOWN with the marks untouched would
+    -- have the breakdown claim the addon watched it and could not classify it.
     --
     -- Three cases, because what a record may claim depends on what it already knows
     -- about itself:
@@ -380,10 +372,10 @@ function LevelTracker:resume(record, fromStore)
     --   watched throughout   every point until now has a source, so the whole gap
     --                        is the gap and the figure starts here.
     --   already seeded       the gap adds to what it carried in.
-    --   seeded, figure nil   written before this field existed. It cannot say how
-    --                        its existing UNKNOWN divides, and naming a number now
-    --                        would invent the split for everything before the gap.
-    --                        It stays unable to say, which is the honest answer.
+    --   seeded, figure nil   saved without the figure. It cannot say how its
+    --                        existing UNKNOWN divides, and naming a number now
+    --                        would invent the split for everything before the gap,
+    --                        so it stays unknown.
     if record.seededXp ~= nil then
       record.seededXp = record.seededXp + difference
     elseif not record.partial then
@@ -392,12 +384,11 @@ function LevelTracker:resume(record, fromStore)
     record.partial = true
   end
 
-  -- A new sitting only if the record came off disk AND the client itself restarted.
+  -- A new sitting only if the record came off disk and the client itself restarted.
   -- The monotonic clock survives a /reload and starts again from near zero when the
   -- client does, so a value below the one saved means a different run; a record that
-  -- was already in hand is this same sitting being reconciled again. The rule
-  -- misreads one case -- quitting and restarting the client inside its first minute
-  -- -- and that is cosmetic.
+  -- was already in hand is this same sitting being reconciled again. Quitting and
+  -- restarting the client inside its first minute is misread, a cosmetic miscount.
   local now = self.clock:now()
   if fromStore and (record.lastSeenAt == nil or now < record.lastSeenAt) then
     record.sessions = record.sessions + 1
@@ -430,8 +421,7 @@ end
 -- Experience gain can be switched back on in the middle of a session and there is no
 -- event for the instant it happens: the tracker finds out because something arrives
 -- to be recorded. Measurement of the level restarts here, so the frozen stretch stays
--- uncounted -- which is the honest floor -- and the play after it is counted instead
--- of being lost along with it.
+-- uncounted and the play after it is counted.
 function LevelTracker:resumeMeasuring()
   if self.record ~= nil and self.sessionMark == nil then
     self.sessionMark = self.clock:now()
@@ -444,12 +434,10 @@ function LevelTracker:onAttributed(payload)
   end
   self:resumeMeasuring()
 
-  -- A level opened without knowing its own requirement (requiredFor returned nil
-  -- -- the client had not repopulated UnitXPMax yet) does not get a second chance
-  -- on its own: openLevel/resume only set xpRequired once, at open time. Without
-  -- this, a record stuck at "unknown" stays stuck until the next reload, which is
-  -- the "always an old number, have to reload" bug -- retried here, on the next
-  -- gain, because that is the next moment the client's own data might be ready.
+  -- A level opened before the client repopulated UnitXPMax has no requirement,
+  -- and openLevel/resume only set xpRequired once, at open time. Retried on each
+  -- gain, the next moment the client's data might be ready; otherwise the record
+  -- stays at "unknown" and the bar shows a stale number until a reload.
   if self.record.xpRequired == nil then
     self.record.xpRequired = self:requiredFor(self.record.level)
   end

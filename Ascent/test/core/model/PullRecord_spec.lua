@@ -85,9 +85,9 @@ describe("PullRecord", function()
     assert.equal(3, pull.kills, "a nameless kill still counts as a kill")
   end)
 
-  -- The half of the creature tally that exists for the fight IN PROGRESS. A plate
-  -- that could only list the dead had nothing to show for the whole of the first
-  -- kill, which is exactly when someone is looking at it.
+  -- The half of the creature tally for the fight in progress: a plate listing
+  -- only the dead would show nothing until the first kill, which is exactly when
+  -- someone is looking at it.
   describe("what the pull is fighting", function()
     it("counts a creature the moment it is hit, before anything dies", function()
       local pull = PullRecord.new(0)
@@ -132,9 +132,6 @@ describe("PullRecord", function()
       assert.equal(1, pull.creatures["Mana Serpent"].engaged)
     end)
 
-    -- The defect this closes: a fight you did not start listed nothing and
-    -- expected nothing until the first blow the PLAYER landed, so a creature that
-    -- beat on you for half a minute was not in the pull at all.
     it("counts something that is hitting you, even if you never hit it back", function()
       local pull = PullRecord.new(0)
 
@@ -218,9 +215,9 @@ describe("PullRecord", function()
       assert.equal(45, pull:duration(145))
     end)
 
-    -- The reason PullRecord owns `endedAt` rather than letting the view subtract:
-    -- a rate whose denominator kept growing while the plaque sat on screen would
-    -- visibly sag while the player read it.
+    -- PullRecord owns `endedAt` rather than letting the view subtract: a rate
+    -- whose denominator kept growing while the plate sat on screen would visibly
+    -- sag while the player read it.
     it("stops the moment combat ends, even while the plate is still shown", function()
       local pull = PullRecord.new(100)
       pull:recordXp(600, XpSource.MOB_KILL)
@@ -272,18 +269,15 @@ describe("PullRecord", function()
     assert.is_false(pull:isEmpty())
   end)
 
-  -- Stated as a test because it is a decision, not an omission: a pull is
-  -- answered while the player remembers it and then it is gone. See the header.
+  -- A pull is answered while the player remembers it, and then it is gone.
   it("is not persistable, on purpose", function()
     local pull = PullRecord.new(0)
 
     assert.is_nil(pull.toStored)
     assert.is_nil(PullRecord.restore)
   end)
-  -- The defect reported from a real fight on 2026-09-22: a creature beating on an
-  -- absorb shield leaves every damage figure at zero, so the plate treated the
-  -- pull as having nothing to say and stayed hidden for the whole fight -- with
-  -- the creature enrolled and the pull open the entire time.
+  -- A creature beating on an absorb shield leaves every damage figure at zero,
+  -- yet an open pull with a creature enrolled still has something to show.
   describe("having something to say", function()
     local function record()
       return ns.core.PullRecord.new(0, { comboWindow = 5 })

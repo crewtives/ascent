@@ -88,9 +88,8 @@ describe("CombatAggregator", function()
     assert.equal(nextLevel, seen[2])
   end)
 
-  -- 12.5's own requirement, restated for a single subscriber fanning out to
-  -- several collectors: a collector that throws must not stop the OTHERS from
-  -- seeing the same event, not just later ones.
+  -- A single subscriber fans out to several collectors: one that throws must
+  -- not stop the others from seeing the same event, not just later ones.
   describe("per-collector isolation (12.5)", function()
     it("keeps a second collector working when the first one throws on the same event", function()
       local secondRan = false

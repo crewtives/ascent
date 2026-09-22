@@ -1,26 +1,24 @@
--- A stand-in client: enough of the WoW API for the addon to load and build its
--- interface, so that a Lua error in ui/ or app/ shows up here instead of as a
--- silent nothing in the game.
+-- Ascent - a stand-in WoW client that the smoke gate loads the addon against.
 --
--- It does NOT pretend to be the real client: a stub accepts any template name
--- and any method call, so template-specific failures (a template that needs its
--- parent named, a method missing on one flavour) do not reproduce here. What it
--- does catch is every ordinary Lua fault -- a nil index, a missing field, a
--- method that does not exist on our OWN objects, a load-order mistake.
+-- It models enough of the API for the addon to load and build its interface, so
+-- a Lua error in ui/ or app/ shows up here instead of as a silent nothing in
+-- the game. A stub accepts any template name and any method call, so
+-- template-specific failures do not reproduce here; what it catches is every
+-- ordinary Lua fault: a nil index, a missing field, a method missing on the
+-- addon's own objects, a load-order mistake.
 
--- Which client to pretend to be. The default is the classic tree this harness has
--- always modelled; "forever" turns it into the modern client at the bottom of the
--- file, where the two differ. See the change add-ascent-forever-support (D102).
+-- The client to imitate: "classic" by default, or "forever", which the end of
+-- the file turns into World of Warcraft: Forever wherever the two clients
+-- differ.
 local ROOT, PROFILE = ...
 ROOT = ROOT or "Ascent"
 PROFILE = PROFILE or "classic"
 
 local frames = {}
 
--- Every widget this stub ever hands out, frames and regions alike. It is what
--- makes "opening the panel allocates nothing" a measurable property rather than
--- a claim -- a pool that quietly built a row per open would show up here as a
--- number that grows.
+-- Every widget this stub hands out, frames and regions alike, so "opening the
+-- panel allocates nothing" is measurable: a pool that built a row per open
+-- shows up as a number that grows.
 local widgets = 0
 
 local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"
@@ -30,9 +28,8 @@ local function newRegion(kind)
   local region = { kind = kind, points = {}, children = {} }
   setmetatable(region, {
     __index = function(self, key)
-      -- Any client method we did not bother to model: record it and return a
-      -- function that keeps the chain going. A nil here would mask the very
-      -- errors this harness exists to find.
+      -- Any client method not modelled here returns a function that keeps the
+      -- chain going. A nil would mask the errors this harness exists to find.
       if type(key) == "string" and key:match("^%u") then
         rawset(self, key, function(...) return self end)
         return rawget(self, key)
@@ -41,83 +38,65 @@ local function newRegion(kind)
     end,
   })
 
-  -- Same rule as SetWidth/SetHeight below: an anchored frame's size is the
-  -- anchor's, and SetSize on one does nothing until the anchor is released.
+  -- Same rule as SetWidth/SetHeight below: an anchored frame's size is its
+  -- anchor's, and SetSize does nothing until the anchor is released.
   function region:SetSize(w, h)
     if self.allPointsOf == nil then self.w, self.h = w, h end
     return self
   end
 
-  -- Which frame the scroll frame is actually scrolling. Auto-stubbed, the harness
-  -- could not tell whether a control ended up inside it or past its bottom edge --
-  -- and past its bottom edge is exactly where half this panel used to live.
+  -- Which frame the scroll frame scrolls, so the harness can tell whether a
+  -- control ended up inside it or past its bottom edge.
   function region:SetScrollChild(child) self.scrollChild = child return self end
 
-  -- The anchors back out again. Auto-stubbed, GetPoint returned self, and the
-  -- options panel's own measurement of how tall its scroll child has to be could
-  -- not walk one link of the chain it was built from.
+  -- The anchors read back, so the options panel can walk the chain it was built
+  -- from to measure how tall its scroll child has to be.
   function region:GetPoint(index)
     local p = self.points[index or 1]
     if p == nil then return nil end
     return p[1], p[2], p[3], p[4], p[5]
   end
   -- A frame held by SetAllPoints is pinned at both corners, and the client
-  -- ignores SetSize on one: its size comes from the anchor until the anchor is
-  -- released. Without that rule here, the harness applies every size it is given
-  -- and cannot see a bar that came back from the client's slot still wearing the
-  -- client's width -- which is what the owner reported as "se queda con la
-  -- dimension vieja".
+  -- ignores SetSize on it: its size comes from the anchor until the anchor is
+  -- released. Without this rule the harness cannot see a bar that left the
+  -- client's slot still wearing the client's width.
   function region:SetWidth(w) if self.allPointsOf == nil then self.w = w end return self end
   function region:SetHeight(h) if self.allPointsOf == nil then self.h = h end return self end
   function region:SetColorTexture(r, g, b, a) self.color = { r, g, b, a } return self end
 
-  -- Which tab reads as "you are here". Auto-stubbed these returned self and recorded
-  -- nothing, so the harness could walk every tab without being able to say which one
-  -- ended up marked -- and "did not error" is exactly what a panel greying out its
-  -- active tab would also produce.
+  -- Which tab reads as "you are here", recorded so the harness can say which
+  -- tab ended up marked; "did not error" is also what a panel greying out its
+  -- active tab would produce.
   function region:LockHighlight() self.highlightLocked = true return self end
   function region:UnlockHighlight() self.highlightLocked = false return self end
 
-  -- The client's vocabulary for "you cannot use this". Recorded so the harness can
-  -- assert it is NOT how the active tab gets marked, which is the defect 1.3 exists
-  -- to correct; auto-stubbed, a panel that went back to greying its tabs out would
-  -- pass every gate in this repo.
-  -- Alpha and mouse: how the addon makes the client's experience bar stop being
-  -- seen without calling anything the client protects (D48). Auto-stubbed, both
-  -- returned self and recorded nothing, so a slot that quieted the wrong frame --
-  -- or nothing at all -- would have looked exactly like one that worked.
+  -- Alpha and mouse: how the addon stops the client's experience bar being seen
+  -- without calling anything the client protects. Recorded, so a slot that
+  -- quieted the wrong frame, or nothing at all, does not look like one that
+  -- worked.
   function region:SetAlpha(value) self.alpha = value return self end
   function region:GetAlpha() return self.alpha or 1 end
   function region:EnableMouse(value) self.mouseEnabled = value ~= false return self end
   function region:IsMouseEnabled() return self.mouseEnabled ~= false end
 
-  -- The one thing SetAllPoints does that this harness cares about: the frame ends
-  -- up the size of what it was anchored to. That IS the slot (D47) -- auto-stubbed
-  -- it returned self, the inherited size never moved, and the bar could have
-  -- "taken over" the client's bar without ever changing shape.
-  -- Records the anchor and NOTHING else, the way the client behaves: the frame's
-  -- own size is recomputed on the next layout pass, not in this call. A harness
-  -- that copied the size here would hide exactly the bug it should catch -- a bar
-  -- that measures ITSELF right after anchoring and paints one frame at the size
-  -- it had before.
+  -- The frame ends up the size of what it was anchored to, which is how the bar
+  -- takes the client's slot. Only the anchor is recorded, as in the client: the
+  -- frame's size is recomputed on the next layout pass, not in this call, so a
+  -- bar that measures itself right after anchoring paints one frame at its old
+  -- size.
   function region:SetAllPoints(other)
     self.allPointsOf = other
     return self
   end
 
-  -- Who draws on top. Auto-stubbed, the setters returned self and the getters
-  -- answered with the frame itself, so the bar could take the client's slot at any
-  -- depth at all -- including the one that paints over the client's own frame art.
-  -- That is the defect a player photographed twice before the harness could say a
-  -- word about it: the same setting looked inset one evening and covered the
-  -- client's frame the next, because nothing in the addon ever stated a depth.
-  -- Who a frame hangs from. Auto-stubbed, GetParent answered with the frame
-  -- itself and every chain was one link long -- so the bar could not tell the
-  -- client's experience bar apart from the frame that draws the art around it,
-  -- which is the whole difference between sitting inside that art and covering it.
+  -- Who a frame hangs from, so the bar can tell the client's experience bar
+  -- apart from the frame that draws the art around it: the difference between
+  -- sitting inside that art and covering it.
   function region:SetParent(parent) self.parent = parent return self end
   function region:GetParent() return self.parent end
 
+  -- Who draws on top, so a bar that takes the client's slot at a depth that
+  -- paints over the client's frame art is visible here.
   function region:SetFrameStrata(value) self.strata = value return self end
   function region:GetFrameStrata() return self.strata or "MEDIUM" end
   function region:SetFrameLevel(value) self.level = value return self end
@@ -125,24 +104,22 @@ local function newRegion(kind)
 
   function region:GetEffectiveScale() return self.scale or 1 end
   -- Recorded, so the conversion between the slot's points and this frame's is
-  -- actually exercised: anchored frames at different scales cover the same screen
-  -- area and that is a different number of points each.
+  -- exercised: at different scales the same screen area is a different number
+  -- of points.
   function region:SetScale(value) self.scale = value return self end
 
-  -- How far the frame sits off the bottom of the screen. Auto-stubbed it answered
-  -- with the frame itself, so the rule that decides which side the bar's text
-  -- goes to could only ever take its unknown-room branch.
+  -- How far the frame sits off the bottom of the screen, which decides the side
+  -- the bar's text goes to.
   function region:GetBottom() return self.bottom end
 
+  -- The client's vocabulary for "you cannot use this". Recorded so the harness
+  -- can assert it is not how the active tab gets marked.
   function region:SetEnabled(enabled) self.enabled = enabled ~= false return self end
   function region:Enable() self.enabled = true return self end
   function region:Disable() self.enabled = false return self end
 
-  -- Text, font and colour are recorded rather than swallowed by the catch-all
-  -- above. Without this the whole empty-state surface and every skinned cell
-  -- are invisible to the harness: SetText returns self and the string is gone,
-  -- so a panel that printed the wrong message passed just as happily as one
-  -- that printed the right one.
+  -- Text, font and colour are recorded rather than swallowed by the catch-all,
+  -- so the harness can read the empty-state messages and every skinned cell.
   function region:SetText(value) self.text = value return self end
   function region:GetText() return self.text end
   function region:SetFont(path, size, flags)
@@ -152,20 +129,16 @@ local function newRegion(kind)
   function region:SetTextColor(r, g, b, a) self.textColor = { r, g, b, a } return self end
   function region:SetWordWrap(value) self.wordWrap = value return self end
 
-  -- Anchors are recorded, not swallowed. Where a cell actually sits inside its
-  -- row is the whole of "no line is drawn outside the frame", and until this
-  -- existed there was no way to ask.
+  -- Anchors are recorded, so the harness can check that a cell sits inside its
+  -- row.
   function region:SetPoint(...) self.points[#self.points + 1] = { ... } return self end
-  -- Clears the SetAllPoints anchor too, the way the client does. Without that the
-  -- harness could not see a frame still pinned to the client's bar after leaving
-  -- the slot -- which is exactly how it came back wearing the client's width.
+  -- Clears the SetAllPoints anchor too, as the client does, so a frame still
+  -- pinned to the client's bar after leaving the slot shows up.
   function region:ClearAllPoints()
     self.points = {}
-    -- Letting go of the anchor KEEPS the size the frame had while it was held:
-    -- a frame does not shrink back to anything when its points are cleared, it
-    -- simply stops being told what to be. That is why a bar that was sized
-    -- before its anchors were released comes back wearing the client's width --
-    -- the size it was given went nowhere, and this is the size that stayed.
+    -- Releasing the anchor keeps the size the frame had while it was held:
+    -- clearing its points does not resize it. So a bar sized before its anchors
+    -- were released keeps the client's width.
     if self.allPointsOf ~= nil then
       self.w, self.h = self.allPointsOf:GetWidth(), self.allPointsOf:GetHeight()
       self.allPointsOf = nil
@@ -184,16 +157,11 @@ local function newRegion(kind)
     return fontString
   end
   function region:CreateAnimationGroup() return newRegion("AnimationGroup") end
-  -- The size it was actually given, not a constant. Every column width in
-  -- ui/RowList.lua is derived from one of these, so a stub that answers 400 to
-  -- everything runs the whole layout against a number no player will ever have
-  -- -- and the arithmetic that decides whether a cell fits inside its row has
-  -- then never been exercised at all.
-  -- An anchored frame ANSWERS with its anchor's size, computed on the way out
-  -- rather than copied on the way in. Copying is what the SetAllPoints note above
-  -- refuses to do, and for a good reason; answering is what the client does, and
-  -- without it a frame that never let go of the client's bar still reports the
-  -- size the player configured, and reads as correct.
+  -- The size the frame was given, not a constant: every column width in
+  -- ui/RowList.lua derives from it, and a fixed answer would leave the
+  -- arithmetic that decides whether a cell fits inside its row unexercised. An
+  -- anchored frame answers with its anchor's size, computed on read, as the
+  -- client does.
   function region:GetWidth()
     if self.allPointsOf ~= nil then return self.allPointsOf:GetWidth() end
     return self.w or 400
@@ -210,10 +178,8 @@ local function newRegion(kind)
     return DEFAULT_FONT, 11, ""
   end
   function region:GetName() return self.name end
-  -- The anchor it was actually given, when it was given the five-argument form
-  -- the panel uses. Without this every position read back is the same constant,
-  -- and the off-screen clamp -- whose whole job is to change a saved x -- has
-  -- nothing that can observe it.
+  -- The anchor it was given in the five-argument form the panel uses, so the
+  -- off-screen clamp, whose job is to change a saved x, can be observed.
   function region:GetPoint()
     local p = self.points[1]
     if p ~= nil and #p == 5 then
@@ -222,10 +188,8 @@ local function newRegion(kind)
     return "CENTER", nil, "CENTER", 0, 0
   end
   function region:GetValue() return 1 end
-  -- Honest, rather than always false. The client's checkbox template flips
-  -- itself and THEN runs OnClick, so a handler reading GetChecked sees the state
-  -- the player just chose; a stub that always said false could only ever
-  -- exercise switching things off.
+  -- The client's checkbox template flips itself and then runs OnClick, so a
+  -- handler reading GetChecked sees the state the player just chose.
   function region:SetChecked(value) self.checked = value and true or false return self end
   function region:GetChecked() return self.checked == true end
   function region:IsShown() return self.shown == true end
@@ -234,8 +198,11 @@ local function newRegion(kind)
   function region:IsVisible() return self.shown == true end
   function region:SetScript(name, fn) self.scripts = self.scripts or {}; self.scripts[name] = fn return self end
   function region:GetScript(name) return self.scripts and self.scripts[name] end
-  function region:RegisterEvent() return self end
-  function region:UnregisterAllEvents() return self end
+  -- Kept, so an event reaches only the frames that registered for it, as in the
+  -- client, and a router that stops can be seen to let go.
+  function region:RegisterEvent(event) self.events = self.events or {}; self.events[event] = true return self end
+  function region:UnregisterEvent(event) if self.events then self.events[event] = nil end return self end
+  function region:UnregisterAllEvents() self.events = nil return self end
 
   return region
 end
@@ -246,9 +213,9 @@ function CreateFrame(kind, name, parent, template)
   frame.template = template
   if name ~= nil then
     _G[name] = frame
-    -- Templates that declare $parent children expose them as globals. Model the
-    -- handful this addon reads back, so a missing one is a nil index here just
-    -- as it would be in the client.
+    -- Templates that declare $parent children expose them as globals. The
+    -- handful this addon reads back are modelled, so a missing one is a nil
+    -- index here as in the client.
     for _, suffix in ipairs({ "Text", "Low", "High", "ScrollBar" }) do
       _G[name .. suffix] = newRegion("Region")
     end
@@ -259,15 +226,9 @@ end
 
 UIParent = newRegion("Frame")
 GameTooltip = newRegion("GameTooltip")
--- The tooltip REMEMBERS what it was told. Left as an auto-stub, every AddLine and
--- AddDoubleLine returned self and recorded nothing, so the hover popup could only
--- ever be tested for "did not raise" -- which is exactly how the bar went on saying
--- nothing about a partial record while the panel said it. SetOwner clears, the way
--- the client's does, so each hover is read on its own.
--- The dropdown family, modelled rather than auto-stubbed. Auto-stubbed, the
--- options panel's probe would have found all five "present" and then built a
--- control whose entries nobody could count -- the harness would have walked the
--- dropdown path and been unable to tell it from the button it replaces.
+-- The dropdown family, modelled so the options panel's probe finds all five and
+-- the entries of the control it builds can be counted: the harness can tell the
+-- dropdown path from the button it replaces.
 local initialising
 UIDropDownMenu_CreateInfo = function() return {} end
 UIDropDownMenu_AddButton = function(info)
@@ -284,12 +245,14 @@ end
 UIDropDownMenu_SetWidth = function(frame, width) frame.dropdownWidth = width end
 UIDropDownMenu_SetText = function(frame, text) frame.dropdownText = text end
 
+-- The tooltip records what it is told, so the hover popup can be tested for
+-- what it says. SetOwner clears, as the client's does, so each hover is read on
+-- its own.
 GameTooltip.lines = {}
 
--- The client's default placement. Recorded rather than stubbed away: the point
--- of calling it is that the tooltip lands where the PLAYER put their tooltips,
--- and a harness that swallowed the call could not tell that apart from a bar
--- that anchored the tooltip to itself.
+-- The client's default placement, recorded: the tooltip must land where the
+-- player put their tooltips, and the harness must tell that apart from a bar
+-- that anchors the tooltip to itself.
 GameTooltip_SetDefaultAnchor = function(tooltip, owner)
   tooltip.defaultAnchored, tooltip.owner, tooltip.lines = true, owner, {}
 end
@@ -320,20 +283,18 @@ IsResting = function() return false end
 IsXPUserDisabled = function() return false end
 GetMaxPlayerLevel = function() return 70 end
 
--- The interface number the client declares, which is what tells the flavours apart
--- (D95) now that two supported clients cap at the same level. The classic profile
--- reports Burning Crusade's, to agree with the maximum level just above it.
+-- The interface number tells the flavours apart, since two supported clients
+-- cap at the same level. The classic profile reports Burning Crusade Classic's,
+-- to agree with the maximum level above.
 GetBuildInfo = function() return "2.5.6", "45745", "Jan 09 2026", 20506 end
 
--- The client's own experience bar and the pieces around it, thin and wide the way
--- the real one is. Present before the addon loads because the capability probe
--- runs inside the composition root, not after it.
--- Hung off the main bar the way the client hangs it, because that relationship is
--- load-bearing: the addon makes the experience bar itself invisible, so the art
--- that still draws in that strip -- the divisions along it, the caps at its ends --
--- belongs to this parent and outlives the quieting. A chain one link long cannot
--- express that, and a bar that goes one level under the ANCHOR lands level with
--- the parent instead of under it.
+-- The client's own experience bar and the frames around it, thin and wide like
+-- the real one. Present before the addon loads, because the capability probe
+-- runs inside the composition root. The bar hangs off MainMenuBar as in the
+-- client: the addon makes the experience bar invisible, so the art still drawn
+-- in that strip (the divisions, the end caps) belongs to the parent, and a bar
+-- placed one level under the anchor lands level with the parent instead of
+-- under it.
 MainMenuBar = newRegion("Frame")
 MainMenuBar:SetSize(1024, 53)
 MainMenuBar:SetFrameLevel(2)
@@ -359,19 +320,22 @@ IsInInstance = function() return false, "none" end
 IsInGroup = function() return false end
 IsInRaid = function() return false end
 GetNumGroupMembers = function() return 0 end
--- One accepted quest, so the sweep has something to read. Naming used to be
--- stubbed out here, which meant the whole path from GetQuestLogTitle to a row in
--- the panel was dead code as far as every gate in this repo could tell.
+-- One accepted quest, so the sweep has something to read, from GetQuestLogTitle
+-- through to a row in the panel.
 local QUEST_LOG = {
   { title = "Wanted: Hogger", level = 10, questId = 1234, isComplete = true, objectives = {
     { text = "Riverpaw Mongrel slain: 3/6", kind = "monster" },
     { text = "Hogger's Head: 0/1", kind = "item" },
   } },
 }
--- The client's own sentence for a kill objective. Absent here until the sweep
--- started reading objectives, and its absence hid a load-order bug that would
--- have broken the addon on the first sweep in a real client.
+-- The client's sentence for a kill objective, which the objective sweep reads;
+-- a load-order fault on the first sweep only shows with it defined.
 QUEST_MONSTERS_KILLED = "%s slain: %d/%d"
+-- The kill line the experience channel is read against; without it the harness
+-- reports the channel missing on both profiles, which is true of neither
+-- client. Kept in the forever profile: the World of Warcraft: Forever API dump
+-- carries no GlobalStrings, so it says nothing either way.
+COMBATLOG_XPGAIN_FIRSTPERSON = "%s dies, you gain %d experience."
 GetNumQuestLeaderBoards = function(index)
   local entry = QUEST_LOG[index]
   return entry and entry.objectives and #entry.objectives or 0
@@ -400,8 +364,8 @@ C_CombatLog = { GetCurrentEventInfo = function() end }
 CombatLogGetCurrentEventInfo = function() end
 C_AddOns = { GetAddOnMetadata = function() return "0.1.0" end }
 GetAddOnMetadata = function() return "0.1.0" end
--- Kept as well as printed. The composition root has no busted spec and cannot get
--- one -- CreateFrame runs at its file scope -- so what it prints is the only
+-- Kept as well as printed. The composition root has no busted spec and cannot
+-- get one (CreateFrame runs at its file scope), so what it prints is the only
 -- surface its diagnostics can be asserted through.
 local chatLines = {}
 DEFAULT_CHAT_FRAME = {
@@ -411,19 +375,18 @@ DEFAULT_CHAT_FRAME = {
   end,
 }
 InterfaceOptions_AddCategory = function() end
--- Recorded rather than swallowed: the panel's shortcut into the settings is a
--- button whose whole job is to reach one of these, and a stub that returns
--- nothing cannot tell "it opened the options" from "it did nothing at all".
+-- Recorded: the panel's shortcut into the settings is a button whose job is to
+-- reach this, and a stub that returns nothing cannot tell "it opened the
+-- options" from "it did nothing".
 OPENED_OPTIONS = 0
 InterfaceOptionsFrame_OpenToCategory = function() OPENED_OPTIONS = OPENED_OPTIONS + 1 end
 CreateColor = function(r, g, b, a) return { r = r, g = g, b = b, a = a } end
 Mixin = function(target) return target end
 -- The colour picker, modelled closely enough to tell confirming from
--- cancelling. The options panel cannot ask the client whether the player
--- pressed Okay -- neither flavour has a callback for it -- so it infers the
--- answer from the frame hiding without cancelFunc having run
--- (ui/OptionsPanel.lua). That makes OnHide load-bearing, so this stub actually
--- fires it, and HookScript actually records a handler.
+-- cancelling. Neither classic client has a callback for the player pressing
+-- Okay, so ui/OptionsPanel.lua infers it from the frame hiding without
+-- cancelFunc having run. So this stub fires OnHide, and HookScript records a
+-- handler.
 local pickerConfirms = false
 ColorPickerFrame = {
   hooks = {},
@@ -439,9 +402,9 @@ ColorPickerFrame = {
   end,
   SetupColorPickerAndShow = function(self, options)
     if options.swatchFunc then options.swatchFunc() end
-    -- Alternating, so one smoke run walks both endings: a cancelled pick that
-    -- must leave nothing behind, and a confirmed one that must write exactly
-    -- once. Cancel first, because that is the path a bug hides in.
+    -- Alternating, so one smoke run walks both endings: a cancelled pick must
+    -- leave nothing behind, a confirmed one must write exactly once. Cancel
+    -- comes first, because that is the path a bug hides in.
     if not pickerConfirms and options.cancelFunc then options.cancelFunc() end
     pickerConfirms = not pickerConfirms
     self:Hide()
@@ -455,9 +418,9 @@ C_Map = {
   GetBestMapForUnit = function() return 1 end,
   GetMapInfo = function(mapId) return { mapID = mapId, name = "Elwynn Forest" } end,
 }
--- Present but showing nobody, which is the state a player in an empty field is in:
--- the sweep runs on every tick of every pull below and enrols nothing, so the pulls
--- these steps assert about are built from the combat log alone.
+-- Present but showing nobody, as for a player in an empty field: the sweep runs
+-- on every tick of every pull below and enrols nothing, so those pulls are
+-- built from the combat log alone.
 C_NamePlate = { GetNamePlates = function() return {} end }
 C_Seasons = { GetActiveSeason = function() return 0 end }
 C_GameRules = {}
@@ -473,8 +436,8 @@ strsplit = function(sep, str) local out = {} for piece in str:gmatch("[^" .. sep
 strtrim = function(str) return (str:gsub("^%s+", ""):gsub("%s+$", "")) end
 wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
 tinsert = table.insert
--- The client's list of frames Escape closes. A window that appends itself to it
--- indexes a global that has to exist -- in the client it always does.
+-- The client's list of frames Escape closes. A window that appends itself
+-- indexes a global that always exists in the client.
 UISpecialFrames = {}
 tremove = table.remove
 format = string.format
@@ -482,28 +445,26 @@ floor = math.floor
 max = math.max
 min = math.min
 
--- NOT an empty installation, and that is the point. Every run of this harness
--- used to boot from nothing, so every path that depends on settings a player
--- already has was exercised only AFTER construction -- through applySettings,
--- where the frames exist. The construction path with real settings had no
--- coverage at all, and it is the one that fails hardest: a throw there costs the
--- bar, the panel AND the options category, which is how an addon that was
--- recording perfectly looked completely absent.
+-- Not an empty installation. The construction path with settings a player
+-- already has is the one that fails hardest: a throw there costs the bar, the
+-- panel and the options category. Booting from nothing would exercise those
+-- settings only after construction, through applySettings, where the frames
+-- exist.
 --
--- The skin is the trigger and is chosen deliberately: cartographer puts its text
--- BELOW the bar, which is the branch that asks how much room is under a frame
--- that the constructor has not made yet.
+-- The skin is the trigger: cartographer puts its text below the bar, the branch
+-- that asks how much room is under a frame the constructor has not made yet.
 AscentDB = {
   settings = {
     bar_skin = "cartographer",
     high_contrast = true,
-    -- A version older than any this addon will ever be, so the composition root
-    -- takes the "you updated" branch on the way up. It is the only way to see
-    -- that path from here: the notice is decided once, while the addon loads.
+    -- A version older than any this addon will be, so the composition root
+    -- takes the "you updated" branch on the way up. The notice is decided once,
+    -- while the addon loads, so this is the only way to see that path from
+    -- here.
     last_seen_version = "0.0.1",
     bar_colors = {
-      -- Saved by the client's colour picker, which writes r/g/b and no alpha.
-      -- Every reader has to complete it, and this is the only place that says so.
+      -- Saved by the client's colour picker, which writes r/g/b and no alpha,
+      -- so every reader has to complete it.
       UNKNOWN = { r = 0, g = 0, b = 0 },
     },
   },
@@ -511,33 +472,31 @@ AscentDB = {
 AscentCharDB = nil
 
 -- ---------------------------------------------------------------------------
--- The second client (D102).
+-- The forever profile: World of Warcraft: Forever.
 --
--- Everything above models a classic client. This turns it into Forever, and it
--- only ever takes things away or swaps them for their modern namespace: a name
--- is absent below ONLY because the client's own API dump says it is absent there
--- (build 69913, see the change's design appendix). Nothing here is invented, and
--- nothing is removed on a hunch -- the frames of the client's own experience bar
--- stay exactly as the classic profile has them, because the dump carries no
--- frames at all and so says nothing either way about them.
+-- Everything above models a classic client. This only takes names away or swaps
+-- them for their modern namespace, and a name is absent below only because the
+-- client's own API dump (build 69913) says it is absent. The frames of the
+-- client's experience bar stay as the classic profile has them: the dump
+-- carries no frames, so it says nothing about them.
 --
--- A SECRET VALUE, and what this cannot model. In the real client a guarded read
--- returns a value that is present, has a type, and RAISES when tainted code
+-- Secret values, and what this cannot model. In the real client a guarded read
+-- returns a value that is present, has a type, and raises when tainted code
 -- compares it or does arithmetic on it. Lua 5.1 only dispatches __eq and __lt
 -- between two operands of the same type, so `secret == true` here answers false
--- instead of raising, the way it would in the client. Everything else does
--- raise: arithmetic, concatenation, indexing, calling, and comparing against a
--- number or another secret. So this profile catches a read that is USED, but it
--- cannot catch one that is only compared against a boolean -- which is exactly
--- the shape NameplateWatch is full of, and exactly why 3.2 converts those to go
--- through the guard rather than trusting this harness to find them.
+-- where the client raises. Everything else does raise: arithmetic,
+-- concatenation, indexing, calling, and comparing against a number or another
+-- secret. So this profile catches a read that is used, but not one only
+-- compared against a boolean, which is the shape NameplateWatch is full of;
+-- those comparisons go through the guard instead of relying on this harness to
+-- find them.
 -- ---------------------------------------------------------------------------
 
 local SECRET = {}
 
 -- One shared raise, not one per secret: Lua 5.1 only dispatches __eq when both
--- tables carry the SAME function, so a closure built per value would make
--- `secretA == secretB` answer false instead of raising.
+-- tables carry the same function, so a closure per value would make `secretA ==
+-- secretB` answer false instead of raising.
 local function raise() error("attempt to operate on a secret value", 2) end
 
 function makeSecret(value)
@@ -553,10 +512,10 @@ local function isSecret(value)
   return type(value) == "table" and rawget(value, SECRET) ~= nil
 end
 
--- Make the reads a collector does during a fight answer with secrets, for the
--- span of one call, and put them back afterwards. Opt-in on purpose: switched on
--- globally it would take the rest of the harness down with it, and what a caller
--- wants to know is whether ONE path survives a guarded client.
+-- Makes the reads a collector does during a fight answer with secrets for the
+-- span of one call, then puts them back. Opt-in: switched on globally it would
+-- take the rest of the harness down, and a caller wants to know whether one
+-- path survives a guarded client.
 local COMBAT_READS = {
   "UnitIsTapDenied", "UnitIsUnit", "UnitCanAttack", "UnitIsDead",
   "UnitAffectingCombat", "UnitGUID", "UnitName", "UnitLevel",
@@ -580,15 +539,16 @@ function withSecretCombatReads(fn)
 end
 
 if PROFILE == "forever" then
-  -- Present in the dump, and the mechanism the guard of 3.1 is built on. Absent
-  -- on the classic clients, which is why they only exist in this profile.
+  -- Present in the dump, and what the addon's guard against secret values is
+  -- built on. Absent on the classic clients, so they exist only in this
+  -- profile.
   issecretvalue = isSecret
   canaccessvalue = function(value) return not isSecret(value) end
 
   GetBuildInfo = function() return "1.60.1", "69913", "Sep 17 2026", 16001 end
   GetMaxPlayerLevel = function() return 60 end
 
-  -- Gone from the dump. Every one of these is a call the addon makes today.
+  -- Absent from the dump. Every one of these is a call the addon makes.
   GetQuestLogTitle = nil
   GetNumQuestLogEntries = nil
   SelectQuestLogEntry = nil
@@ -598,6 +558,13 @@ if PROFILE == "forever" then
   GetAddOnMetadata = nil
   GetNamePlates = nil
   CombatLogGetCurrentEventInfo = nil
+
+  -- Present, with nothing in it that reads a line. The dump lists eleven
+  -- members, all filtering and retention (`IsCombatLogRestricted`,
+  -- `GetMessageLimit`...), and no GetCurrentEventInfo: the only functions of
+  -- that name live in C_CombatLogInternal and C_CombatLogSecure, which are not
+  -- in _G. The addon calls none of the eleven, so none is stood in for.
+  C_CombatLog = {}
 
   -- What it has instead.
   C_Spell = { GetSpellTexture = function() return "Interface\\Icons\\INV_Misc_QuestionMark" end }
@@ -690,8 +657,8 @@ end
 
 print("bootstrap completed without raising")
 
--- Beyond loading: actually drive the thing. Every step below is something the
--- player does in the first minute, and each one is a path no unit test touches.
+-- Beyond loading: drive the addon. Every step below is something the player
+-- does in the first minute, and each one is a path no unit test touches.
 local context = ns.app and ns.app.context
 if context == nil then
   print("no context was published")
@@ -709,9 +676,9 @@ local function step(what, fn)
   end
 end
 
--- The harness checking its own stand-in before anything is built on it. A secret
--- that quietly behaved like an ordinary value would make every later assertion
--- about degrading meaningless -- it would pass by never having been tested.
+-- The harness checks its own stand-in before anything is built on it: a secret
+-- that behaved like an ordinary value would let every later assertion about
+-- degrading pass without having been tested.
 if PROFILE == "forever" then
   step("a secret value is recognised as one, and raises when it is used", function()
     local secret = makeSecret(true)
@@ -732,11 +699,176 @@ if PROFILE == "forever" then
       if pcall(use) then error(what .. " did not raise on a secret", 0) end
     end
 
-    -- The one shape this stand-in CANNOT reproduce, asserted so that it stays a
-    -- known limit instead of becoming a false sense of cover: Lua 5.1 only
-    -- dispatches __eq between two tables, so this answers false where the real
-    -- client raises. It is the shape NameplateWatch uses throughout (3.2).
+    -- The one shape this stand-in cannot reproduce, asserted so it stays a
+    -- known limit: Lua 5.1 only dispatches __eq between two tables, so this
+    -- answers false where the real client raises. NameplateWatch uses this
+    -- shape throughout.
     if (secret == true) ~= false then error("Lua 5.1 stopped short-circuiting mixed __eq", 0) end
+  end)
+
+  -- Before anything below seeds the level: it has to carry what this client was
+  -- missing when it opened, and nothing may have asked for an event there was
+  -- no reader for.
+  step("a level remembers the sources its client did not have", function()
+    local record = context.tracker:current()
+    if record == nil then error("no level in progress to look at") end
+    if record:unavailableReason("combat_log") ~= "absent" then
+      error("the level in progress does not remember the combat log was absent: "
+        .. tostring(record:unavailableReason("combat_log")))
+    end
+    if record:unavailableReason("xp_chat") ~= nil then
+      error("the level claims the experience line was missing before any line arrived")
+    end
+    for _, frame in ipairs(frames) do
+      if frame.events ~= nil and frame.events.COMBAT_LOG_EVENT_UNFILTERED then
+        error("something registered the combat log on a client with no reader for it")
+      end
+    end
+  end)
+
+  -- The sweep that reads more unit state than anything else in the addon,
+  -- against a client that closes all of it. It should find nobody here; what is
+  -- checked is that it comes back instead of raising inside a ticker the player
+  -- cannot see.
+  step("the nameplate sweep survives a client that closes every unit read", function()
+    local watch = ns.adapter.NameplateWatch.new({ bus = context.bus })
+    local plates = C_NamePlate.GetNamePlates
+    C_NamePlate.GetNamePlates = function()
+      return { { namePlateUnitToken = "nameplate1" }, { namePlateUnitToken = "nameplate2" } }
+    end
+
+    local found
+    local ok, err = pcall(withSecretCombatReads, function()
+      found = watch:sweep()
+      found = found + watch:sweep()
+    end)
+
+    C_NamePlate.GetNamePlates = plates
+    if not ok then error(err, 0) end
+    if found ~= 0 then
+      error("the sweep enrolled " .. tostring(found) .. " creature(s) it could not read", 0)
+    end
+  end)
+
+  -- The rule itself, run rather than asserted in a comment. Both roads into the
+  -- domain are driven with the client's reads closed (the event bus the inbound
+  -- routers push onto, and the PlayerState port core/ pulls from), and
+  -- everything handed over either way has to be a plain value or nil. A closed
+  -- value that got this far would not raise here but later, inside a service,
+  -- in a fight, with Lua errors off.
+  step("no closed value reaches the domain, by either road", function()
+    local offenders = {}
+    local function scan(where, value, depth)
+      if issecretvalue(value) then
+        offenders[#offenders + 1] = where
+      elseif type(value) == "table" and depth < 3 then
+        for key, inner in pairs(value) do
+          scan(where .. "." .. tostring(key), inner, depth + 1)
+        end
+      end
+    end
+
+    -- Every topic, because which one carries a field is not the point: the
+    -- promise is about the boundary, not about a list of payloads.
+    local watched = {}
+    for _, topic in ns.core.Frozen.each(ns.core.EventTopic) do
+      watched[#watched + 1] = context.bus:subscribe(topic, function(payload)
+        scan("bus " .. tostring(topic), payload, 0)
+      end)
+    end
+
+    -- A line read the way a client with a reader would hand one over (this one
+    -- has none, so the router is given one for the span of this step), with the
+    -- fields named in `closed` coming back as values this addon may not read.
+    local realCombatLog = C_CombatLog
+    local function line(subevent, sourceGUID, destGUID, closed)
+      C_CombatLog = {
+        GetCurrentEventInfo = function()
+          return 1000, subevent, false, sourceGUID, closed and makeSecret("Source") or "Source",
+            0, 0, destGUID, closed and makeSecret("Boar") or "Boar", 0, 0,
+            makeSecret(133), makeSecret("Fireball"), makeSecret(0), makeSecret(12)
+        end,
+      }
+    end
+
+    local player = ns.adapter.WowPlayerState.new()
+    local router = ns.adapter.CombatLogRouter.new({
+      bus = context.bus, clock = context.clock, playerState = player,
+    })
+
+    -- A line with nothing legible about it, then one this character is in whose
+    -- every other field is closed: the first has to be dropped, the second has
+    -- to be handled without carrying anything closed into a payload.
+    line(makeSecret("SWING_DAMAGE"), makeSecret("Player-1-00000000"), makeSecret("Creature-0-1-1-1-15-A"), true)
+    router:handleCombatLogEvent()
+    line("SWING_DAMAGE", UnitGUID("player"), makeSecret("Creature-0-1-1-1-15-A"), true)
+    router:handleCombatLogEvent()
+    line("UNIT_DIED", nil, makeSecret("Creature-0-1-1-1-15-A"), true)
+    router:handleCombatLogEvent()
+
+    -- The other inbound road: what an ordinary event carries.
+    -- CHAT_MSG_COMBAT_XP_GAIN is the line whose readability on this client is
+    -- unverified; the turn-in's id is the one nothing on the way checks the
+    -- type of, so it would ride through.
+    local events = ns.adapter.WowEventRouter.new({
+      bus = context.bus, clock = context.clock, playerState = player,
+    })
+    events:dispatch("CHAT_MSG_COMBAT_XP_GAIN", makeSecret("Boar dies, you gain 12 experience."))
+    events:dispatch("QUEST_TURNED_IN", makeSecret(1234), makeSecret(250), makeSecret(0))
+
+    local watch = ns.adapter.NameplateWatch.new({ bus = context.bus })
+    local plates = C_NamePlate.GetNamePlates
+    C_NamePlate.GetNamePlates = function() return { { namePlateUnitToken = "nameplate1" } } end
+    withSecretCombatReads(function() watch:sweep() end)
+    C_NamePlate.GetNamePlates = plates
+
+    -- The port, whose road is a pull and not a push: core/ asks this for the
+    -- level and the experience themselves, so a closed read here would be the
+    -- shortest path of all into the domain.
+    local PORT_READS = {
+      "UnitLevel", "UnitXP", "UnitXPMax", "GetXPExhaustion", "IsResting", "IsXPUserDisabled",
+      "IsInInstance", "GetInstanceInfo", "GetNumGroupMembers", "GetMaxPlayerLevel",
+      "UnitHealth", "UnitHealthMax", "UnitPower", "UnitPowerMax", "UnitGUID", "UnitName",
+      "GetRealmName", "GetZoneText",
+    }
+    local saved, savedMap = {}, { C_Map.GetBestMapForUnit, C_Map.GetMapInfo }
+    for _, name in ipairs(PORT_READS) do
+      saved[name] = _G[name]
+      _G[name] = function() return makeSecret(1) end
+    end
+    C_Map.GetBestMapForUnit = function() return makeSecret(1519) end
+    C_Map.GetMapInfo = function() return makeSecret({ name = "Elwynn Forest" }) end
+
+    local ok, err = pcall(function()
+      scan("port level", player:level(), 0)
+      scan("port maxLevel", player:maxLevel(), 0)
+      scan("port xp", player:xp(), 0)
+      scan("port xpMax", player:xpMax(), 0)
+      scan("port restedXp", player:restedXp(), 0)
+      scan("port isResting", player:isResting(), 0)
+      scan("port isXpDisabled", player:isXpDisabled(), 0)
+      scan("port sharedBy", player:sharedBy(), 0)
+      scan("port healthFraction", player:healthFraction(), 0)
+      scan("port powerFraction", player:powerFraction(), 0)
+      scan("port guid", player:guid(), 0)
+      local context1, id, name = player:place()
+      scan("port place context", context1, 0)
+      scan("port place id", id, 0)
+      scan("port place name", name, 0)
+      local who, realm = player:identity()
+      scan("port identity", who, 0)
+      scan("port identity realm", realm, 0)
+    end)
+
+    for _, name in ipairs(PORT_READS) do _G[name] = saved[name] end
+    C_Map.GetBestMapForUnit, C_Map.GetMapInfo = savedMap[1], savedMap[2]
+    C_CombatLog = realCombatLog
+    for _, subscription in ipairs(watched) do context.bus:unsubscribe(subscription) end
+
+    if not ok then error("a client read raised on its way to the domain: " .. tostring(err), 0) end
+    if #offenders > 0 then
+      error("closed values reached the domain: " .. table.concat(offenders, ", "), 0)
+    end
   end)
 end
 
@@ -760,27 +892,26 @@ step("bar animates towards its target", function()
   for _ = 1, 40 do bar:tick(0.016) end
 end)
 
--- The panel reads the LIVE record, not the demo's, so without this every row the
--- per-place block draws would go unexecuted while the harness reported the tab
--- green. That block is the newest drawing code in the addon and the one most
--- likely to read a frozen table with a key it does not have, which is the exact
--- failure this harness exists to catch.
+-- The panel reads the live record, not the demo's, so without this every row
+-- the per-place block draws goes unexecuted while the tab reports green. That
+-- block is the drawing code most likely to read a frozen table with a key it
+-- does not have.
 step("the level in progress has places to draw", function()
   local record = context.tracker:current()
   if record == nil then
     error("no level in progress to seed")
   end
   local PlaceKey, PlaceContext, XpSource = ns.core.PlaceKey, ns.core.PlaceContext, ns.core.XpSource
-  -- TWO sources in one place, deliberately: with a single source, a popup that
-  -- nests place under source and one that lists places on their own look
-  -- identical, and the assertion below could not tell them apart.
+  -- Two sources in one place: with a single source, a popup that nests place
+  -- under source and one that lists places on their own look identical, and the
+  -- assertion below could not tell them apart.
   local chasm = record:placeEntry(PlaceKey.new(PlaceContext.DUNGEON, 389, "Ragefire Chasm"))
   chasm.xpTotal, chasm.seconds = 1200, 1800
   chasm.xpBySource[XpSource.MOB_KILL] = 900
   chasm.xpBySource[XpSource.QUEST_TURNIN] = 300
   -- Time and nothing else: the row whose whole content is the time it cost.
   record:placeEntry(PlaceKey.new(PlaceContext.WORLD, 1433, "Westfall")).seconds = 300
-  -- And the reserved entry, whose name is deliberately absent.
+  -- And the reserved entry, whose name is absent.
   local nowhere = record:placeEntry(PlaceKey.unknown())
   nowhere.xpTotal = 100
   nowhere.xpBySource[XpSource.UNKNOWN] = 100
@@ -790,8 +921,8 @@ step("the level in progress has places to draw", function()
   record.xpBySource[XpSource.UNKNOWN] = record.xpBySource[XpSource.UNKNOWN] + 100
 end)
 
--- The bar's half of "say what you did not see" (visual 1.5). Asserted, not merely
--- survived: the popup is read back line by line.
+-- The bar's half of "say what you did not see". Asserted, not merely survived:
+-- the popup is read back line by line.
 step("the popup separates what was never watched from what went unattributed", function()
   local LevelRecord, XpLedger, XpGain = ns.core.LevelRecord, ns.core.XpLedger, ns.core.XpGain
   local XpSource, TextKey = ns.core.XpSource, ns.core.TextKey
@@ -814,8 +945,8 @@ step("the popup separates what was never watched from what went unattributed", f
     return nil
   end
 
-  -- The 2026-09-17 session: a level joined at 8632, of which 184 more went
-  -- unclaimed later. Both sit in UNKNOWN and neither is legible without the split.
+  -- Figures from a real level: joined at 8632, and 184 more went unclaimed
+  -- later. Both sit in UNKNOWN and neither is legible without the split.
   local seeded = LevelRecord.new(35, 1700000000)
   seeded.xpRequired = 54017
   XpLedger.post(seeded, XpGain.new({ amount = 8816, source = XpSource.UNKNOWN, at = 1 }))
@@ -835,7 +966,7 @@ step("the popup separates what was never watched from what went unattributed", f
     error("expected 184 unattributed, popup said " .. tostring(unexplained and unexplained.right))
   end
 
-  -- And the figures the requirement says must not move.
+  -- And the figures that must not move.
   local unknownLine
   local unclassified = context.locale:get(TextKey.BAR_TOOLTIP_PLACE,
     context.locale:get(TextKey.SOURCE_UNCLASSIFIED))
@@ -846,7 +977,8 @@ step("the popup separates what was never watched from what went unattributed", f
     error("the unclassified line changed: " .. tostring(unknownLine and unknownLine.right))
   end
 
-  -- A record from before the addon kept the figure says it is partial and no more.
+  -- A record with no seed figure (saved by an older version) says it is partial
+  -- and no more.
   seeded.seededXp = nil
   lines = hover(seeded)
   if find(lines, TextKey.BAR_PARTIAL) == nil then
@@ -873,9 +1005,8 @@ step("panel opens", function() panel:open() end)
 for _, tab in ipairs({ "breakdown", "combat", "abilities", "pending", "history" }) do
   step("panel tab: " .. tab, function() panel:selectTab(tab) end)
 end
--- Not decoration: without it the step above passes whether or not the block was
--- reached, and "the tab did not raise" is exactly the reassurance that let this
--- go unnoticed the first time.
+-- Without this the step above passes whether or not the block was reached: "the
+-- tab did not raise" is all it checks.
 step("the breakdown tab really drew the per-place block", function()
   local breakdown = panel.lastViewModel and panel.lastViewModel.breakdown
   if breakdown == nil or breakdown.places == nil or #breakdown.places == 0 then
@@ -883,10 +1014,9 @@ step("the breakdown tab really drew the per-place block", function()
   end
 end)
 
--- The shortcut the player asked for: from the surface they are looking at into
--- the settings, without a slash command. Asserted through the click, not by
--- reading the button's existence -- a button that is there and wired to nothing
--- is the failure worth catching.
+-- The shortcut from the panel into the settings, without a slash command.
+-- Asserted through the click, not by the button's existence: a button that is
+-- there and wired to nothing is the failure worth catching.
 step("the panel has a shortcut into the settings, and it opens them", function()
   local button = panel.optionsButton
   if button == nil then
@@ -898,8 +1028,8 @@ step("the panel has a shortcut into the settings, and it opens them", function()
 
   -- Counted as "more than none", not as an exact number: the legacy path this
   -- harness falls to opens twice on purpose (Blizzard's own long-standing
-  -- workaround, see openOptionsPanel), and pinning the count here would make the
-  -- step fail the day a client offers the modern path instead.
+  -- workaround, see openOptionsPanel), and an exact count would fail the day a
+  -- client offers the modern path instead.
   local before = OPENED_OPTIONS
   button.scripts.OnEnter(button)
   button.scripts.OnClick(button)
@@ -913,13 +1043,11 @@ step("panel refresh", function() panel:refresh() end)
 step("panel closes", function() panel:close() end)
 
 -- ---------------------------------------------------------------------------
--- Group 6: the halves of the panel's tasks that do NOT need a running client.
+-- The panel's layout and content, checked without a running client.
 --
--- Every assertion below was a claim in the plan before it was a line here. The
--- panel had no test of any kind -- ui/ still has no busted spec -- so a tab that
--- drew its text on top of its own icon, an empty state that could not be
--- reached and a selector that never left its own tab all passed every gate this
--- repo runs. "It did not raise" is not the same sentence as "it is right".
+-- ui/ has no busted spec, so these steps are its only test. They catch what "it
+-- did not raise" cannot: text drawn on top of its own icon, an empty state that
+-- cannot be reached, a selector that never leaves its own tab.
 -- ---------------------------------------------------------------------------
 
 local TABS_IN_ORDER = { "breakdown", "combat", "abilities", "pending", "history" }
@@ -931,9 +1059,8 @@ local function cellLeft(cell)
   return point and point[4] or nil
 end
 
--- Every string a list is currently drawing, flattened. Reading the text back is
--- the difference between "the tab rendered" and "the tab rendered the right
--- thing", and until the stand-in recorded SetText there was no way to ask.
+-- Every string a list is currently drawing, flattened: the difference between
+-- "the tab rendered" and "the tab rendered the right thing".
 local function textsOf(list)
   local texts = {}
   for _, row in ipairs(list.rows) do
@@ -953,16 +1080,23 @@ local function drawn(list, needle)
   return false
 end
 
--- Every tab needs rows before any of this means anything. Four of the five drew
--- nothing at all until this step existed, so the checks below were passing over
--- empty lists -- which is the quiet way a suite reports coverage it does not
--- have.
+-- Every tab needs rows before the checks below mean anything: over empty lists
+-- they would pass without covering anything.
 step("every tab has something to draw", function()
   local record = context.tracker:current()
   local MetricId, AbilityUsage = ns.core.MetricId, ns.core.AbilityUsage
 
+  -- On forever the level in progress was opened without a combat log and says
+  -- so, which would put one sentence where the ability and damage rows go. The
+  -- layout checks below measure those rows, so the seeded level stands for one
+  -- recorded with a combat log; a step near the end puts the mark back and
+  -- checks what a level without one shows instead.
+  if PROFILE == "forever" then
+    record.unavailable.combat_log = nil
+  end
+
   -- Abilities: a spell, which asks the client for an icon, and an auto attack,
-  -- which deliberately does not.
+  -- which does not.
   local fireball = AbilityUsage.new(133, "Fireball")
   fireball.count = 12
   record.abilities[133] = fireball
@@ -970,27 +1104,27 @@ step("every tab has something to draw", function()
   swings.count = 40
   record.abilities[ns.core.AbilityKey.MELEE_SWING] = swings
 
-  -- Top quests: seeded straight into the aggregates, the way the abilities above
-  -- are, so the breakdown has quest rows at all. One the addon saw named, one it
-  -- never could -- the two halves the rows have to tell apart.
+  -- Top quests, seeded straight into the aggregates like the abilities above so
+  -- the breakdown has quest rows: one the addon saw named, one it never could,
+  -- the two halves the rows have to tell apart.
   record.quests[1234] = { questId = 1234, turnIns = 1, xpTotal = 950, name = "Wanted: Hogger" }
   record.quests[5678] = { questId = 5678, turnIns = 2, xpTotal = 400 }
 
-  -- A killed creature on the live record, seeded into the aggregate the way the
-  -- quests below are rather than posted as a gain: this level is nearly full, and
-  -- posting would fill it and ask the harness for the next one. Two kills at 42
-  -- give the objectives below an average of this creature's own.
+  -- A killed creature on the live record, seeded into the aggregate rather than
+  -- posted as a gain: this level is nearly full, and posting would fill it and
+  -- ask the harness for the next one. Two kills at 42 give the objectives below
+  -- an average of this creature's own.
   local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
   record.creatures[ns.core.LevelRecord.creatureId(lynx, nil)] =
     { key = lynx, kills = 2, xpTotal = 84 }
   -- The level's own per-kill average needs a count of kills that paid; without
-  -- one there is no fallback rate at all, and the marked-estimate path below
-  -- would go unexercised while the step still passed.
+  -- one there is no fallback rate, and the marked-estimate path below would go
+  -- unexercised while the step still passed.
   record.killsWithXp = record.killsWithXp + 2
 
-  -- Top quests: seeded into the aggregates the way the abilities above are. 1234
-  -- is the quest the stand-in log holds, so the directory can name it; 5678 was
-  -- turned in by someone this addon never watched, and has only its number.
+  -- Top quests again: 1234 is the quest the stand-in log holds, so the
+  -- directory can name it; 5678 was turned in while this addon was not
+  -- watching, and has only its number.
   record.quests[1234] = { questId = 1234, turnIns = 1, xpTotal = 950 }
   record.quests[5678] = { questId = 5678, turnIns = 2, xpTotal = 400 }
 
@@ -1032,8 +1166,8 @@ step("every tab has something to draw", function()
     }
   end
 
-  -- History: two completed levels with a GAP between them, which is the case
-  -- the comparison used to get wrong by asking for `selected - 1`.
+  -- History: two completed levels with a gap between them, so the comparison
+  -- has to look past `selected - 1`.
   local LevelRecord, XpSource = ns.core.LevelRecord, ns.core.XpSource
   for _, spec in ipairs({ { level = 12, xp = 9000 }, { level = 15, xp = 11000 } }) do
     local past = LevelRecord.new(spec.level, 0)
@@ -1060,9 +1194,8 @@ step("every tab has something to draw", function()
   end
 end)
 
--- 6.5: the defect the note named. The name used to start at LEFT+6 while the
--- icon occupied LEFT+2 to LEFT+16, so every row whose icon resolved drew its
--- text across it.
+-- The icon occupies LEFT+2 to LEFT+16, so a name starting inside that range
+-- draws across the icon on every row whose icon resolved.
 step("a row's text starts clear of its icon, whether or not the icon resolved", function()
   panel:selectTab("abilities")
   local list = panel.lists.abilities
@@ -1090,13 +1223,11 @@ step("a row's text starts clear of its icon, whether or not the icon resolved", 
   if panel.lists.breakdown.indent ~= 0 then error("a list that never shows an icon is indenting anyway") end
 end)
 
--- 6.3: the scenario is "ninguna fila se dibuja fuera del marco". Until the
--- stand-in returned the width it had actually been given, every column in the
--- addon had only ever been laid out against a constant.
--- 1.2: the list inside the FRAME. assertFits below checks a cell inside its row,
--- which is a different containment entirely and cannot see a list hanging past the
--- panel's bottom edge -- the list is anchored 66 below the top and sized from the
--- frame's height, and until now nothing tied those two numbers to each other.
+-- No row is drawn outside the frame. The stand-in returns the width each frame
+-- was given, so the columns are laid out against a real width. The list has to
+-- sit inside the frame too, which assertFits (a cell inside its row) cannot
+-- see: the list is anchored 66 below the top and sized from the frame's height,
+-- and assertListWithinFrame ties those two numbers together.
 local LIST_TOP_INSET = 66
 
 local function assertListWithinFrame(where)
@@ -1166,10 +1297,9 @@ step("the columns still fit at the narrowest the panel can be dragged to", funct
   local restore = { point = saved.point, x = saved.x, y = saved.y, width = saved.width, height = saved.height }
 
   context.saveSetting(SettingKey.PANEL_POSITION, { point = "CENTER", x = 0, y = 0, width = 1, height = 1 })
-  -- The frame itself, which is the only thing that shows applySavedPosition did the
-  -- clamping. The list width below cannot: layoutLists floors at MIN_WIDTH on its
-  -- own, so its 256 comes out the same whether or not the saved size was sanitised
-  -- -- a step that looked like it covered this and never did.
+  -- The frame itself, the only thing that shows applySavedPosition did the
+  -- clamping: layoutLists floors at MIN_WIDTH on its own, so the list width
+  -- below comes out 256 whether or not the saved size was sanitised.
   if panel.frame.w ~= 300 or panel.frame.h ~= 240 then
     error(("a degenerate saved size survived being applied: %sx%s")
       :format(tostring(panel.frame.w), tostring(panel.frame.h)))
@@ -1177,14 +1307,13 @@ step("the columns still fit at the narrowest the panel can be dragged to", funct
   if panel.lists.breakdown.scroll.w ~= 256 then
     error("the panel did not land on its floor: " .. tostring(panel.lists.breakdown.scroll.w))
   end
-  -- 1.2: the list inside the FRAME, not just a cell inside its row. assertFits only
-  -- ever checked the latter, so nothing held the list to the panel's own height.
+  -- The list inside the frame, not just a cell inside its row.
   assertListWithinFrame("minimum size")
   assertFits("minimum size")
   context.saveSetting(SettingKey.PANEL_POSITION, restore)
 end)
 
--- 1.3: the active tab has to read as "you are here", never as "not available".
+-- The active tab has to read as "you are here", never as "not available".
 step("exactly one tab reads as selected, and none reads as unavailable", function()
   for _, tabId in ipairs(TABS_IN_ORDER) do
     panel:selectTab(tabId)
@@ -1210,8 +1339,8 @@ step("exactly one tab reads as selected, and none reads as unavailable", functio
   end
 end)
 
--- 6.9: four value equalities between the bar and the panel, none of which any
--- gate in this repo could see before.
+-- The panel follows the bar's skin in border kind, border thickness, text face
+-- and text colour.
 step("the panel's border follows the skin's kind and thickness, like the bar's", function()
   local SettingKey = ns.core.SettingKey
   context.saveSetting(SettingKey.BAR_SKIN, "stormwind") -- a three-pixel FRAME border
@@ -1278,8 +1407,7 @@ step("a heavy skin reaches every part of the panel as a heavy face, in the skin'
   end
   if checked == 0 then error("no cells were checked") end
 
-  -- The panel's own furniture, which was the other half of 6.9's note and which
-  -- nothing here could see until the stand-in recorded SetFont.
+  -- The panel's own furniture, readable because the stand-in records SetFont.
   if panel.title.font == nil or panel.title.font.flags ~= "THICKOUTLINE" then
     error("the panel title is still wearing the client's own font")
   end
@@ -1292,9 +1420,8 @@ step("a heavy skin reaches every part of the panel as a heavy face, in the skin'
   context.saveSetting(SettingKey.BAR_SKIN, "tabard")
 end)
 
--- 6.6: the first-run message was unreachable, so a fresh install was told it
--- was at the maximum level. Driven through the view's own seams, which is what
--- they are there for.
+-- A fresh install gets the first-run message, not the one for the maximum
+-- level. Driven through the view's own seams.
 step("each way of having no level to show gets its own sentence", function()
   local TextKey = ns.core.TextKey
   local currentRecord, completedLevels, atCap = panel.currentRecord, panel.completedLevels, panel.atCap
@@ -1329,8 +1456,8 @@ step("each way of having no level to show gets its own sentence", function()
   panel:refresh()
 end)
 
--- 6.7: the selection never left the history tab. This is the whole feature, and
--- it is driven the way a player drives it -- by clicking the row.
+-- The selection reaches every tab, not just the history tab. Driven the way a
+-- player drives it: by clicking the row.
 step("clicking a level in the history moves every tab to it", function()
   local TextKey = ns.core.TextKey
   panel:open()
@@ -1367,9 +1494,9 @@ step("clicking a level in the history moves every tab to it", function()
     error("the pending tab is presenting today's quest log as a past level's")
   end
 
-  -- Clicking the level in progress goes back to following it -- number and
-  -- title both -- rather than pinning the panel to a level that will be stale
-  -- after the next level-up.
+  -- Clicking the level in progress goes back to following it, number and title
+  -- both, rather than pinning the panel to a level that will be stale after the
+  -- next level-up.
   panel:selectTab("history")
   panel:select(context.tracker:current().level)
   if panel.selectedLevel ~= nil then error("clicking the level in progress pinned the panel to it") end
@@ -1379,9 +1506,8 @@ step("clicking a level in the history moves every tab to it", function()
   panel:selectTab("breakdown")
 end)
 
--- The history has a hole in it on purpose: 12 and 15, with nothing between. The
--- comparison used to ask for `selected - 1`, find nothing, and claim there was
--- no earlier level when there plainly was one.
+-- The history has a hole in it: 12 and 15, with nothing between, so asking for
+-- `selected - 1` would find nothing and claim there was no earlier level.
 step("the comparison reaches the previous RECORDED level across a gap", function()
   local TextKey = ns.core.TextKey
   panel:selectTab("history")
@@ -1393,9 +1519,9 @@ step("the comparison reaches the previous RECORDED level across a gap", function
   panel:select(nil)
 end)
 
--- 6.10: one directory, every surface. The bug this guards against is not a quest
--- with no name -- it is the SAME quest named in one tab and numbered in the next,
--- which is what two independent naming paths produced.
+-- One directory, every surface. What this guards against is not a quest with no
+-- name but the same quest named in one tab and numbered in the next, which two
+-- independent naming paths would produce.
 step("both tabs name the quests the addon has seen, and number the ones it has not", function()
   local TextKey = ns.core.TextKey
 
@@ -1418,9 +1544,9 @@ step("both tabs name the quests the addon has seen, and number the ones it has n
   end
 end)
 
--- A quest read as a spell in the tab whose whole job is showing which quests
--- paid best. Two call sites, one already-translated key, and no gate could see
--- either until a cell's text could be read back.
+-- The tab whose job is showing which quests paid best labels them as quests.
+-- The spell label is a string of the same shape, so only reading the cell back
+-- tells the two apart.
 step("a quest is labelled a quest, not a spell", function()
   local TextKey = ns.core.TextKey
   panel:selectTab("pending")
@@ -1433,9 +1559,9 @@ step("a quest is labelled a quest, not a spell", function()
   end
 end)
 
--- pending-detail 1.2 and 1.4. The defect behind the redesign is visible only by
--- reading the popup back: a level played in one zone used to print that zone once
--- under every source, and said 6305 pending without saying of what.
+-- Only visible by reading the popup back: a level played in one zone prints
+-- that zone once, not under every source, and the pending figure says what it
+-- is made of.
 step("the popup is three blocks: a zone named once, and pending broken down", function()
   local TextKey = ns.core.TextKey
   local locale = context.locale
@@ -1473,8 +1599,8 @@ step("the popup is three blocks: a zone named once, and pending broken down", fu
     error("the popup has no level block")
   end
 
-  -- Named quests first, then one line standing for the rest WITH its total: two
-  -- of the five known ones did not fit, and 200 + 200 is what they are worth.
+  -- Named quests first, then one line standing for the rest with its total: two
+  -- of the five known ones do not fit, and 200 + 200 is what they are worth.
   if count(locale:get(TextKey.BAR_TOOLTIP_QUEST, "Wanted: Hogger")) ~= 1 then
     error("the pending block does not name its quests: " .. tostring(#lines) .. " lines")
   end
@@ -1508,11 +1634,11 @@ step("the popup is three blocks: a zone named once, and pending broken down", fu
   forecast.entries = everything
 end)
 
--- pending-detail 4.1 and group-aware-rates 3.1: the detail the popup deliberately
--- does not carry. What can only be checked here is that the THREE kinds of
--- estimate are told apart on screen -- one priced with this creature's average
--- measured in the group of now, one with its average over kills nobody counted,
--- and one with the level's blanket per-kill mean.
+-- The detail the popup does not carry. What can only be checked here is that
+-- the three kinds of estimate are told apart on screen: one priced with this
+-- creature's average measured in the current group, one with its average over
+-- kills whose group size nobody counted, and one with the level's per-kill
+-- mean.
 step("the pending tab prices what each quest still asks the player to kill", function()
   local TextKey = ns.core.TextKey
   panel:selectTab("pending")
@@ -1524,9 +1650,9 @@ step("the pending tab prices what each quest still asks the player to kill", fun
     end
     return false
   end
-  -- Exact rather than a substring, and that is the whole point of having it:
-  -- "~126 xp" is a PREFIX of the marked "~126 xp+", so a find() would report an
-  -- unmarked estimate as drawn on every screen that only ever drew a marked one.
+  -- Exact rather than a substring: "~126 xp" is a prefix of the marked "~126
+  -- xp+", so a find() would report an unmarked estimate as drawn on every
+  -- screen that only drew a marked one.
   local function drawnExactly(needle)
     for _, text in ipairs(textsOf(list)) do
       if text == needle then return true end
@@ -1537,10 +1663,10 @@ step("the pending tab prices what each quest still asks the player to kill", fun
     return table.concat(textsOf(list), " | ")
   end
 
-  -- Three left of a creature this level has killed twice for 42 each -- but those
-  -- two kills were banked before anything counted who shared the pay, so 126 is
-  -- this creature's own average over a population nobody can name. Marked, and
-  -- not with the level's mark: it came from the right creature and the wrong
+  -- Three left of a creature this level killed twice for 42 each, but those two
+  -- kills were banked with no count of who shared the pay, so 126 is this
+  -- creature's own average over a population nobody can name. Marked, and not
+  -- with the level's mark: it came from the right creature and the wrong
   -- context, which is a different kind of wrong.
   if not drawnRow(context.locale:get(TextKey.PANEL_OBJECTIVE, "Springpaw Lynx", 3, 6)) then
     error("the pending tab does not say what is left to kill: " .. shown())
@@ -1554,7 +1680,7 @@ step("the pending tab prices what each quest still asks the player to kill", fun
   if not drawnRow(context.locale:get(TextKey.PANEL_OBJ_MIXED_FOOTNOTE)) then
     error("a mixed estimate was printed with nothing explaining its mark")
   end
-  -- And one it has never killed, priced with the level's average and MARKED.
+  -- And one it has never killed, priced with the level's average and marked.
   local levelRate = ns.core.KillXpEstimator.levelRate(context.tracker:current())
   local fallback = math.floor(4 * levelRate + 0.5)
   if not drawnRow(context.locale:get(TextKey.PANEL_OBJ_ROUGH, fallback)) then
@@ -1574,10 +1700,10 @@ step("the pending tab prices what each quest still asks the player to kill", fun
     error("an objective row leaked the client's own sentence instead of the panel's")
   end
 
-  -- The third state, and the one that makes the other two claims rather than
-  -- decoration: give the same creature two kills taken with as many sharing the
-  -- pay as there are right now, and the figure does not move while the mark goes
-  -- away. Same 126, drawn two ways, because only its provenance changed.
+  -- The third state, which makes the other two claims rather than decoration:
+  -- two kills of the same creature taken with as many sharing the pay as there
+  -- are right now leave the figure where it is and remove the mark. Same 126,
+  -- drawn two ways, because only its provenance changed.
   local record = context.tracker:current()
   local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
   local measuredId = ns.core.LevelRecord.creatureId(lynx, 1)
@@ -1600,12 +1726,11 @@ step("the pending tab prices what each quest still asks the player to kill", fun
   panel:refresh()
 end)
 
--- group-aware-rates 2.4: the only place the wiring itself can be checked. The
--- panel asks the client, through the port, how many are sharing the pay right
--- now, and the per-creature rows use that answer to say which of them describes
--- the character's current situation. A seam left unwired in the composition root
--- looks exactly like a client playing alone, and nothing in the domain suite can
--- tell the two apart.
+-- The only place the wiring itself can be checked. The panel asks the client,
+-- through the port, how many are sharing the pay right now, and the
+-- per-creature rows use that answer to say which one describes the character's
+-- current situation. A seam left unwired in the composition root looks exactly
+-- like a client playing alone, and the domain suite cannot tell the two apart.
 step("the panel tells a creature's populations apart by the group of now", function()
   local TextKey = ns.core.TextKey
   local record = context.tracker:current()
@@ -1628,8 +1753,9 @@ step("the panel tells a creature's populations apart by the group of now", funct
       if text:find(context.locale:get(TextKey.PANEL_CREATURE_MIXED), 1, true) then
         uncounted = uncounted + 1
       elseif text:find(context.locale:get(TextKey.PANEL_CREATURE_SHARED, 1), 1, true) then
-        -- The row that WAS measured with this group, marked as if it belonged to
-        -- another one: what a seam the composition root never wired looks like.
+        -- The row that was measured with this group, marked as if it belonged
+        -- to another one: what a seam the composition root never wired looks
+        -- like.
         foreign = foreign + 1
       else
         plain = plain + 1
@@ -1646,7 +1772,6 @@ step("the panel tells a creature's populations apart by the group of now", funct
   end
 end)
 
--- 6.2: both halves of its verification, measured rather than asserted by note.
 step("opening and closing the panel allocates nothing, and draws each tab once", function()
   local renders = 0
   local original = panel.renderActiveTab
@@ -1659,8 +1784,8 @@ step("opening and closing the panel allocates nothing, and draws each tab once",
   local before = widgets
   renders = 0
   panel:open()
-  -- One open, one draw. Restoring the old unconditional renderActiveTab after
-  -- refresh makes this two, which is every row of the tab drawn twice.
+  -- One open, one draw: an unconditional renderActiveTab after refresh would
+  -- make this two, drawing every row of the tab twice.
   if renders ~= 1 then
     error(("opening the panel drew the active tab %d times"):format(renders))
   end
@@ -1690,8 +1815,8 @@ step("a closed panel does no work", function()
     error("a closed panel rebuilt its view-model anyway")
   end
 
-  -- And the half the gate never covered: a settings write used to run a whole
-  -- tab's worth of rows into a hidden list.
+  -- And the half the gate does not cover: a settings write must not run a tab's
+  -- worth of rows into a hidden list.
   local renders = 0
   local original = panel.renderActiveTab
   panel.renderActiveTab = function(self, ...) renders = renders + 1 return original(self, ...) end
@@ -1704,8 +1829,8 @@ step("a closed panel does no work", function()
 end)
 
 -- A saved position that would put the panel out of reach is pulled back on the
--- way IN, the same rule the bar applies to itself. Nothing could observe this
--- until the stand-in reported the anchor it had actually been given.
+-- way in, the same rule the bar applies to itself. Observable because the
+-- stand-in reports the anchor it was given.
 step("a panel saved off the screen comes back within reach", function()
   local SettingKey = ns.core.SettingKey
   local saved = context.settings()[SettingKey.PANEL_POSITION]
@@ -1756,10 +1881,9 @@ step("options panel refreshes", function()
   onShow()
 end)
 
--- 7.4, the half of it that does not need a client: resetting ONE axis must put
--- that axis back and leave every other override exactly where it was. The
--- reset for the border thickness is AscentOptionsAxis1Reset -- the first entry
--- of SLIDERS in ui/OptionsPanel.lua.
+-- Resetting one axis puts that axis back and leaves every other override where
+-- it was. The reset for the border thickness is AscentOptionsAxis1Reset, the
+-- first entry of SLIDERS in ui/OptionsPanel.lua.
 step("resetting one axis leaves the others alone", function()
   local SettingKey = ns.core.SettingKey
   local button = _G["AscentOptionsAxis1Reset"]
@@ -1774,7 +1898,7 @@ step("resetting one axis leaves the others alone", function()
 
   -- Reading a key that may not be there off a table that may be frozen. An
   -- empty override table comes back plain, a non-empty one frozen, and a frozen
-  -- one RAISES on a key it does not hold (core/constants/Frozen.lua).
+  -- one raises on a key it does not hold (core/constants/Frozen.lua).
   local function at(node, key)
     if node == nil then return nil end
     if ns.core.Frozen.isFrozen(node) then
@@ -1805,11 +1929,10 @@ step("resetting one axis leaves the others alone", function()
   context.saveSetting(SettingKey.BAR_APPEARANCE, {})
 end)
 
--- 7.5, the half of it that does not need a client: a colour tried and then
--- cancelled must leave NOTHING in the saved settings, and a confirmed one must
--- leave exactly itself. The panel previews on every swatchFunc, so the bug this
--- guards against -- persisting each colour the player drags through -- shows up
--- here as a stored colour after a cancel.
+-- A colour tried and then cancelled leaves nothing in the saved settings, and a
+-- confirmed one leaves exactly itself. The panel previews on every swatchFunc,
+-- so persisting each colour the player drags through would show up here as a
+-- stored colour after a cancel.
 step("a cancelled colour pick writes nothing, a confirmed one writes once", function()
   local SettingKey = ns.core.SettingKey
   local button = _G["AscentOptionsColorMOB_KILLButton"]
@@ -1851,9 +1974,8 @@ end)
 
 -- Every button and every slider the addon builds, clicked and dragged. The
 -- options panel alone is six skin swatches, six colour swatches, five cycling
--- axes, nine sliders, fourteen per-axis resets and two whole-section resets --
--- none of which any unit test can reach, and each of which is a line of code
--- that has never run until a player clicks it.
+-- axes, nine sliders, fourteen per-axis resets and two whole-section resets,
+-- none of which a unit test can reach.
 step("every button in the addon", function()
   for _, frame in ipairs(frames) do
     local onClick = frame.scripts and frame.scripts.OnClick
@@ -1876,16 +1998,15 @@ step("every slider in the addon", function()
   end
 end)
 
--- 4.6, the reset half: the plate page's own reset puts every key the plate owns
--- back to its default and touches NOT ONE of the bar's. The plate wears the bar's
--- skin, palette and contrast by design (D87), so the mistake this guards against
--- is the easy one -- a reset that reached them would undo, from a page that never
+-- The plate page's own reset puts every key the plate owns back to its default
+-- and touches none of the bar's. The plate wears the bar's skin, palette and
+-- contrast, so a reset that reached them would undo, from a page that never
 -- mentions the bar, choices made for the other surface.
 --
--- HERE rather than with the other plate steps, because it is also the way back to
--- a known state: the two walks above dragged the plate's own sliders to their
--- ends and clicked its seven zone boxes off, and the plate steps further down
--- read the settings they find rather than writing every one of them first.
+-- Here rather than with the other plate steps because it is also the way back
+-- to a known state: the two walks above dragged the plate's own sliders to
+-- their ends and clicked its seven zone boxes off, and the plate steps further
+-- down read the settings they find rather than writing every one of them first.
 step("the plate page's reset gives the plate its defaults and the bar nothing", function()
   local SettingKey, Defaults, Frozen = ns.core.SettingKey, ns.core.Defaults, ns.core.Frozen
   local button = _G.AscentOptionsPlateReset
@@ -1909,8 +2030,8 @@ step("the plate page's reset gives the plate its defaults and the bar nothing", 
     return "{" .. table.concat(pieces, ",") .. "}"
   end
 
-  -- The bar, deliberately NOT at its defaults: a bar already sitting on them
-  -- would make "the reset left the bar alone" true for the wrong reason.
+  -- The bar, not at its defaults: a bar already sitting on them would make "the
+  -- reset left the bar alone" true for the wrong reason.
   context.saveSetting(SettingKey.BAR_SCALE, 1.35)
   context.saveSetting(SettingKey.BAR_APPEARANCE, { border = { thickness = 5 } })
   context.saveSetting(SettingKey.HIGH_CONTRAST, true)
@@ -1965,11 +2086,10 @@ step("commands that need no views", function()
 end)
 
 
--- What the composition root prints, read back. Everything below was a defect that
--- every gate in this repo was structurally unable to see: the dump omitted the
--- templates the group and raid work added, the two place lines could contradict
--- each other in the same breath, and a registry with no probes at all printed the
--- same sentence as a healthy one.
+-- What the composition root prints, read back: the dump has to cover every
+-- template the parser reads, the two place lines must not contradict each
+-- other, and a registry with no probes must not print the same sentence as a
+-- healthy one.
 local function chatSince(mark, needle)
   for index = mark, #chatLines do
     if chatLines[index]:find(needle, 1, true) then
@@ -1980,12 +2100,11 @@ local function chatSince(mark, needle)
 end
 
 step("the string dump covers every template the parser reads", function()
-  -- One command now, and the strings go to the debug log rather than to chat:
-  -- fifteen lines of the client's own raw text used to push the rest of the
-  -- diagnostic off the top of a 500-line ring.
-  -- With the debug mode off the strings still reach the snapshot below, which is
-  -- what a report is built from -- but not the log, so the harness turns it on to
-  -- exercise the path a player chasing a mismatch actually uses.
+  -- The strings go to the debug log rather than to chat, so fifteen lines of
+  -- the client's raw text do not push the rest of the diagnostic off the top of
+  -- a 500-line ring. With debug mode off they still reach the snapshot a report
+  -- is built from, but not the log, so the harness turns it on to exercise the
+  -- path a player chasing a mismatch uses.
   local wasDebug = context.logger:isDebug()
   context.logger:setDebug(true)
   AscentCharDB.debugLog = {}
@@ -1998,7 +2117,7 @@ step("the string dump covers every template the parser reads", function()
   end
   for _, source in ipairs(ns.adapter.GlobalStringPattern.SOURCES) do
     -- Absent globals are recorded as `false`, not left nil, so this checks the
-    -- coverage of the LIST rather than of this stand-in client.
+    -- coverage of the list rather than of this stand-in client.
     if dump.strings[source.global] == nil then
       error("the dump never looked at " .. source.global)
     end
@@ -2012,8 +2131,7 @@ step("the string dump covers every template the parser reads", function()
   end
 end)
 
--- One command, three sections. The three used to be three commands, and the one
--- a player needed was whichever one they had not run.
+-- One command answers for every section of the diagnostic.
 step("the diagnostic answers in one command, quest log included", function()
   local mark = #chatLines + 1
   SlashCmdList["ASCENT"]("debug")
@@ -2053,27 +2171,26 @@ step("the two place lines agree with each other", function()
   if named + unplaced ~= ledgered then
     error(("%d placed plus %d unplaced is not the %d the ledger holds"):format(named, unplaced, ledgered))
   end
-  -- The harness seeds an unknown-place entry, so the contradiction the old lines
-  -- could print -- everything placed AND everything unplaced -- is reachable here.
+  -- The harness seeds an unknown-place entry, so the contradiction (everything
+  -- placed and everything unplaced) is reachable here.
   if unplaced > 0 and named >= ledgered then
     error("the panel claims everything was placed while also claiming none of it was")
   end
 end)
 
--- group-aware-rates 3.2: the instrument the design's open question needs, and the
--- only gate that can see either half of it. The size is asked of the client at the
--- moment the command runs -- a block that printed a constant, or one wired to
--- nothing, reads identically from inside the domain suite -- and the creature
--- lines have to group the way the estimator does, by name across level bands, or
--- the file shows halves of every population it is meant to size up.
+-- The only gate that can see either half of this. The group size is asked of
+-- the client when the command runs: a block that printed a constant, or one
+-- wired to nothing, reads identically from inside the domain suite. And the
+-- creature lines have to group the way the estimator does, by name across level
+-- bands, or they show halves of every population they are meant to size up.
 step("the diagnostic says how many share the pay, and how thin each population is", function()
   local record = context.tracker:current()
   if record == nil then error("no level in progress to seed") end
 
   -- One creature, three aggregates: two level bands taken alone, which the
-  -- estimator reads as ONE population of seven, and the kills nobody counted,
-  -- which it reads as a population of its own (D84). Ids nothing else here uses,
-  -- so the lines below can only come from these.
+  -- estimator reads as one population of seven, and the kills nobody counted,
+  -- which it reads as a population of its own. Ids nothing else here uses, so
+  -- the lines below can only come from these.
   local young = ns.core.CreatureKey.new(99001, 10, "Smoke Basilisk")
   local elder = ns.core.CreatureKey.new(99002, 11, "Smoke Basilisk")
   local seeded = {
@@ -2132,14 +2249,47 @@ step("the diagnostic names what it probed, not only what was missing", function(
   end
 end)
 
+-- The four sources the degradation hangs from, each in the state this profile's
+-- client puts it in. On forever two differ from classic: the quest log is
+-- present through C_QuestLog with every classic global gone, and the combat log
+-- is absent, because C_CombatLog is there with no reader in it. A probe that
+-- leaned on a classic name, or on the namespace merely existing, would read the
+-- wrong state here and nowhere else.
+step("the four sources the addon hangs from take this client's state", function()
+  local mark = #chatLines + 1
+  SlashCmdList["ASCENT"]("debug")
+
+  local expected = {
+    combat_log = PROFILE == "forever" and "absent" or "present",
+    xp_chat = "present",
+    quest_log = "present",
+    client_xp_bar = "present",
+  }
+  for name, state in pairs(expected) do
+    local line = chatSince(mark, "capability " .. name .. ":")
+    if line == nil then
+      error("the diagnostic never reported the capability " .. name)
+    end
+    if not line:find("capability " .. name .. ": " .. state, 1, true) then
+      error(name .. " should be " .. state .. " on the " .. PROFILE .. " profile: " .. line)
+    end
+  end
+
+  -- Present, and present through the reader this client actually has.
+  local reader = PROFILE == "forever" and ns.adapter.ModernQuestLogReader or ns.adapter.ClassicQuestLogReader
+  if ns.adapter.QuestLogReader.pick() ~= reader then
+    error("the quest log is read through the wrong reader on the " .. PROFILE .. " profile")
+  end
+end)
+
 step("changing a setting from outside the panel refreshes the panel", function()
   local SettingKey = ns.core.SettingKey
   local dropdown = _G.AscentOptionsSlotDropdown
   local restore = context.settings()[SettingKey.BAR_SLOT]
 
   -- The way a chat command does it: straight through saveSetting, with nobody
-  -- reopening the panel. Before this the panel went on showing what it was built
-  -- with until it was closed and opened again, or the interface reloaded.
+  -- reopening the panel, which must not go on showing what it was built with
+  -- until it is reopened or the interface reloads.
   context.saveSetting(SettingKey.BAR_SLOT, "off")
   local offText = dropdown.dropdownText
   context.saveSetting(SettingKey.BAR_SLOT, "replace")
@@ -2202,9 +2352,8 @@ step("the bar's breakdown goes where the player keeps their tooltips", function(
     error("the tooltip was placed and then had nothing to say")
   end
 
-  -- The cursor leaves again. A step that enters and never leaves is not how a
-  -- cursor behaves, and it left the bar believing it was hovered for the rest of
-  -- the run.
+  -- The cursor leaves again: a step that entered and never left would leave the
+  -- bar believing it was hovered for the rest of the run.
   context.bar.frame.scripts.OnLeave(context.bar.frame)
 end)
 
@@ -2278,14 +2427,12 @@ step("a bar with no text at all is a choice, not a crash", function()
 end)
 
 step("every options control fits inside the page it lives on", function()
-  -- One page per section now, so a control is measured against ITS page rather
-  -- than against a single canvas. The three defects this guards against were all
-  -- the same shape: a control laid out somewhere the player cannot reach, with no
-  -- error to find it by -- past the bottom of a scroll child, or past the right
-  -- edge after inheriting a gallery's indent.
-  -- Written out by hand, which is the risk this list carries: a page that is not
-  -- named here is a page the only net for geometric containment does not cover,
-  -- and nobody notices. "Plate" is the seventh (tasks.md 4.2).
+  -- One page per section, so a control is measured against its own page. What
+  -- this catches is a control laid out where the player cannot reach it, with
+  -- no error to find it by: past the bottom of a scroll child, or past the
+  -- right edge after inheriting a gallery's indent. The list is written out by
+  -- hand: a page not named here is not covered by the only check of geometric
+  -- containment.
   local PAGES = { "Main", "Skin", "Colors", "Fields", "Size", "Behaviour", "Plate" }
 
   local contents = {}
@@ -2294,10 +2441,10 @@ step("every options control fits inside the page it lives on", function()
     if scroll == nil or scroll.scrollChild == nil then
       error("page " .. key .. " has no scroll child")
     end
-    -- Every page MEASURES its height off the last control on it. 100 is the
-    -- provisional the scroll child is built with, and a page still wearing it is
-    -- a page whose `last` was never set -- which is the whole defect again:
-    -- controls laid out past the bottom edge, where scrolling cannot reach.
+    -- Every page measures its height off the last control on it. 100 is the
+    -- provisional height the scroll child is built with, so a page still at it
+    -- never set its `last`, and its controls sit past the bottom edge, where
+    -- scrolling cannot reach.
     if (scroll.scrollChild.h or 0) <= 100 then
       error(("the %s page is %s tall, still the provisional it was built with")
         :format(key, tostring(scroll.scrollChild.h)))
@@ -2332,9 +2479,8 @@ step("every options control fits inside the page it lives on", function()
   end
 
   -- Nothing below the skin gallery may be drawn over it. The gallery's last row
-  -- ends with a label hanging under the swatch, and a control anchored to the
-  -- swatch's bottom edge lands on that label -- which is what the whole "Bar"
-  -- section did, drawn across two rows of skins.
+  -- ends with a label hanging under the swatch, so a control anchored to the
+  -- swatch's bottom edge lands on that label.
   local lastRow = _G.AscentOptionsSkinstormwindSwatch
   local contrast = _G.AscentOptionsHighContrastCheckButton
   if lastRow == nil or contrast == nil then
@@ -2351,9 +2497,8 @@ step("every options control fits inside the page it lives on", function()
   end
 
   -- Controls of the same kind in the same column share one left edge. They hang
-  -- off one another, so an indent in the helper that builds them is not an indent
-  -- -- it is an indent PER control, and five sliders in a row walked the last one
-  -- forty pixels right of the first.
+  -- off one another, so an indent in the helper that builds them is applied
+  -- once per control and walks each one further right than the last.
   for _, group in ipairs({
     { "AscentOptionsAxis1Slider", "AscentOptionsAxis3Slider", "AscentOptionsAxis5Slider" },
     { "AscentOptionsWidthSlider", "AscentOptionsHeightSlider", "AscentOptionsScaleSlider" },
@@ -2380,10 +2525,10 @@ step("every options control fits inside the page it lives on", function()
     "AscentOptionsField1CheckButton", "AscentOptionsField11CheckButton",
     "AscentOptionsHighContrastCheckButton", "AscentOptionsAxis1Slider",
     "AscentOptionsWidthSlider", "AscentOptionsHeightSlider", "AscentOptionsMotionSlider",
-    -- The plate's page, top to bottom: the first control, the last slider of each
-    -- of its three sections, the last of its seven zone boxes, and the button at
-    -- the foot of it. A page this long is exactly where a control falls off the
-    -- bottom, and the reset is the furthest thing down it.
+    -- The plate's page, top to bottom: the first control, the last slider of
+    -- each of its three sections, the last of its seven zone boxes, and the
+    -- reset at its foot. A page this long is where a control falls off the
+    -- bottom.
     "AscentOptionsPlateEnabledCheckButton", "AscentOptionsPlateHoldSlider",
     "AscentOptionsPlateZone7CheckButton", "AscentOptionsPlateLook3Slider",
     "AscentOptionsPlateReset" }) do
@@ -2409,18 +2554,18 @@ end)
 -- ---------------------------------------------------------------------------
 -- The client's slot: the three transitions, and the client that has no bar.
 --
--- None of this is proof the names are right -- a stub accepts any frame under any
--- name, which is what spikes 0.2 and 0.3 are for. What it does catch is the
--- mechanics: that taking the slot changes the bar's shape, that the two degrees
--- differ, that turning it off is a complete undo, and that a missing bar costs
--- the slot rather than the addon.
+-- This does not prove the frame names are right: a stub accepts any frame under
+-- any name, and only a real client can confirm them. It catches the mechanics:
+-- taking the slot changes the bar's shape, the two degrees differ, turning it
+-- off is a complete undo, and a missing bar costs the slot rather than the
+-- addon.
 -- ---------------------------------------------------------------------------
 
 local slash = SlashCmdList["ASCENT"]
 
 -- From a known state. The steps above drag every slider to its end and click
--- every button in the options panel -- which now includes the slot's own -- so by
--- here the bar's appearance and its slot are wherever that walk left them.
+-- every button in the options panel, the slot's own included, so by here the
+-- bar's appearance and its slot are wherever that walk left them.
 slash("options reset")
 slash("options slot off")
 
@@ -2440,16 +2585,15 @@ step("the bar starts on its own size, with the client's bar untouched", function
   end
 end)
 
--- The modern client's shape, which is the one the owner actually plays: no
--- MainMenuExpBar at all, the anchor is a CONTAINER, and the art of the client's
--- frame is its child. The classic fakes above cannot express that, and it is the
--- difference between the two slots there.
+-- The shape of the Burning Crusade Classic Anniversary client: no
+-- MainMenuExpBar at all, the anchor is a container,
+-- MainStatusTrackingBarContainer, and the art of the client's frame is its
+-- child. The classic fakes above cannot express that, and it is the difference
+-- between the two slots there.
 --
--- Built by hand rather than with newRegion, and that is the point: the harness
--- invents any capitalised method, so a newRegion texture answers
--- GetStatusBarTexture as readily as a status bar does, and everything inside the
--- container would look like the bar. A fake that says yes to every question
--- cannot be asked this one.
+-- Built by hand rather than with newRegion: the harness invents any capitalised
+-- method, so a newRegion texture answers GetStatusBarTexture as readily as a
+-- status bar does, and everything inside the container would look like the bar.
 step("the inset slot keeps the client's frame and quiets only the bar inside it", function()
   local function piece(extra)
     local p = { alpha = 1, mouse = true }
@@ -2459,8 +2603,8 @@ step("the inset slot keeps the client's frame and quiets only the bar inside it"
     function p:EnableMouse(v) self.mouse = v ~= false end
     function p:GetWidth() return 1024 end
     function p:GetHeight() return 12 end
-    -- What the view asks of a frame it is about to stand in: the scale to convert
-    -- the slot's measure into its own, and the depth to draw under.
+    -- What the view asks of a frame it is about to stand in: the scale to
+    -- convert the slot's measure into its own, and the depth to draw under.
     function p:GetEffectiveScale() return 1 end
     function p:GetFrameStrata() return "MEDIUM" end
     function p:GetFrameLevel() return 2 end
@@ -2489,8 +2633,8 @@ step("the inset slot keeps the client's frame and quiets only the bar inside it"
   check(container.alpha == 1, "the inset slot took the client's frame down with the bar")
   check(frameArt.alpha == 1, "the art around the client's bar went quiet too")
 
-  -- And the other slot still takes the whole thing, which is what makes them two
-  -- slots rather than one -- on this client they were indistinguishable.
+  -- And the other slot still takes the whole thing, which is what makes them
+  -- two slots rather than one on this client.
   slash("options slot replace")
   check(container.alpha == 0, "the replace slot left the client's frame showing")
 
@@ -2519,19 +2663,17 @@ step("the inset slot inherits the client's geometry and quiets its readouts", fu
   end
 end)
 
--- The owner reversed the first half of D52 from the client, and the reason is the
--- one thing the desk could not see: outside the bar, in the slot, is the client's
--- own interface. Text sent above it lands on the action bar; below it, the same.
--- There is no outside to move to there -- only somebody else's pixels.
+-- In the slot, outside the bar is the client's own interface: text sent above
+-- it lands on the action bar, and below it the same. There is no outside to
+-- move to, only somebody else's pixels.
 step("the slot shows no text at all, and the breakdown stays in the tooltip", function()
   local SettingKey, TextAnchor = ns.core.SettingKey, ns.core.TextAnchor
   local restore = context.settings()[SettingKey.BAR_APPEARANCE]
   context.bar.frame.bottom = 300
 
-  -- Every arrangement was tried in the client and none of them worked: inside a
-  -- twelve pixel strip the line is too small to read, and every position outside
-  -- it lands on the client's own interface. "Text position: Above" is what the
-  -- owner had when he reported it.
+  -- No arrangement works in the client: inside a twelve-pixel strip the line is
+  -- too small to read, and every position outside it lands on the client's own
+  -- interface. "Text position: Above" is the setting that shows it.
   context.saveSetting(SettingKey.BAR_APPEARANCE, { text = { anchor = TextAnchor.ABOVE } })
   context.bar:update(context.tracker:current(), {})
 
@@ -2540,8 +2682,8 @@ step("the slot shows no text at all, and the breakdown stays in the tooltip", fu
     error(("the bar in the client's slot is still drawing text: %q"):format(tostring(shown)))
   end
 
-  -- But the readout is not lost -- it is a hover away, with words next to the
-  -- numbers, which is the whole reason taking it off the bar is acceptable.
+  -- The readout is not lost: it is a hover away, with words next to the
+  -- numbers, which is why taking it off the bar is acceptable.
   GameTooltip.lines = {}
   context.bar.frame.scripts.OnEnter(context.bar.frame)
   if #GameTooltip.lines == 0 then
@@ -2552,7 +2694,7 @@ step("the slot shows no text at all, and the breakdown stays in the tooltip", fu
   context.saveSetting(SettingKey.BAR_APPEARANCE, restore)
 end)
 
--- Out of the slot, the text comes straight back: suspended, never cleared (D50).
+-- Out of the slot, the text comes straight back: suspended, never cleared.
 step("the text comes back when the bar leaves the slot", function()
   slash("options slot off")
   context.bar:update(context.tracker:current(), {})
@@ -2564,17 +2706,17 @@ step("the text comes back when the bar leaves the slot", function()
   slash("options slot inset")
 end)
 
--- The side-picking rule did not go away -- it moved to where it still means
--- something. A FREE bar the player dragged against the bottom edge has a real
--- outside, and "below" there is behind the action bar.
+-- The side-picking rule applies where it still means something: a free bar the
+-- player dragged against the bottom edge has a real outside, and "below" there
+-- is behind the action bar.
 step("a free bar at the bottom of the screen puts its text above, not behind the action bar", function()
   local SettingKey, TextAnchor = ns.core.SettingKey, ns.core.TextAnchor
   local restore = context.settings()[SettingKey.BAR_APPEARANCE]
   slash("options slot off")
 
   -- The player's own setting, not a skin's default and not one this code chose:
-  -- the first version only reconsidered the text it had moved itself, so a player
-  -- who picked "below" got a bar with no text and nothing to explain it.
+  -- reconsidering only the text the addon had moved itself would leave a player
+  -- who picked "below" with a bar with no text and nothing to explain it.
   context.bar.frame.bottom = 6
   context.saveSetting(SettingKey.BAR_APPEARANCE, { text = { anchor = TextAnchor.BELOW } })
 
@@ -2603,15 +2745,11 @@ step("the replace slot quiets the client's frame too", function()
   assertSize("replace", MainMenuExpBar:GetWidth(), MainMenuExpBar:GetHeight())
 end)
 
--- The bug this step exists for was reported from the client with two screenshots
--- of the same setting: the bar sitting inside the client's frame, and the bar
--- painted flat over it, with the client's own divisions gone. Nothing had been
--- changed between them but a loading screen and a visit to the options panel.
---
--- What it could not be was position or size -- both were identical to the pixel.
--- It was depth, and depth was the one thing about the slot nobody had ever
--- stated: the bar is a frame hung on UIParent, and a frame that declares no level
--- takes whatever the creation order gave it.
+-- The bar's depth in the slot. With position and size identical to the pixel,
+-- the same setting can draw the bar inside the client's frame or flat over it,
+-- the client's divisions gone, after nothing but a loading screen and a visit
+-- to the options panel. The bar is a frame hung on UIParent, and a frame that
+-- declares no level takes whatever the creation order gave it.
 step("the slot says who draws on top, and says it again whenever the client moves", function()
   local frame = context.bar.frame
 
@@ -2629,8 +2767,8 @@ step("the slot says who draws on top, and says it again whenever the client move
   MainMenuExpBar:SetFrameLevel(5)
 
   -- Inset: the client's frame stays visible and the bar goes inside it, so the
-  -- frame's art has to draw over the bar. Under the frame that PAINTS that art --
-  -- the anchor's parent, at 2 -- and not merely under the anchor at 5, which lands
+  -- frame's art has to draw over the bar. Under the frame that paints that art
+  -- (the anchor's parent, at 2), not merely under the anchor at 5, which lands
   -- level with the parent and lets creation order decide.
   slash("options slot inset")
   assertDepth("inset", "LOW", 1)
@@ -2663,20 +2801,19 @@ step("the slot says who draws on top, and says it again whenever the client move
   end
   assertDepth("after a loading screen", "MEDIUM", 9)
 
-  -- And the half the player found by using it. Ascent re-applies the slot at
-  -- moments that are ITS own; the client re-lays its main bar out at moments that
-  -- are the CLIENT's, and closing a settings panel is one of them -- which is why
-  -- the report was "I change the config and it covers the frame". Nothing is
-  -- attached or applied here on purpose: the only thing that runs between the
+  -- And the client moving on its own. Ascent re-applies the slot at its own
+  -- moments; the client re-lays its main bar out at its own, and closing a
+  -- settings panel is one of them, which leaves the bar covering the frame.
+  -- Nothing is attached or applied here: the only thing that runs between the
   -- client moving and the assertion is the data tick.
   MainMenuBar:SetFrameLevel(20)
   MainMenuExpBar:SetFrameLevel(23)
   context.bar:update(context.tracker:current(), {})
   assertDepth("after the client re-levelled on its own", "MEDIUM", 19)
 
-  -- Off again: the depth the bar had before any of this, given back the way the
-  -- position and the size are (D50). Not a number chosen here -- the one the
-  -- frame was created with.
+  -- Off again: the depth the bar had before any of this is given back, the way
+  -- the position and the size are. Not a number chosen here: the one the frame
+  -- was created with.
   slash("options slot off")
   assertDepth("off", "MEDIUM", 0)
 
@@ -2694,9 +2831,9 @@ step("a visual setting changed in the slot repaints at the slot's size, not the 
   local slotWidth = MainMenuExpBar:GetWidth()
   local restoreSkin = context.settings()[SettingKey.BAR_SKIN]
 
-  -- Any visual setting: the bar rebuilds its appearance and repaints, and what it
-  -- repaints at has to be what the slot measures NOW. Painting from a remembered
-  -- measure is what drew the bar across the client's own frame.
+  -- Any visual setting: the bar rebuilds its appearance and repaints, and it
+  -- has to repaint at what the slot measures now. Painting from a remembered
+  -- measure draws the bar across the client's own frame.
   context.saveSetting(SettingKey.BAR_SKIN, "glass")
   assertSize("after a skin change", slotWidth, MainMenuExpBar:GetHeight())
 
@@ -2705,8 +2842,8 @@ step("a visual setting changed in the slot repaints at the slot's size, not the 
   context.saveSetting(SettingKey.BAR_WIDTH, 820)
   assertSize("after the suspended width changed", slotWidth, MainMenuExpBar:GetHeight())
 
-  -- And scale, which is the one that used to break it: the frame covers the same
-  -- screen area at any scale, which is a different number of points each.
+  -- And scale: the frame covers the same screen area at any scale, which is a
+  -- different number of points each.
   context.bar.frame.scale = 2
   context.saveSetting(SettingKey.BAR_SCALE, 2)
   assertSize("at twice the scale", slotWidth / 2, MainMenuExpBar:GetHeight() / 2)
@@ -2717,11 +2854,10 @@ step("a visual setting changed in the slot repaints at the slot's size, not the 
   slash("options slot off")
 end)
 
--- The owner's third report: "cuando todo free on screen se queda con la dimension
--- vieja". The bar came back from the slot as wide as the screen. assertSize alone
--- could not see it -- the renderer's own numbers were right; it was the FRAME
--- that kept the client's width, because while the slot lasted SetAllPoints pinned
--- both its corners and a frame pinned at both corners ignores SetSize.
+-- The bar leaving the slot comes back at the player's size. assertSize alone
+-- cannot see this: the renderer's numbers can be right while the frame keeps
+-- the client's width, because while the slot lasts SetAllPoints pins both its
+-- corners, and a frame pinned at both corners ignores SetSize.
 step("the frame itself lets go of the client's width, not just the renderer", function()
   slash("options slot inset")
   local settings = context.settings()
@@ -2761,7 +2897,7 @@ step("a client with no experience bar costs the slot, not the bar", function()
   local settings = context.settings()
   assertSize("no client bar", settings[ns.core.SettingKey.BAR_WIDTH], settings[ns.core.SettingKey.BAR_HEIGHT])
   -- The choice stays on disk: the addon that took the bar away may be gone
-  -- tomorrow, and the player should not have to find the setting again (D49).
+  -- tomorrow, and the player should not have to find the setting again.
   if settings[ns.core.SettingKey.BAR_SLOT] ~= "replace" then
     error("the addon overwrote the player's choice instead of not honouring it")
   end
@@ -2770,15 +2906,15 @@ step("a client with no experience bar costs the slot, not the bar", function()
   slash("options slot off")
 end)
 
--- The pull plate, driven the way a fight actually drives it. This is the only
--- gate in the repo that executes ui/PullPlateView.lua or ui/Effects.lua at all,
--- so it walks the whole arc rather than just constructing the frame: combat
--- opens, things die, EXPERIENCE LANDS AFTER COMBAT ENDS -- which is the case the
--- whole settling design exists for -- and only then does the plaque appear.
+-- The pull plate, driven the way a fight drives it. This is the only gate that
+-- executes ui/PullPlateView.lua or ui/Effects.lua at all, so it walks the whole
+-- arc rather than just constructing the frame: combat opens, things die,
+-- experience lands after combat ends, and only then does the plaque appear.
 --
--- The three calls below are the three the composition root's own ticker makes,
--- in its order. Reaching into that OnUpdate from here would be more faithful and
--- far more brittle; keeping the order stated in both places is the trade.
+-- The three calls in tick() are the three the composition root's own ticker
+-- makes, in its order. Reaching into that OnUpdate from here would be more
+-- faithful and far more brittle; keeping the order stated in both places is the
+-- trade.
 step("a pull opens, counts, settles late experience, and becomes a plaque", function()
   local EventTopic, PullPhase = ns.core.EventTopic, ns.core.PullPhase
   local bus, plate, tracker = context.bus, context.plate, context.pullTracker
@@ -2827,9 +2963,9 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
   for _ = 1, 60 do tick(0.1) end
   tracker:reset()
 
-  -- The opener, cast BEFORE the client acknowledges combat -- which is the order
-  -- it happens in for every pull, because the client opens combat when the target
-  -- fights back. It has to end up in the pull it started.
+  -- The opener, cast before the client acknowledges combat: the client opens
+  -- combat when the target fights back, so every pull starts this way. It has
+  -- to end up in the pull it started.
   bus:publish(EventTopic.ABILITY_USED, { key = 589, name = "Shadow Word: Pain" })
   bus:publish(EventTopic.DAMAGE_DEALT, { amount = 18, name = "Mana Serpent", guid = "Creature-0-1-1-1-17204-A" })
   seconds = seconds + 0.5
@@ -2839,8 +2975,8 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
   bus:publish(EventTopic.ABILITY_USED, { key = 1752, name = "Mind Blast" })
   bus:publish(EventTopic.ABILITY_USED, { key = ns.core.AbilityKey.MELEE_SWING })
   bus:publish(EventTopic.ABILITY_USED, { key = ns.core.AbilityKey.RANGED_AUTO })
-  -- Two of them, told apart by guid, and NEITHER dead yet -- the exact state the
-  -- plate used to have nothing to say about.
+  -- Two of them, told apart by guid, and neither dead yet: the plate still has
+  -- something to say.
   bus:publish(EventTopic.DAMAGE_DEALT, { amount = 240, name = "Mana Serpent", guid = "Creature-0-1-1-1-17204-A" })
   bus:publish(EventTopic.DAMAGE_DEALT, { amount = 60, name = "Mana Serpent", guid = "Creature-0-1-1-1-17204-B" })
   bus:publish(EventTopic.DAMAGE_TAKEN, { amount = 60 })
@@ -2854,9 +2990,9 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     error("the pull should still be open while combat runs")
   end
 
-  -- The correction this harness exists to hold: everything is LIVE. Nothing on
-  -- the plate may wait for the pull to close, because the player is looking at it
-  -- during the fight and a frame that shows four zeros reads as broken.
+  -- Everything is live. Nothing on the plate may wait for the pull to close:
+  -- the player is looking at it during the fight, and a frame that shows four
+  -- zeros reads as broken.
   if not plate.creatureRows[1].name.shown then
     error("the plate is not listing what is being fought")
   end
@@ -2871,9 +3007,8 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     error("the plate is not showing dps during the fight")
   end
 
-  -- The ability rows, each NAMED. The defect this replaces: both reserved
-  -- synthetic keys shared one label, so a melee swing and a ranged shot were the
-  -- same row to read -- and one of them was labelled with the report panel's tab
+  -- The ability rows, each named: a melee swing and a ranged shot are two rows
+  -- with their own labels, and none is labelled with the report panel's tab
   -- name, "Abilities".
   do
     local seen = {}
@@ -2895,19 +3030,16 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     error("the plate is not saying how much experience the level still needs")
   end
 
-  -- The projection, and it lives INSIDE the headline rather than beside it: the
-  -- banked figure and the estimate are the same quantity, and an estimate set off
-  -- in the margin reads as a footnote to the number instead of part of it.
-  -- The seeded level has already been paid for a Mana Serpent, so two of them
-  -- standing is an estimate rather than a guess.
-  -- Let the headline arrive before reading it. The number WALKS to its target --
-  -- that is the whole point of the counter -- so asserting on the first frame
-  -- would be asserting on the animation rather than on the answer.
+  -- Let the headline arrive before reading it: the number walks to its target,
+  -- so asserting on the first frame would test the animation rather than the
+  -- answer.
   for _ = 1, 10 do tick(0.1) end
 
-  -- ONE number, and while the fight runs it is the forecast rather than the zero
-  -- that has landed so far. The seeded level has already been paid for a Mana
-  -- Serpent, so two of them standing is an estimate rather than a guess.
+  -- One number: the projection lives inside the headline rather than beside it,
+  -- because the banked figure and the estimate are the same quantity. While the
+  -- fight runs it is the forecast, not the zero that has landed so far. The
+  -- seeded level has already been paid for a Mana Serpent, so two of them
+  -- standing is an estimate rather than a guess.
   if plate.xp.text ~= "172 XP" then
     error("the headline read " .. tostring(plate.xp.text) .. ", expected 172 XP")
   end
@@ -2915,11 +3047,11 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     error("the plate has no arrival to play")
   end
 
-  -- group-aware-rates 3.1: the plate has no room for a mark beside the digits --
-  -- a glyph cannot be aligned against them -- so the claim is carried by how
-  -- strongly the headline is drawn, and the three provenances have to be three
-  -- weights. The seeded Serpent was banked before anything counted who shared the
-  -- pay, so this 172 is an average over a population nobody can name.
+  -- The plate has no room for a mark beside the digits (a glyph cannot be
+  -- aligned against them), so the claim is carried by how strongly the headline
+  -- is drawn, and the three provenances are three weights. The seeded Serpent
+  -- was banked with no count of who shared the pay, so this 172 is an average
+  -- over a population nobody can name.
   do
     local record = context.tracker:current()
     local key = ns.core.CreatureKey.new(17204, 10, "Mana Serpent")
@@ -2967,15 +3099,9 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     plate:follow(tracker, seconds)
   end
 
-  -- Nothing has paid yet, so the source bar must not be drawn at all. It used to
-  -- be laid at a fixed offset below a font string whose height follows its text,
-  -- which put it through the "to level" line instead of under it; the row
-  -- constants exist so that cannot happen again, and this holds the other half --
-  -- a bar for experience nobody has earned.
-  -- The bar and the rate both read the HEADLINE, not the banked total. Nothing
-  -- has been paid yet, so what is drawn is the forecast as a slice of its own --
-  -- which is the case that used to leave the bar empty and the footer at zero for
-  -- the whole of every fight.
+  -- Nothing has been paid yet. The bar and the rate both read the headline, not
+  -- the banked total, so the forecast is drawn as a slice of its own and the
+  -- rate is not zero.
   do
     local shown = 0
     for _, chip in ipairs(plate.chips) do
@@ -3022,15 +3148,15 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
   if not plate.streak.shown then
     error("a chain of two should have drawn the chain row")
   end
-  -- Nothing left standing: the row goes back to a plain body count. This is the
-  -- transition that moves no number, and the one a counter without repaint()
-  -- would have left saying 1/2 forever.
+  -- Nothing left standing: the row goes back to a plain body count. This
+  -- transition moves no number, so a counter without repaint() would leave it
+  -- at 1/2.
   if plate.creatureRows[1].count.text ~= "x2" then
     error("with both down the row should read x2, read " .. tostring(plate.creatureRows[1].count.text))
   end
-  -- Both dead and the experience for the second one not in yet: the headline must
-  -- still be the forecast, NOT the 44 that has actually landed. This is the case
-  -- that used to read "0 XP" on a fight that had just been won.
+  -- Both dead and the second one's experience not in yet: the headline is still
+  -- the forecast, not the 44 that has landed, so a fight just won does not read
+  -- "0 XP".
   if plate.xp.text ~= "172 XP" then
     error("the forecast did not survive the kill: " .. tostring(plate.xp.text))
   end
@@ -3044,8 +3170,8 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     error("combat ending must not close the pull outright")
   end
 
-  -- The case the design exists for: the second kill's experience arrives a
-  -- second AFTER the client said the fight was over.
+  -- What the settling window is for: the second kill's experience arrives a
+  -- second after the client said the fight was over.
   seconds = seconds + 1
   bus:publish(EventTopic.XP_ATTRIBUTED, { gain = { amount = 51, source = ns.core.XpSource.MOB_KILL } })
   tick(0.016)
@@ -3068,8 +3194,8 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     error("the plaque drew no footer")
   end
 
-  -- Pulling the next thing WHILE it fades carries the same pull on. The plate has
-  -- to come back to full strength with its counter intact -- not reset, not a new
+  -- Pulling the next thing while it fades carries the same pull on: the plate
+  -- comes back to full strength with its counter intact, not reset, not a new
   -- pull, not stuck half-faded at whatever alpha the fade had reached.
   local banked = tracker:current().xpTotal
   local generation = tracker:currentGeneration()
@@ -3133,11 +3259,10 @@ step("a plate the player switched off records nothing at all", function()
   slash("options plate on")
 end)
 
--- The demo path, which is the one a player uses to decide whether they like the
--- plate at all -- and the only way anyone sees it without finding something to
--- kill first. Driven to the end so that the hand-back at the bottom of its
--- script runs too: a demo that never gives the plate back would leave a
--- fictional fight on screen over a real one.
+-- The demo path: how a player decides whether they like the plate at all, and
+-- the only way to see it without finding something to kill first. Driven to the
+-- end so the hand-back at the bottom of its script runs too: a demo that never
+-- gives the plate back would leave a fictional fight on screen over a real one.
 step("the plate demo runs a whole fake pull and hands the plate back", function()
   local plate = context.plate
   local seconds = 5000
@@ -3171,12 +3296,11 @@ step("the plate demo runs a whole fake pull and hands the plate back", function(
   GetTime = realGetTime
 end)
 
--- 4.6, the demo half: the plate's page has no preview of its own on purpose
--- (D92), and this button is what stands in for one -- the same fake pull the
--- command runs, on the real plate, at the settings just chosen. Driven to the
--- end like the step above, because the half that matters is the hand-back: a
--- button that left a fictional fight on screen over a real one would be worse
--- than no preview at all.
+-- The plate's page has no preview of its own, and this button stands in for
+-- one: the same fake pull the command runs, on the real plate, at the settings
+-- just chosen. Driven to the end like the step above, because the half that
+-- matters is the hand-back: a button that left a fictional fight on screen over
+-- a real one would be worse than no preview at all.
 step("the plate page's demo button runs the whole pull and gives the plate back", function()
   local button = _G.AscentOptionsPlateDemo
   if button == nil then error("the plate page built no demo button") end
@@ -3213,10 +3337,10 @@ step("the plate page's demo button runs the whole pull and gives the plate back"
   end
 end)
 
--- Where the player puts it is where it stays. The defect this holds: the plate
--- captured the settings table it was built with, and every save builds a NEW
--- frozen one -- so dropping it wrote the new position and then re-anchored to
--- the stale one, and the frame walked back to wherever it had been before.
+-- Where the player drops the plate is where it stays. Every save builds a new
+-- frozen settings table, so a plate holding the table it was built with would
+-- write the new position and then re-anchor to the stale one, walking back to
+-- wherever it had been.
 --
 -- Driven through the real handlers: the drag scripts the view registered, the
 -- real saveSetting, and then an unrelated settings change, which is what makes
@@ -3246,21 +3370,19 @@ step("the plate stays where it is dropped", function()
 end)
 
 -- ---------------------------------------------------------------------------
--- What the plate reads about ITSELF (tasks.md group 3). ui/ has no unit test, so
--- every claim below is made against what the stand-in client was actually told to
--- draw -- a text, a size, an anchor -- rather than against the addon not raising.
+-- What the plate reads about itself. ui/ has no unit test, so every claim below
+-- is made against what the stand-in client was told to draw (a text, a size, an
+-- anchor) rather than against the addon not raising.
 -- ---------------------------------------------------------------------------
 
 -- The stub's GetTime is a constant, and a settling window measured against a
 -- clock that never moves never closes. Swapped per step and put back even when
--- the step fails, because a harness that left a fake clock behind would take
--- every step after it with it.
+-- the step fails, so a fake clock never outlives the step that set it.
 local plateClock = 7000
 
 -- Everything the steps below move, put back to its default whether the step
--- passed or not. A step that failed half way through would otherwise hand the
--- next one a plate nobody configured, and that one's failure would read as a
--- second defect somewhere else -- which is exactly how a run turns into a hunt.
+-- passed or not, so a step that failed half way does not hand the next one a
+-- plate nobody configured and a failure that reads as a second defect.
 local function restorePlateSettings()
   local SettingKey, Defaults = ns.core.SettingKey, ns.core.Defaults
   for _, key in ipairs({ SettingKey.PLATE_SCALE, SettingKey.PLATE_WIDTH,
@@ -3269,9 +3391,10 @@ local function restorePlateSettings()
                          SettingKey.BAR_LOCKED, SettingKey.MOTION_SCALE }) do
     context.saveSetting(key, Defaults[key])
   end
-  -- Copied rather than handed back: the default list a frozen table answers with
-  -- IS its backing store (Frozen's own header), and storing that reference in the
-  -- saved variables would put the addon's constants one write away from a player.
+  -- Copied rather than handed back: the default list a frozen table answers
+  -- with is its backing store (Frozen's own header), and storing that reference
+  -- in the saved variables would put the addon's constants one write away from
+  -- a player.
   local zones = {}
   for _, zone in ipairs(Defaults[SettingKey.PLATE_ZONES]) do
     zones[#zones + 1] = zone
@@ -3305,11 +3428,11 @@ local function plateTick(dt)
   context.plate:tick(dt)
 end
 
--- A fight with something in every zone -- two creatures, two abilities, two kills
--- close enough to chain, experience paid -- left OPEN, because an open pull is
--- what redraws when a setting changes under it. The counters are walked to their
--- targets first: the headline WALKS, so reading it on the first frame would be
--- reading the animation instead of the answer.
+-- A fight with something in every zone (two creatures, two abilities, two kills
+-- close enough to chain, experience paid), left open, because an open pull is
+-- what redraws when a setting changes under it. The counters are walked to
+-- their targets first: the headline walks, so reading it on the first frame
+-- would be reading the animation instead of the answer.
 local function openAFight()
   local EventTopic, XpSource = ns.core.EventTopic, ns.core.XpSource
   local bus = context.bus
@@ -3330,8 +3453,8 @@ local function openAFight()
 end
 
 -- Where the plate's own arithmetic says its pieces go, asked the way the view
--- asks for it. Restated here rather than in numbers so that a changed constant
--- shows up as a changed PLATE, not as a harness that has to be edited to agree.
+-- asks for it. Restated here rather than in numbers, so a changed constant
+-- shows up as a changed plate, not as a harness that has to be edited to agree.
 local function plateLayout(creatures, abilities)
   local settings = context.settings()
   local own = settings[ns.core.SettingKey.PLATE_APPEARANCE]
@@ -3344,10 +3467,9 @@ local function plateLayout(creatures, abilities)
   })
 end
 
--- D88, and the whole of add-ascent-pull-recap 7.4. The defect: the plate asked
--- the BAR's lock, so a player who had locked the bar -- or who had taken the
--- client's bar slot, which DISABLES that lock -- could not move the plate, and
--- nothing anywhere said why.
+-- The plate has its own lock. If it asked the bar's, a player who had locked
+-- the bar, or taken the client's bar slot, which disables that lock, could not
+-- move the plate, and nothing anywhere would say why.
 plateStep("the plate has a lock of its own, and the bar's does not reach it", function()
   local SettingKey = ns.core.SettingKey
   local plate, save = context.plate, context.saveSetting
@@ -3355,9 +3477,8 @@ plateStep("the plate has a lock of its own, and the bar's does not reach it", fu
   local wasAt = context.settings()[SettingKey.PLATE_POSITION]
 
   -- The client's StartMoving records nothing, and the stub auto-stubs it into a
-  -- call that returns self -- so a drag that was refused and one that went
-  -- through are the same nothing from out here. This is the stand-in that tells
-  -- them apart.
+  -- call that returns self, so a refused drag and one that went through look
+  -- the same from out here. This stand-in tells them apart.
   local realStartMoving = rawget(frame, "StartMoving")
   local started = 0
   frame.StartMoving = function() started = started + 1 end
@@ -3389,9 +3510,8 @@ plateStep("the plate has a lock of its own, and the bar's does not reach it", fu
   frame.StartMoving = realStartMoving
 end)
 
--- 3.2: the frame takes the scale, the width and the height its contents ask for,
--- and the rows are cut to the width in force rather than to the 240 this file
--- used to carry.
+-- The frame takes the scale, the width and the height its contents ask for, and
+-- the rows are cut to the width in force rather than to a fixed 240.
 plateStep("the plate is the size the player asked for, rows included", function()
   local SettingKey = ns.core.SettingKey
   local plate, save = context.plate, context.saveSetting
@@ -3416,7 +3536,7 @@ plateStep("the plate is the size the player asked for, rows included", function(
       :format(tostring(frame:GetHeight()), tostring(layout.height)))
   end
 
-  -- A row's text is cut to the width in force. At 240 this was 188.
+  -- A row's text is cut to the width in force.
   local row = plate.creatureRows[1]
   if row.name.w ~= 320 - layout.padding * 2 - 32 then
     error("a creature row was cut to " .. tostring(row.name.w) .. " on a plate 320 wide")
@@ -3429,7 +3549,7 @@ plateStep("the plate is the size the player asked for, rows included", function(
     error("the source bar spans " .. tostring(chipsWide) .. " on a plate 320 wide")
   end
 
-  -- And the saved position is re-read AFTER the scale, so the anchor the player
+  -- And the saved position is re-read after the scale, so the anchor the player
   -- dropped it at is the one it is hanging from.
   local saved = context.settings()[SettingKey.PLATE_POSITION]
   local point, _, relativePoint, x, y = frame:GetPoint()
@@ -3439,8 +3559,8 @@ plateStep("the plate is the size the player asked for, rows included", function(
   end
 end)
 
--- 3.5: a zone that is off is not drawn AND leaves no gap, the headline is not one
--- of the zones, and none of it builds a single new region.
+-- A zone that is off is not drawn and leaves no gap, the headline is not one of
+-- the zones, and none of it builds a single new region.
 plateStep("the plate draws the zones and the rows the player chose, and builds nothing", function()
   local SettingKey, PlateZone = ns.core.SettingKey, ns.core.PlateZone
   local plate, save = context.plate, context.saveSetting
@@ -3459,8 +3579,8 @@ plateStep("the plate draws the zones and the rows the player chose, and builds n
   end
   local tall = plate.frame:GetHeight()
 
-  -- One zone off. Not drawn, and the plate is SHORTER -- hiding it and leaving
-  -- its gap behind would be the other thing, and the one D90 rules out.
+  -- One zone off: not drawn, and the plate is shorter. Hiding it and leaving
+  -- its gap behind is ruled out.
   save(SettingKey.PLATE_ZONES, { PlateZone.CLOCK, PlateZone.REMAINING, PlateZone.STREAK,
     PlateZone.SOURCES, PlateZone.CREATURES, PlateZone.ABILITIES })
   openAFight()
@@ -3472,9 +3592,10 @@ plateStep("the plate draws the zones and the rows the player chose, and builds n
       :format(tostring(plate.frame:GetHeight()), tostring(tall)))
   end
 
-  -- Every accessory zone off is a choice, not a corrupt file (D90). What is left
-  -- is the figure the plate exists to show and the count facing it, and neither
-  -- can be turned off: a frame that appears in combat without them is decoration.
+  -- Every accessory zone off is a choice, not a corrupt file. What is left is
+  -- the figure the plate exists to show and the count facing it, and neither
+  -- can be turned off: a frame that appears in combat without them is
+  -- decoration.
   save(SettingKey.PLATE_ZONES, {})
   openAFight()
   for _, gone in ipairs({ { "the clock", plate.clock }, { "the level line", plate.remaining },
@@ -3487,7 +3608,7 @@ plateStep("the plate draws the zones and the rows the player chose, and builds n
     end
   end
   -- Never hidden and still carrying a figure. The figure itself is whatever the
-  -- fight was worth -- this step is about the zones, and pinning the number here
+  -- fight was worth: this step is about the zones, and pinning the number here
   -- would make it fail for a reason it is not asking about.
   if plate.xp.shown == false or plate.xp.text == nil or not plate.xp.text:find("XP", 1, true) then
     error("the headline went with the zones: " .. tostring(plate.xp.text))
@@ -3524,8 +3645,8 @@ plateStep("the plate draws the zones and the rows the player chose, and builds n
   end
 end)
 
--- 3.3 and D91: the opacity is a FACTOR over whatever the plate is drawing at,
--- never the frame's alpha -- that channel is how the plate leaves.
+-- The opacity is a factor over whatever alpha the plate is drawing at, never a
+-- replacement for it: the frame's alpha is how the plate leaves.
 plateStep("the plate is drawn at the opacity the player chose, and still fades to nothing", function()
   local SettingKey = ns.core.SettingKey
   local plate, save = context.plate, context.saveSetting
@@ -3574,10 +3695,10 @@ plateStep("the plate is drawn at the opacity the player chose, and still fades t
     error("the plate never started fading from the opacity it was drawn at")
   end
 
-  -- Carried on rather than started over: the same pull, alive again. THIS is the
-  -- reset D91 warns is the easy one to miss -- a resumed pull plays no arrival, so
-  -- nothing else writes the alpha behind it, and a factor that had not reached
-  -- this line would show up as a plate that brightens when the fighting resumes.
+  -- Carried on rather than started over: the same pull, alive again. A resumed
+  -- pull plays no arrival, so nothing else writes the alpha behind it, and a
+  -- factor that had not reached this line would show up as a plate that
+  -- brightens when the fighting resumes.
   context.bus:publish(ns.core.EventTopic.COMBAT_STARTED, {})
   context.bus:publish(ns.core.EventTopic.DAMAGE_DEALT,
     { amount = 40, name = "Kobold Miner", guid = "Creature-0-1-1-1-6-C" })
@@ -3598,14 +3719,14 @@ plateStep("the plate is drawn at the opacity the player chose, and still fades t
     error("the plate never left")
   end
   -- Letting go of the screen puts the alpha back for the next time, and "back"
-  -- is the factor: the fourth of the four resets D91 counts, and the only one
-  -- whose write nothing else follows.
+  -- is the factor: the last of the four alpha resets, and the only one whose
+  -- write nothing else follows.
   if frame:GetAlpha() ~= 0.5 then
     error("the plate let go of the screen at " .. tostring(frame:GetAlpha()))
   end
 
-  -- With motion turned off there IS no arrival -- a duration of zero builds the
-  -- inert effect -- so a new pull's own reset is the only thing writing the
+  -- With motion turned off there is no arrival (a duration of zero builds the
+  -- inert effect), so a new pull's own reset is the only thing writing the
   -- frame's alpha. It is the reset the arrival hides in every other path.
   save(SettingKey.MOTION_SCALE, 0)
   openAFight()
@@ -3613,8 +3734,8 @@ plateStep("the plate is drawn at the opacity the player chose, and still fades t
     error("a new pull with motion off opened at " .. tostring(frame:GetAlpha()))
   end
 
-  -- Below the floor the plate imposes on the SKIN's background, which is a floor
-  -- on a colour and not on the player (D91).
+  -- Below the floor the plate imposes on the skin's background, which is a
+  -- floor on a colour and not on the player's opacity.
   save(SettingKey.PLATE_OPACITY, 0.2)
   openAFight()
   if frame:GetAlpha() ~= 0.2 then
@@ -3632,11 +3753,9 @@ plateStep("the plate is drawn at the opacity the player chose, and still fades t
   end
 end)
 
--- D89's half of the view: how long the plaque stays is the player's, read per
--- tick rather than captured, so a plaque already on screen when it changes
--- honours the new number. The OTHER half -- the window a closed pull can still be
--- carried on in, which is meant to be this same figure -- belongs to the
--- composition root and is not wired yet (tasks.md group 4).
+-- How long the plaque stays is the player's, read per tick rather than
+-- captured, so a plaque already on screen when it changes honours the new
+-- number.
 plateStep("the plaque stays as long as the player asked, not as long as the file said", function()
   local SettingKey, PullPhase = ns.core.SettingKey, ns.core.PullPhase
   local plate, save = context.plate, context.saveSetting
@@ -3670,7 +3789,7 @@ plateStep("the plaque stays as long as the player asked, not as long as the file
     error("the plaque never started fading")
   end
   -- Three seconds and change: the tick that notices is the first one past the
-  -- hold, not the instant of it. Six would be the file's old literal.
+  -- hold, not the instant of it.
   if heldFor < 3 or heldFor >= 4 then
     error(("the plaque held for %s seconds where the player asked for 3"):format(tostring(heldFor)))
   end
@@ -3684,9 +3803,9 @@ plateStep("the plaque stays as long as the player asked, not as long as the file
   end
 end)
 
--- 3.4 and D87: the plate follows the bar's skin and may adjust a few axes over
--- it. An axis it states wins, an axis it leaves out keeps following the bar, and
--- neither reaches the bar itself.
+-- The plate follows the bar's skin and may adjust a few axes over it. An axis
+-- it states wins, an axis it leaves out keeps following the bar, and neither
+-- reaches the bar itself.
 plateStep("the plate's own appearance sits on top of the bar's and stops there", function()
   local SettingKey = ns.core.SettingKey
   local plate, save = context.plate, context.saveSetting
@@ -3710,7 +3829,7 @@ plateStep("the plate's own appearance sits on top of the bar's and stops there",
   if context.bar.appearance.accent.r ~= barAccent.r or context.bar.appearance.accent.g ~= barAccent.g then
     error("the plate's own accent reached the bar as well")
   end
-  -- The axis it did NOT state still follows the bar, which is what makes one
+  -- The axis it did not state still follows the bar, which is what makes one
   -- tweak survive the bar changing skin underneath it.
   if plate.appearance.background.r ~= context.bar.appearance.background.r then
     error("an axis the plate never stated stopped following the bar")
@@ -3732,9 +3851,9 @@ plateStep("the plate's own appearance sits on top of the bar's and stops there",
     error("a plate with bigger text did not grow to " .. tostring(big.height))
   end
 
-  -- An axis of the map that reaches the EFFECTS has to reach the signature that
-  -- decides whether they are rebuilt. An animation group cannot be destroyed, so
-  -- a rebuild skipped in silence leaves the old one playing for good.
+  -- An axis of the map that reaches the effects has to reach the signature that
+  -- decides whether they are rebuilt. An animation group cannot be destroyed,
+  -- so a rebuild skipped in silence leaves the old one playing for good.
   save(SettingKey.PLATE_APPEARANCE, { effects = { glow = { color = { r = 1, g = 0, b = 0, a = 0.25 } } } })
   openAFight()
   if plate.effectSignature == signature or plate.glow == glow then
@@ -3756,19 +3875,19 @@ plateStep("the plate's own appearance sits on top of the bar's and stops there",
 end)
 
 -- ---------------------------------------------------------------------------
--- The plate's page in the options panel (tasks.md group 4). ui/ has no unit
--- test, so each of these drives the real handlers the panel registered -- a
--- click, a drag, a release, an OnShow -- and asserts on what the stand-in client
--- was actually told, never on the addon merely not raising.
+-- The plate's page in the options panel. ui/ has no unit test, so each of these
+-- drives the real handlers the panel registered (a click, a drag, a release, an
+-- OnShow) and asserts on what the stand-in client was told, never on the addon
+-- merely not raising.
 -- ---------------------------------------------------------------------------
 
--- The client's own SetValue FIRES OnValueChanged; the stand-in's is auto-stubbed
--- and records nothing. Both halves of that matter here: the guard against a page
--- writing settings merely by opening only exists because of the first, and a
--- control refreshed into the void cannot be read back because of the second. So
--- the client's behaviour is put back for the length of a step, and taken off
--- again afterwards -- including the auto-stub that was cached on the frame, or
--- the next access would silently build another one.
+-- The client's own SetValue fires OnValueChanged; the stand-in's is
+-- auto-stubbed and records nothing. Both matter here: the guard against a page
+-- writing settings merely by opening exists because of the first, and a control
+-- refreshed into the void cannot be read back because of the second. So the
+-- client's behaviour is put back for the length of a step and taken off again
+-- afterwards, including the auto-stub cached on the frame, or the next access
+-- would silently build another one.
 local function withLiveSliders(names, fn, dispatch)
   local restore = {}
   for _, name in ipairs(names) do
@@ -3795,8 +3914,9 @@ local function withLiveSliders(names, fn, dispatch)
 end
 
 -- Dragging a slider to a value and letting go, the way the player does it. The
--- release reads the slider's OWN value, which the stand-in answers 1 to whatever
--- happened, so the value under the mouse is stated here and taken away after.
+-- release reads the slider's own value, which the stand-in answers 1 to
+-- whatever happened, so the value under the mouse is stated here and taken away
+-- after.
 local function dragSlider(name, value)
   local slider = _G[name]
   if slider == nil then
@@ -3820,10 +3940,9 @@ local PLATE_FRAME_SLIDERS = {
   "AscentOptionsPlateOpacitySlider", "AscentOptionsPlateHoldSlider",
 }
 
--- 4.3: the four sliders of the frame preview while they move and write when they
--- are let go. The guard that makes the first half possible is the one worth the
--- step: setting a slider's value fires its own handler, previewing resizes the
--- real surface, and so merely OPENING the page would otherwise resize the
+-- The four frame sliders preview while they move and write when they are let
+-- go. Setting a slider's value fires its own handler, and previewing resizes
+-- the real surface, so without a guard merely opening the page would resize the
 -- player's plate to whatever the slider's bounds allowed.
 plateStep("opening the plate page changes nothing, and dragging a slider writes once", function()
   local SettingKey = ns.core.SettingKey
@@ -3877,26 +3996,26 @@ plateStep("opening the plate page changes nothing, and dragging a slider writes 
     end
   end
 
-  -- D89's other half, which is the whole reason this slider is not cosmetic: how
-  -- long the plaque stays IS how long a closed pull can be carried on, read live
-  -- rather than captured at construction.
+  -- How long the plaque stays is also how long a closed pull can be carried on,
+  -- read live rather than captured at construction, which is why this slider is
+  -- not cosmetic.
   if context.pullTracker:resumeWindow() ~= 9 + ns.ui.PullPlateView.FADE_SECONDS then
     error(("the resume window stayed at %s with the plaque held for 9")
       :format(tostring(context.pullTracker:resumeWindow())))
   end
 end)
 
--- 4.4: the content block. What is stored is a SET of choices, so the list comes
--- back in the order the plate draws them and never in the order the boxes were
--- ticked (D90) -- and every box off is an answer, not a corrupt file.
+-- The content block stores a set of choices, so the list comes back in the
+-- order the plate draws them, never in the order the boxes were ticked, and
+-- every box off is an answer, not a corrupt file.
 plateStep("ticking a zone writes the list in the plate's order, and none is a choice", function()
   local SettingKey, PlateZone, TextKey = ns.core.SettingKey, ns.core.PlateZone, ns.core.TextKey
   local content = _G.AscentOptionsPlateScroll.scrollChild
   local wanted = context.locale:get(TextKey.OPT_PLATE_ZONES_NONE)
 
   -- The note that says an empty selection is a choice. It has no name of its
-  -- own, like the bar's, so it is found by the words the player reads -- and
-  -- found ONCE, while it is showing: refresh empties it as well as hiding it,
+  -- own, like the bar's, so it is found by the words the player reads, and
+  -- found once, while it is showing: refresh empties it as well as hiding it,
   -- because the section below is anchored to it and a hidden font string keeps
   -- the height of the text it last held.
   local note
@@ -3904,7 +4023,7 @@ plateStep("ticking a zone writes the list in the plate's order, and none is a ch
   local function tick(name, checked)
     local check = _G[name]
     if check == nil then error(name .. " was never built") end
-    -- The client's checkbox template flips itself and THEN runs OnClick, so the
+    -- The client's checkbox template flips itself and then runs OnClick, so the
     -- handler reads the state the player just chose.
     check:SetChecked(checked)
     check.scripts.OnClick(check, "LeftButton")
@@ -3920,7 +4039,7 @@ plateStep("ticking a zone writes the list in the plate's order, and none is a ch
     error("every zone off and the page says nothing about it")
   end
 
-  -- Ticked in the wrong order on purpose: the footer is the LAST zone the plate
+  -- Ticked in the wrong order on purpose: the footer is the last zone the plate
   -- draws and the clock the first, so a list stored in the order they were
   -- clicked would come back with the footer at the front.
   tick("AscentOptionsPlateZone7CheckButton", true)
@@ -3936,7 +4055,7 @@ plateStep("ticking a zone writes the list in the plate's order, and none is a ch
   end
 
   -- Unticking the last of them is a choice the page states rather than argues
-  -- with -- the same note, for the same reason, as a bar with no text.
+  -- with: the same note, for the same reason, as a bar with no text.
   tick("AscentOptionsPlateZone1CheckButton", false)
   tick("AscentOptionsPlateZone7CheckButton", false)
   if #context.settings()[SettingKey.PLATE_ZONES] ~= 0 then
@@ -3972,10 +4091,10 @@ plateStep("ticking a zone writes the list in the plate's order, and none is a ch
   end
 end)
 
--- 4.5: the three axes of the plate's own map, each with a reset that is on screen
--- only while that axis really is the player's. What is left showing after a skin
--- change is therefore exactly the list of their own tweaks still being applied
--- over the new one -- the other thing this surface has to say.
+-- The three axes of the plate's own map, each with a reset that is on screen
+-- only while that axis is the player's. What is left showing after a skin
+-- change is therefore exactly the list of their own tweaks still applied over
+-- the new one.
 plateStep("each axis of the plate's own look resets on its own, and says when it can", function()
   local SettingKey = ns.core.SettingKey
 
@@ -4005,7 +4124,7 @@ plateStep("each axis of the plate's own look resets on its own, and says when it
   if at(at(own, "background"), "a") ~= 0.4 then
     error("the plate's own background opacity did not reach its map")
   end
-  -- The text size is the axis the plate reads off its OWN map and nowhere else,
+  -- The text size is the axis the plate reads off its own map and nowhere else,
   -- which is what PullPlateView:ownTextSize asks for: a key of its own would be
   -- a second place to look and a third thing to keep in step.
   if at(at(own, "text"), "size") ~= 16 then
@@ -4037,17 +4156,16 @@ plateStep("each axis of the plate's own look resets on its own, and says when it
   end
 end)
 
--- 4.7: every new control is written in the refresh, which is shared by all seven
--- pages. A control left out of it shows stale state with no error at all -- and
--- these settings are the ones a chat command is likeliest to have moved while the
+-- Every plate control is written in the refresh, which all seven pages share. A
+-- control left out of it shows stale state with no error at all, and these
+-- settings are the ones a chat command is likeliest to have moved while the
 -- panel was open.
 plateStep("a plate setting changed from outside the panel shows on its page", function()
   local SettingKey, PlateZone = ns.core.SettingKey, ns.core.PlateZone
   local wasEnabled = context.settings()[SettingKey.PLATE_ENABLED]
 
-  -- From outside the panel, the way the spec means it: a chat command for the
-  -- one setting that has one, and saveSetting -- which is what every command
-  -- goes through -- for the rest.
+  -- From outside the panel: a chat command for the one setting that has one,
+  -- and saveSetting, which every command goes through, for the rest.
   SlashCmdList["ASCENT"]("options plate off")
   context.saveSetting(SettingKey.PLATE_WIDTH, 420)
   context.saveSetting(SettingKey.PLATE_ROWS, 5)
@@ -4056,9 +4174,9 @@ plateStep("a plate setting changed from outside the panel shows on its page", fu
 
   withLiveSliders({ "AscentOptionsPlateWidthSlider", "AscentOptionsPlateRowsSlider",
                     "AscentOptionsPlateLook3Slider" }, function()
-    -- Scrambled first, and that is what makes this a test of the REFRESH rather
-    -- than of saveSetting: every write above already refreshed the panel, so a
-    -- control that is right because nothing touched it proves nothing.
+    -- Scrambled first, which makes this a test of the refresh rather than of
+    -- saveSetting: every write above already refreshed the panel, so a control
+    -- that is right because nothing touched it proves nothing.
     _G.AscentOptionsPlateWidthSlider.value = -1
     _G.AscentOptionsPlateRowsSlider.value = -1
     _G.AscentOptionsPlateLook3Slider.value = -1
@@ -4094,12 +4212,12 @@ plateStep("a plate setting changed from outside the panel shows on its page", fu
   context.saveSetting(SettingKey.PLATE_ENABLED, wasEnabled)
 end)
 
--- THE ONE CHANNEL BACK, driven the way a player reporting a bug drives it.
+-- The one channel back, driven the way a player reporting a bug drives it.
 --
--- The report is generated by running the diagnostics with their output diverted,
--- which is a path nothing else exercises: if `copy` ever stopped capturing and
--- started printing, every assertion about the addon would still pass and the one
--- thing a player can send back would be empty.
+-- The report is generated by running the diagnostics with their output
+-- diverted, a path nothing else exercises: if `copy` ever stopped capturing and
+-- started printing, every assertion about the addon would still pass and the
+-- one thing a player can send back would be empty.
 step("the copy window holds the diagnostics as text, not as chat lines", function()
   local chatBefore = #chatLines
   slash("copy")
@@ -4109,7 +4227,7 @@ step("the copy window holds the diagnostics as text, not as chat lines", functio
     error("no copy window was opened")
   end
 
-  -- Diverted, not printed: the diagnostics did NOT go to chat this time.
+  -- Diverted, not printed: the diagnostics did not go to chat this time.
   if #chatLines > chatBefore then
     error(("the report printed %d line(s) to chat as well"):format(#chatLines - chatBefore))
   end
@@ -4133,6 +4251,20 @@ step("the copy window holds the diagnostics as text, not as chat lines", functio
   end
   if text:find("|c", 1, true) then
     error("the report still carries chat colour codes")
+  end
+  -- The client it identified, with the interface number that identified it, and
+  -- the capability table with a reason on every line: on each profile, the
+  -- client that profile is.
+  local client = PROFILE == "forever" and "client: forever (interface 16001)"
+    or "client: burning_crusade (interface 20506)"
+  if not text:find(client, 1, true) then
+    error("the report does not name the client it identified: " .. text:sub(1, 160))
+  end
+  for _, name in ipairs({ "combat_log", "xp_chat", "quest_log", "client_xp_bar", "creature_level" }) do
+    local line = text:match("capability " .. name .. ": (%a+)")
+    if line ~= "present" and line ~= "absent" and line ~= "unreadable" then
+      error("the report carries no reason for the capability " .. name)
+    end
   end
 end)
 
@@ -4181,12 +4313,12 @@ step("the options panel offers the same report the command does", function()
   end
 end)
 
--- THE VERSION CHECK, driven from the composition root.
+-- The version check, driven from the composition root.
 --
 -- The channel itself is covered by its own spec against a stand-in client; what
--- can only be seen from here is the wiring: that the command exists, that the
--- window opens, and that a client with no addon channel at all -- which is
--- exactly what this harness is -- loads anyway and says what it turned off.
+-- can only be seen from here is the wiring: the command exists, the window
+-- opens, and a client with no addon channel at all (no C_ChatInfo, as in this
+-- harness) loads anyway and says what it turned off.
 
 step("a client with no addon channel loads, and names what it turned off", function()
   local mark = #chatLines + 1
@@ -4224,11 +4356,10 @@ step("an update announces itself once, and is remembered", function()
   end
 end)
 
--- ONE PLACE TO LOOK. The flight recorder used to be a top-level command beside
--- `debug`, which meant a player chasing one thing had to know which of the two
--- words held it -- the same reason the three diagnostic dumps were folded into
--- one before this. The old spelling has to be gone, not merely unadvertised:
--- a command that still half-answers is worse than one that says it does not exist.
+-- One place to look: the flight recorder answers under `debug`, so a player
+-- chasing one thing does not have to know which of two words holds it. A
+-- top-level `evidence` must not answer at all: a command that still
+-- half-answers is worse than one that says it does not exist.
 step("the recorder answers under debug, and the old spelling does not answer at all", function()
   local mark = #chatLines + 1
   slash("debug evidence on")
@@ -4262,9 +4393,9 @@ step("the help offers what exists, and nothing that does not", function()
   end
   local help = table.concat(rows, "\n")
 
-  -- `debug quests` and `debug strings` were folded into `debug` itself, and the
-  -- help went on offering them for months. Advertising a subcommand that no
-  -- longer answers is the same bug as hiding one that does.
+  -- `debug quests` and `debug strings` answer under `debug` itself, and the
+  -- help must not offer them: advertising a subcommand that does not answer is
+  -- the same bug as hiding one that does.
   if help:find("quests|strings", 1, true) then
     error("the help still offers subcommands that were folded away")
   end
@@ -4287,16 +4418,15 @@ step("the help names the changelog, because a command not in it does not exist",
   end
 end)
 
--- 5.1, the half that answers. `skin` and `slot` already print what they are set
--- to when asked with no argument, and the plate is the surface that needs it
--- most: it is the one a player can lose. Off, transparent, or dropped past the
--- edge of the screen all look identical from the chair -- nothing appears when a
--- fight starts -- and these four lines are what tell them apart.
+-- The half that answers. `skin` and `slot` already print what they are set to
+-- when asked with no argument, and the plate needs it most: it is the surface a
+-- player can lose. Off, transparent, or dropped past the edge of the screen all
+-- look identical from the chair (nothing appears when a fight starts), and
+-- these lines are what tell them apart.
 --
--- Every value it is asked about is moved off its default first, deliberately. A
--- status print wired to the constants instead of to the settings would answer
--- correctly for a plate nobody had touched, which is the one plate nobody asks
--- about.
+-- Every value asked about is moved off its default first: a status print wired
+-- to the constants instead of the settings would answer correctly for a plate
+-- nobody had touched, which is the one plate nobody asks about.
 step("the plate says what state it is in, which is how a lost one is found", function()
   local SettingKey, PlateZone = ns.core.SettingKey, ns.core.PlateZone
 
@@ -4307,7 +4437,7 @@ step("the plate says what state it is in, which is how a lost one is found", fun
   context.saveSetting(SettingKey.PLATE_ROWS, 2)
   context.saveSetting(SettingKey.PLATE_POSITION,
     { point = "TOPLEFT", relativePoint = "TOPLEFT", x = -940, y = 77 })
-  -- Stored footer-first, which is NOT the order the plate draws them in.
+  -- Stored footer-first, which is not the order the plate draws them in.
   context.saveSetting(SettingKey.PLATE_ZONES, { PlateZone.FOOTER, PlateZone.CLOCK })
 
   local mark = #chatLines + 1
@@ -4319,21 +4449,21 @@ step("the plate says what state it is in, which is how a lost one is found", fun
     end
   end
 
-  -- The order drawn, not the order stored (D90): the clock is above the footer,
-  -- and what is printed has to be what the player will see.
+  -- The order drawn, not the order stored: the clock is above the footer, and
+  -- what is printed has to be what the player will see.
   local zones = chatSince(mark, "zones:")
   if zones == nil or not zones:find("clock, footer", 1, true) then
     error("the zones were not printed in the order the plate draws them: " .. tostring(zones))
   end
 end)
 
--- 5.1, the half that undoes. This is the ONLY way back for the plate: its page
--- is reached by clicking, and the plate the step above just left at 35% opacity
--- in the top-left corner is exactly the plate that cannot be clicked.
+-- The half that undoes, and the only way back for the plate: its page is
+-- reached by clicking, and the plate the step above left at 35% opacity in the
+-- top-left corner is exactly the plate that cannot be clicked.
 --
 -- Two claims, and the second is the one with teeth: every key the plate owns
--- comes back, and not one of the bar's goes with it. The plate follows the bar's
--- skin, palette and contrast (D87), so a reset that reasoned about "appearance"
+-- comes back, and none of the bar's goes with it. The plate follows the bar's
+-- skin, palette and contrast, so a reset that reasoned about "appearance"
 -- rather than about ownership would take the other surface's choices with it.
 step("resetting the plate returns every key it owns and leaves the bar's alone", function()
   local SettingKey, Frozen = ns.core.SettingKey, ns.core.Frozen
@@ -4363,9 +4493,9 @@ step("resetting the plate returns every key it owns and leaves the bar's alone",
     end
     if type(default) == "table" then
       if type(value) ~= "table" then return false end
-      -- An empty default is EMPTY, not merely short. The plate's own appearance
-      -- map is one (D87), and a leftover axis in it has no index for `#` to
-      -- count -- nor does a frozen proxy, which reads as empty from outside.
+      -- An empty default is empty, not merely short. The plate's own appearance
+      -- map is one, and a leftover axis in it has no index for `#` to count,
+      -- nor does a frozen proxy, which reads as empty from outside.
       if next(default) == nil then
         return not Frozen.isFrozen(value) and next(value) == nil
       end
@@ -4388,7 +4518,7 @@ step("resetting the plate returns every key it owns and leaves the bar's alone",
   -- What reached the repository, not what `resolve` handed back. Storing the
   -- default itself would put the addon's own constants one write away from the
   -- player's saved variables, and a frozen map stored that way reaches disk as
-  -- the empty carrier it is -- a reset that loses itself by the next session.
+  -- the empty carrier it is: a reset that loses itself by the next session.
   local stored = context.repository:settings()
   for _, key in ipairs(ns.core.PlateSettingKeys) do
     if Frozen.isFrozen(stored[key]) then
@@ -4409,13 +4539,12 @@ step("resetting the plate returns every key it owns and leaves the bar's alone",
   context.saveSetting(SettingKey.BAR_WIDTH, barWidth)
 end)
 
--- 5.2. The line had shipped three subcommands short -- `plate`, `slot` and
--- `panel` -- which is the same defect as advertising one that was folded away,
--- read from the other side: a player who never learns `plate reset` has no way
--- back to a plate they dragged off the screen.
+-- The options line announces every subcommand, `plate`, `slot` and `panel`
+-- included: a player who never learns `plate reset` has no way back to a plate
+-- they dragged off the screen.
 --
--- Checked by RUNNING what the line announces rather than by matching it against a
--- list written here, which would be a second copy of the vocabulary to keep.
+-- Checked by running what the line announces rather than by matching it against
+-- a list written here, which would be a second copy of the vocabulary to keep.
 step("every option the help announces is one the addon answers", function()
   local mark = #chatLines + 1
   slash("help")
@@ -4436,8 +4565,9 @@ step("every option the help announces is one the addon answers", function()
   end
 
   -- The alternatives at the top level of the bracket. Depth-aware because the
-  -- ones that take an argument spell it inline -- `plate [on|off|demo|reset]` --
-  -- and a plain split on "|" would offer "off" as a subcommand in its own right.
+  -- ones that take an argument spell it inline (`plate [on|off|demo|reset]`),
+  -- and a plain split on "|" would offer "off" as a subcommand in its own
+  -- right.
   local alternatives, depth, piece = {}, 0, ""
   for index = 1, #inside do
     local char = inside:sub(index, index)
@@ -4466,8 +4596,8 @@ step("every option the help announces is one the addon answers", function()
     announced[keyword] = true
   end
 
-  -- Named explicitly because the loop above only proves that what IS announced
-  -- answers; nothing in it would notice the line going short again.
+  -- Named explicitly because the loop above only proves that what is announced
+  -- answers; nothing in it would notice the line going short.
   for _, keyword in ipairs({ "plate", "slot", "panel" }) do
     if not announced[keyword] then
       error("the options help still does not announce `" .. keyword .. "`")
@@ -4517,9 +4647,9 @@ step("the update check can be switched off from the options, both halves at once
     error("the switch was built without a handler")
   end
 
-  -- Off, and the composition root has to have applied it to the watch itself --
-  -- not merely stored it -- or the addon would keep announcing after being told
-  -- to stop (design D74).
+  -- Off, and the composition root has to have applied it to the watch itself,
+  -- not merely stored it, or the addon would keep announcing after being told
+  -- to stop.
   check.checked = false
   onClick(check)
   if context.settings()[ns.core.SettingKey.UPDATE_CHECK] ~= false then
@@ -4532,6 +4662,106 @@ step("the update check can be switched off from the options, both halves at once
     error("switching it back on did not reach the settings")
   end
 end)
+
+-- Last because it leaves a capability off for the rest of the run. The level in
+-- progress has to carry what this client was missing when it opened, and a
+-- source that closes mid-session has to be reported to the registry and to the
+-- level, through the frames that actually listen, not through a router built
+-- for the occasion.
+if PROFILE == "forever" then
+  local function fire(event, ...)
+    for _, frame in ipairs(frames) do
+      if frame.events ~= nil and frame.events[event] and frame.scripts and frame.scripts.OnEvent then
+        frame.scripts.OnEvent(frame, event, ...)
+      end
+    end
+  end
+
+  local TextKey = ns.core.TextKey
+  local locale = context.locale
+
+  -- On the panel: the mark the seeding took off goes back, which is the true
+  -- state of a level on this client, and the three metrics the combat log feeds
+  -- read as not recorded while everything else on the tab stands.
+  step("a level without the combat log shows the block as not recorded, and the rest as measured", function()
+    local record = context.tracker:current()
+    record:markUnavailable("combat_log", "absent")
+    local notice = locale:get(TextKey.UNAVAILABLE_COMBAT_LOG_ABSENT)
+
+    panel:open()
+    panel:select(record.level)
+    panel:selectTab("combat")
+    panel:markDirty()
+    panel:refresh()
+    local combat = panel.lists.combat
+    if not drawn(combat, notice) then
+      error("the combat tab does not say damage and healing were not recorded")
+    end
+    for _, key in ipairs({ TextKey.PANEL_LBL_DAMAGE_DEALT, TextKey.PANEL_LBL_DAMAGE_TAKEN, TextKey.PANEL_LBL_HEALING }) do
+      if drawn(combat, locale:get(key)) then
+        error("the combat tab still draws a figure the combat log feeds: " .. locale:get(key))
+      end
+    end
+    for _, key in ipairs({ TextKey.PANEL_LBL_DEATHS, TextKey.PANEL_LBL_TIME_COMBAT, TextKey.PANEL_LBL_XP_PER_KILL }) do
+      if not drawn(combat, locale:get(key)) then
+        error("the combat tab lost a figure the combat log does not feed: " .. locale:get(key))
+      end
+    end
+
+    panel:selectTab("abilities")
+    panel:markDirty()
+    panel:refresh()
+    if panel.empty.text ~= notice then
+      error("the abilities tab does not say the ranking was not recorded: " .. tostring(panel.empty.text))
+    end
+    panel:close()
+  end)
+
+  step("a source that closes mid-session is off, with its reason, without a restart", function()
+    fire("CHAT_MSG_COMBAT_XP_GAIN", makeSecret("Boar dies, you gain 12 experience."))
+    fire("CHAT_MSG_COMBAT_XP_GAIN", makeSecret("Boar dies, you gain 12 experience."))
+
+    local mark = #chatLines + 1
+    SlashCmdList["ASCENT"]("debug")
+    if chatSince(mark, "capability xp_chat: unreadable") == nil then
+      error("the diagnostic does not say the experience line closed")
+    end
+    if context.tracker:current():unavailableReason("xp_chat") ~= "unreadable" then
+      error("the level in progress does not remember the experience line closed under it")
+    end
+  end)
+
+  -- The other two surfaces and the panel's breakdown: each says where the
+  -- experience of creatures went, in the same sentence, about the same level.
+  step("the bar, the panel and the chat summary say where creature experience went", function()
+    local record = context.tracker:current()
+    local notice = locale:get(TextKey.UNAVAILABLE_KILLS_CLOSED)
+
+    bar:update(record, {})
+    bar.frame.scripts.OnEnter()
+    local inTooltip = false
+    for _, line in ipairs(GameTooltip.lines) do
+      if line.left == notice then inTooltip = true end
+    end
+    if not inTooltip then error("the bar's popup does not say where creature experience went") end
+
+    panel:open()
+    panel:select(record.level)
+    panel:selectTab("breakdown")
+    panel:markDirty()
+    panel:refresh()
+    if not drawn(panel.lists.breakdown, notice) then
+      error("the panel's breakdown does not say where creature experience went")
+    end
+    panel:close()
+
+    local mark = #chatLines + 1
+    SlashCmdList["ASCENT"]("summary")
+    if chatSince(mark, notice) == nil then
+      error("the chat summary does not say where creature experience went")
+    end
+  end)
+end
 
 -- A known state, driven to rest, then look at what was painted. The demo's
 -- "unclassified gain" step has all four sources plus a rested reserve and a

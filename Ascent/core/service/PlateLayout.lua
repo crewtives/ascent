@@ -1,29 +1,13 @@
--- Ascent - where the pull plate's pieces sit, as arithmetic (tasks 2.1, 2.2, 2.3).
+-- Ascent - where the pull plate's pieces sit, as arithmetic.
 --
--- WHY THIS IS IN core/ AT ALL (D93). All of it used to be file literals in
--- ui/PullPlateView.lua, and ui/ has no unit test: the only thing that exercises
--- that layer is ./dev.sh smoke against a client whose __index auto-stubs any
--- method it is asked for. A SetPoint can only be checked there. "With the clock
--- off and the text at 14, the source bar starts below the to-level line" is
--- arithmetic, and arithmetic is checked with busted.
---
--- THE SIX HEADER OFFSETS ARE WHY THIS FILE EXISTS. They are distances from the
--- TOP OF THE FRAME and never from each other, which is the correction of a real
--- defect (add-ascent-pull-recap 5.2): a FontString is as tall as the text in it,
--- so hanging the "to level" line off the headline let the source bar be drawn
--- THROUGH the number as soon as the number grew. Six literals were a correct
--- answer for exactly as long as the font sizes were literals too -- the moment
--- the player picks the text size they stop being one, and the defect comes back.
--- So they are derived here, with a test at the smallest and the largest text.
---
--- AT THE DEFAULT TEXT SIZE IT RETURNS THE NUMBERS THE VIEW CARRIED, to the pixel.
--- That is not nostalgia: an install that updates and never opens the new page has
--- to draw the plate it drew yesterday. There is a test pinning all six.
---
--- A ZONE THAT IS OFF COSTS NOTHING, which is the difference between hiding and
--- turning off (D90): every offset below it moves up and the frame gets shorter.
--- That is why `zones` reaches the offsets and the height rather than only the
--- view's Show/Hide calls.
+-- Kept in core/ so the layout is covered by unit tests; ui/ is exercised only
+-- by the smoke run. The header offsets are distances from the top of the frame,
+-- never from each other: a FontString is as tall as its text, so chaining them
+-- lets a larger font draw the source bar through the headline. At the default
+-- text size the offsets equal the previous fixed layout, so an unconfigured
+-- plate draws as before. A zone that is off takes no space: the offsets below
+-- it move up and the frame gets shorter, which is why `zones` reaches the
+-- offsets and the height and not only the view's Show/Hide.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -32,11 +16,9 @@ local PlateZone = ns.core.PlateZone
 
 local PlateLayout = {}
 
--- The zones top to bottom, which is also the order the plate reads in: what you
--- got, against what, what is left, where it came from. Written out rather than
--- taken from the vocabulary because Frozen.keys sorts alphabetically, and
--- alphabetical is not a layout -- the ordering is a decision (D90), so it is
--- stated once, here, and a test holds it to covering the vocabulary exactly.
+-- The zones top to bottom, the order the plate reads in. Written out because
+-- Frozen.keys sorts alphabetically; a test holds it to covering the vocabulary
+-- exactly.
 local ORDER = {
   PlateZone.CLOCK,
   PlateZone.REMAINING,
@@ -47,22 +29,18 @@ local ORDER = {
   PlateZone.FOOTER,
 }
 
--- The size the plate's body text has always been drawn at, and therefore the one
--- every other size on it is a multiple of. The player's own text size divided by
--- this is the factor everything scales by, so a plate left alone scales by one
--- and lands on the literals it landed on before.
+-- The default body text size, and the unit every other size is a multiple of:
+-- the player's text size divided by this is the scale factor, so an
+-- unconfigured plate scales by one.
 local BASE_TEXT_SIZE = 10
 
--- What a text size may be. Published because the plate's own appearance map is
--- the only door to it and SkinResolver checks overrides by TYPE, not by range
--- (see its `complete`): without a band here, a hand-edited 200 would be a plate
--- taller than the screen with no way back except the reset command. The bounds
--- mirror what the panel already offers for the bar's text.
+-- The allowed text sizes. SkinResolver checks overrides by type, not by range
+-- (see its `complete`), so this band is what keeps a hand-edited 200 from
+-- drawing a plate taller than the screen. The bounds match the bar's text.
 PlateLayout.TEXT_SIZE = { min = 8, max = 20, step = 1, default = BASE_TEXT_SIZE }
 
--- The nine font sizes the plate draws with, as multiples of the body size -- one
--- setting scaling them in proportion rather than nine controls (D94). At the base
--- these are the view's own 10, 20, 18 and 9.
+-- The plate's font sizes as multiples of the body size, so one setting scales
+-- them in proportion. At the base size these are 10, 20, 18 and 9.
 local FONT_RATIO = {
   title = 1,      -- the caption and the clock beside it
   headline = 2,   -- the experience figure
@@ -73,33 +51,28 @@ local FONT_RATIO = {
 
 local PADDING = 10
 
--- The caption sits two pixels above the padding: it is a small line of text in a
--- font whose ascent leaves a gap of its own, and at the padding it reads as
--- floating rather than as a header.
+-- The caption sits two pixels above the padding: the font's ascent leaves a gap
+-- of its own, and at the padding the caption reads as floating.
 local TITLE_LIFT = 2
 
--- Air under a line of text before whatever comes next. One number for the three
--- text rows of the header, because they are the same kind of gap.
+-- Space under each of the header's three text rows.
 local GAP = 6
 
--- The source bar, and the air under it. Its own height does not follow the text:
--- it is a band of colour, not a line to read, and a band that grew with the font
--- would take room from what the font is there to say.
+-- The source bar and the space under it. Its height does not scale with the
+-- text: it is a band of colour, not a line to read.
 local CHIP_HEIGHT = 5
 local CHIP_GAP = 7
 
--- The hairline between header and body, and the distance from it to the first
--- body row. Eight rather than six: the rule is what stops the eye, and a rule
--- crowded against the row under it stops nothing.
+-- Distance from the hairline between header and body to the first body row;
+-- larger than GAP so the rule reads as a separator.
 local RULE_TO_BODY = 8
 
--- What a body row costs beyond its text, and the air between the creature block,
--- the ability block and the footer.
+-- A body row's height beyond its text, and the space between the creature
+-- block, the ability block and the footer.
 local ROW_LEAD = 5
 local BLOCK_GAP = 4
 
--- An ability icon is as tall as its row minus a hair, so it grows with the text
--- instead of becoming a stamp beside a line twice its height.
+-- An ability icon is as tall as its row minus this, so it scales with the text.
 local ICON_INSET = 3
 
 local function round(value)
@@ -119,18 +92,13 @@ local function textSizeOf(size)
   return size
 end
 
--- Which zones are drawn, in the canonical order, and the same answer as a lookup.
+-- Which zones are drawn, in ORDER, and the same answer as a lookup.
 --
--- The order returned is ORDER's and never the stored one: the list on disk is a
--- set of choices and a saved file may hold them in any order at all -- the panel
--- writes them as they are ticked, and a hand-edited file writes them however it
--- likes. Whoever lays the plate out decides the order (D90).
+-- The stored list is a set and may be in any order (the panel writes zones as
+-- they are ticked), so the order returned is always ORDER's.
 --
--- nil means every zone, which is what a caller with no settings gets -- the
--- demo, a test, a session whose saved variables never loaded. An EMPTY list is a
--- different answer and is honoured as one: a player who turned every accessory
--- zone off wants the headline and nothing else, and that is a choice rather than
--- a corrupt file.
+-- nil means every zone: the demo, a test, saved variables that never loaded.
+-- An empty list is honoured as "headline only", a valid choice.
 function PlateLayout.zones(chosen)
   local wanted
   if chosen ~= nil then
@@ -150,13 +118,11 @@ function PlateLayout.zones(chosen)
   return order, drawn
 end
 
--- Everything the plate needs to place itself, from one call so that the height
--- and the offsets cannot be derived twice and disagree.
+-- Everything the plate needs to place itself, from one call so the height and
+-- the offsets cannot be derived twice and disagree.
 --
--- options.textSize   the plate's OWN text size. Not the one it inherits from the
---                    bar: the plate has never read that (it ignores text.size,
---                    style and anchor), and starting to would move every plate
---                    that exists. nil means the base size.
+-- options.textSize   the plate's own text size, not the bar's (the plate ignores
+--                    the bar's text.size, style and anchor). nil means the base.
 -- options.zones      the stored list of zones. nil means all; see zones().
 -- options.creatures  how many creature rows there are to draw, and
 -- options.abilities  how many ability rows -- the counts the view-model already
@@ -178,15 +144,12 @@ function PlateLayout.lay(options)
   header.title = PADDING - TITLE_LIFT
   header.xp = header.title + font.title + GAP
 
-  -- The to-level line clears the HEADLINE and nothing else, because it is in the
-  -- left column and the count and the chain are in the right one. Making it clear
-  -- all three is what would push it down a row it does not need.
+  -- The to-level line clears only the headline: it is in the left column, and
+  -- the count and the chain are in the right one.
   header.remaining = header.xp + font.headline + GAP
 
-  -- The source bar is the full width of the plate, so it is the first thing that
-  -- has to clear BOTH columns -- and the right one is the taller of the two as
-  -- soon as the chain is showing. This is the defect of 5.2 in its general form:
-  -- whichever column ends lower decides where the next full-width thing starts.
+  -- The source bar is full width, so it clears both columns: whichever ends
+  -- lower (the right one, once the chain shows) decides where it starts.
   local leftEnd = header.remaining
   if draws[PlateZone.REMAINING] then
     leftEnd = leftEnd + font.body
@@ -203,9 +166,8 @@ function PlateLayout.lay(options)
   end
   header.body = header.rule + RULE_TO_BODY
 
-  -- Where each block of the body starts, so that the view places rows instead of
-  -- keeping a running cursor of its own -- one that would be free to disagree
-  -- with the height computed right below it.
+  -- Where each body block starts, so the view places rows without a cursor of
+  -- its own that could disagree with the height computed below.
   local blocks = {}
   local cursor = header.body
 
@@ -236,10 +198,8 @@ function PlateLayout.lay(options)
     iconSize = rowHeight - ICON_INSET,
     header = header,
     blocks = blocks,
-    -- The body's own bottom plus the padding under it. With every block empty
-    -- this is the header plus the padding, which is the smallest the plate can
-    -- be -- the floor the view used to carry as MIN_HEIGHT falls out of the
-    -- arithmetic rather than being asserted on top of it.
+    -- The body's bottom plus the padding. With every block empty this is the
+    -- header plus the padding, the plate's minimum height.
     height = cursor + PADDING,
   }
 end

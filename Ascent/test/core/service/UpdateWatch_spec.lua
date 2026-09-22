@@ -1,7 +1,6 @@
--- What the addon believes about other people's versions, and what it refuses to
--- believe. The threshold is the security property of this change: a message body
--- is written by somebody else's client, so a single report has to be worth
--- nothing at all.
+-- What the addon believes about other players' versions. A message body is
+-- written by somebody else's client, so the threshold makes a single report
+-- worth nothing.
 
 describe("UpdateWatch", function()
   local ns, UpdateWatch

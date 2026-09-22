@@ -1,31 +1,14 @@
 -- Ascent - metric collector: how long the level spent in each place.
 --
--- The experience half of a place entry comes from the ledger, one gain at a time.
--- This is the other half, and it is the one that makes the entry worth having: a
--- rate needs a denominator, and without time a place can only say what it paid,
--- never what it paid per hour.
+-- The ledger supplies a place's experience; this supplies its time, the
+-- denominator of a per-hour rate. It is the only writer that records a place
+-- that paid nothing, so a zone crossed for no experience still shows its cost.
 --
--- It is also the only writer that records a place the player earned NOTHING in.
--- Walking across a zone to reach the next one costs the level real minutes, and a
--- breakdown that showed only the places that paid would quietly flatter every one
--- of them -- the zone that ate twenty minutes for no experience would simply not
--- appear, and the dungeon's rate would look like the whole story.
---
--- The client has no event for "the character changed place" that this could react
--- to, so time is SAMPLED, exactly as CombatTimeCollector samples recovery (D23):
--- `observe()` runs on the composition root's own ticker with whatever the player
--- state says right now, while `collect()` handles the two bus topics that pause
--- and resume a session like every other collector.
---
--- Two things keep the per-frame cost where the budget wants it. The place key is
--- rebuilt only when the place actually changes -- the common case is a tick that
--- finds the character exactly where the last one left them -- and a call with no
--- level open, or with the session paused, returns before touching the clock.
---
--- The interval is closed on EVERY tick and not only on a change, for the same
--- reason the combat collector does it: a level-up in the middle of a long stay
--- fires nothing at all here, so without a periodic close the whole stay would land
--- on whichever level happened to be open when the character finally moved.
+-- The client has no "the character changed place" event, so time is sampled
+-- like CombatTimeCollector's recovery: `observe()` runs on the composition
+-- root's ticker, `collect()` handles the session pause/resume topics. The
+-- interval is closed on every tick, not only on a change, so a stay that
+-- crosses a level-up is split between the two levels.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -52,22 +35,20 @@ function PlaceTimeCollector.new(options)
     clock = options.clock,
     sessionActive = true,
 
-    -- The place the open interval belongs to, and the two raw halves it was built
-    -- from -- kept so a tick can tell "same place" from "new place" by comparing
-    -- two values instead of building a key to throw away.
+    -- The open interval's place and the two raw halves it was built from, so a
+    -- tick compares two values instead of building a key to throw away.
     key = nil,
     context = nil,
     areaId = nil,
 
-    -- The clock reading the open interval started at. nil means there is nothing
-    -- to close yet.
+    -- Clock reading the open interval started at; nil means nothing to close.
     mark = nil,
   }, PlaceTimeCollector)
 end
 
--- Credits the open interval to whichever place it belongs to, on whichever record
--- is current AT THIS INSTANT -- which is what puts a stretch that crosses a
--- level-up on the level it actually happened in -- and starts a fresh mark.
+-- Credits the open interval to its place on the record current at this instant,
+-- which puts a stretch that crosses a level-up on the right level, and starts a
+-- fresh mark.
 function PlaceTimeCollector:closeInterval(record, now)
   if self.mark ~= nil and self.sessionActive and record ~= nil and self.key ~= nil then
     local elapsed = now - self.mark
@@ -78,12 +59,10 @@ function PlaceTimeCollector:closeInterval(record, now)
   self.mark = now
 end
 
--- The entry for the current place in the current record, remembered between
--- ticks. Without this, a character standing still still pays for a string.format
--- and a tostring on every one of the five ticks a second, for the whole session:
--- `placeEntry` keys the map by `key:id()`, and PlaceKey builds that string fresh
--- each time. The cache is invalid exactly when the place changes or the level
--- does, and both are cheap to compare.
+-- The current place's entry in the current record, cached between ticks:
+-- `placeEntry` keys by `key:id()`, which PlaceKey formats fresh each call, five
+-- times a second. The cache is invalid exactly when the place or the record
+-- changes.
 function PlaceTimeCollector:entryIn(record)
   if self.entry == nil or self.entryRecord ~= record or self.entryKey ~= self.key then
     self.entry = record:placeEntry(self.key)
@@ -102,48 +81,33 @@ function PlaceTimeCollector:collect(record, _, topic)
     return
   end
 
-  -- A session that starts again starts its own interval: the hours in between were
-  -- spent logged out, and crediting them to the place the character logged out in
-  -- is the one answer that is certainly wrong.
+  -- A resumed session starts its own interval: the time logged out belongs to
+  -- no place.
   self.sessionActive = true
   self.mark = now
 end
 
--- The sampled half. `context, areaId, name` are the three values the player state
--- port answers with, passed straight through so this never has to know that a unit
--- token or an instance exists.
+-- The sampled half. `context, areaId, name` are the player state port's answer,
+-- passed through so this never knows about unit tokens or instances.
 function PlaceTimeCollector:observe(record, context, areaId, name)
   if record == nil or not self.sessionActive then
-    -- The open interval is ABANDONED, not carried across the gap. `record` is nil
-    -- for as long as experience gain is switched off, and the session topics do
-    -- not fire in that state either -- so leaving the mark standing meant the
-    -- first tick after recording resumed credited the whole gap, hours of it, to
-    -- whichever place the character happened to be in when it stopped. Dropping
-    -- the mark costs nothing and reads the clock zero times.
+    -- The open interval is abandoned, not carried across the gap: `record` is nil
+    -- while experience gain is off, and no session topic fires then, so a kept
+    -- mark would credit the whole gap to the place the character stopped in.
     self.mark = nil
     return
   end
 
   self:closeInterval(record, self.clock:now())
 
-  -- `self.key == nil` is the first tick, and it is not the same state as "the
-  -- client answered nil": the unknown place is a place, and comparing only the two
-  -- halves would leave a character who logs in somewhere the client cannot name
-  -- accruing no time at all, which is the exact case the reserved entry is for.
+  -- `self.key == nil` is the first tick, distinct from "the client answered nil":
+  -- the unknown place is a place and must accrue time in the reserved entry.
   --
-  -- The third condition is the name arriving LATE, and it is not the same as the
-  -- place changing. A zone first sampled during a loading screen answers with no
-  -- name, and the client supplies one a tick or two later; without this the key
-  -- was rebuilt only on a change of context or area, so that stay stayed nameless
-  -- for its whole duration and the panel reported hours spent "somewhere the
-  -- client could not name" for a zone it names perfectly well now. Rebuilding is
-  -- safe precisely because the name is NOT part of a place's identity (PlaceKey):
-  -- the same context and area is the same entry, so this adopts a label without
-  -- ever moving the time to a different row.
-  -- `self.areaId ~= nil` guards the reserved bucket: a place the client could not
-  -- identify at all has no room for a name, and PlaceKey hands back the same
-  -- nameless bucket whatever it is told, so without this the key would be
-  -- rebuilt on every tick a nameless somewhere reported zone text.
+  -- `named` covers a name that arrives late: a zone sampled during a loading
+  -- screen has no name until a tick or two later. The name is not part of a
+  -- place's identity (PlaceKey), so rebuilding adopts the label without moving
+  -- time to another row. `self.areaId ~= nil` excludes the reserved bucket, which
+  -- takes no name and would otherwise be rebuilt on every tick.
   local named = self.key ~= nil and self.areaId ~= nil and self.key.name == nil and name ~= nil
   if self.key == nil or named or context ~= self.context or areaId ~= self.areaId then
     self.context, self.areaId = context, areaId

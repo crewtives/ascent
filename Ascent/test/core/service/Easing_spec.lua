@@ -22,9 +22,9 @@ describe("Easing", function()
     end
   end)
 
-  -- Not a style preference: a curve that overshoots would drive one boundary
-  -- past its neighbour's, and pieces of the bar crossing each other mid-move is
-  -- a defect. If an overshoot curve is ever wanted, the tween has to clamp first.
+  -- A curve that overshoots would drive one boundary past its neighbour's and
+  -- make pieces of the bar cross mid-move; an overshooting curve would need the
+  -- tween to clamp first.
   it("keeps every curve inside the unit interval all the way along", function()
     for _, name in ipairs(everyName()) do
       for step = 0, 100 do

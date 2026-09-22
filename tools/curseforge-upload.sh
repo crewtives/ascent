@@ -2,10 +2,9 @@
 #
 # Ascent - upload a packaged zip to CurseForge.
 #
-# Everything this needs is already declared somewhere else, so nothing here is
-# typed twice: the version and the supported clients come out of the TOC, the
-# changelog out of CHANGELOG.md, and the zip out of ./dev.sh package. The only
-# things that come from outside are the token and the project id.
+# The version and the supported clients come from the TOC, the notes from
+# CHANGELOG.md and the zip from ./dev.sh package; only the token and the project
+# id come from the environment.
 #
 #   CF_API_TOKEN=...  required to upload (authors-old.curseforge.com/account/api-tokens)
 #   CF_PROJECT_ID=... the number in the project's authors URL
@@ -49,9 +48,9 @@ VERSION="$(sed -n 's/^## Version: *//p' "$TOC" | head -1 | tr -d '\r')"
 ZIP="dist/$ADDON-$VERSION.zip"
 [ -f "$ZIP" ] || die "missing $ZIP -- run ./dev.sh package first"
 
-# The TOC's interface numbers ARE the list of supported clients, so the upload
-# derives its game versions from them rather than carrying a second list that
-# would quietly drift. 11509 is 1.15.9, 20506 is 2.5.6: XYYZZ, no padding.
+# The TOC's interface numbers are the list of supported clients, and the game
+# versions derive from them. The format is XYYZZ without padding: 11509 is
+# 1.15.9, 20506 is 2.5.6.
 interface_to_name() {
   local n="$1"
   printf '%d.%d.%d\n' "$((10#$n / 10000))" "$(((10#$n / 100) % 100))" "$((10#$n % 100))"
@@ -69,13 +68,12 @@ done
 
 info "$ADDON $VERSION as $RELEASE_TYPE, for ${VERSION_NAMES[*]}"
 
-# The same notes the GitHub release gets, read by the same script: two readers of
-# one changelog cannot disagree, two copies of the reader eventually do.
+# The same notes the GitHub release uses, read by the same script.
 CHANGELOG_BODY="$(./tools/release-notes.sh)" || die "could not read a section out of CHANGELOG.md"
 
 if [ "$DRY_RUN" -eq 1 ] && [ -z "${CF_API_TOKEN:-}" ]; then
-  # Without a token the game version ids cannot be resolved, which is fine for a
-  # dry run: what it is checking is that this file can read everything it needs.
+  # Without a token the game version ids cannot be resolved; a dry run only checks
+  # that everything this needs can be read.
   info "dry run without a token: skipping game version lookup"
   GAME_VERSION_IDS="[]"
 else
@@ -102,8 +100,8 @@ for name in wanted:
         missing.append(name)
 
 if missing:
-    # Refusing beats uploading against the wrong clients: a file tagged for a
-    # version nobody runs is invisible, and one tagged for the wrong one is worse.
+    # Refuse rather than upload against the wrong clients: players never see a file
+    # tagged for a version nobody runs.
     sys.stderr.write("no game version id for: %s\n" % ", ".join(missing))
     sys.exit(1)
 
@@ -135,17 +133,12 @@ fi
 
 info "uploading $ZIP"
 
-# The body of a rejection is the whole point of reading one: "the upload was
-# rejected" is what this said before, which is a report that a person then has to
-# go and reproduce by hand. -f would throw the body away, so the status comes back
-# separately and the body is kept either way.
+# No -f: the status comes back separately and the body is kept either way,
+# because a rejection's body says why.
 BODY_FILE="$(mktemp)"
-# The metadata goes through a FILE and not through -F metadata=... on the command
-# line. curl reads a form value up to the first semicolon and takes the rest as
-# parameters, and the changelog is prose: one "; " inside it truncated the JSON
-# mid-string and CurseForge answered "Invalid JSON" -- about a document that was
-# perfectly valid when it left here. Reading it from a file removes the whole
-# class of quoting problem rather than escaping one character of it.
+# The metadata goes through a file, not -F metadata=...: curl reads a form value
+# up to the first semicolon and takes the rest as parameters, which truncates the
+# JSON when the notes contain one.
 META_FILE="$(mktemp)"
 printf '%s' "$METADATA" > "$META_FILE"
 trap 'rm -f "$BODY_FILE" "$META_FILE"' EXIT

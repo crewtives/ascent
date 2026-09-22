@@ -1,23 +1,15 @@
 -- Ascent - the window a player copies a report out of.
 --
--- This frame exists because of a hard limit rather than a preference: a WoW
--- addon cannot make a network request, so nothing about how the addon behaves
--- on someone else's machine can ever reach the author unless that player sends
--- it. Chat cannot be the channel -- its text is not selectable -- so the
--- diagnostics are rendered once more into an EditBox, selected on open, and the
--- player presses one chord.
+-- A WoW addon cannot make network requests, so a player sending this text is
+-- the only way diagnostics leave their machine. Chat text is not selectable, so
+-- the report goes into an EditBox, selected on open, copied with one chord.
 --
--- THE TEXT IS EDITABLE ON PURPOSE. A report is going somewhere public, and the
--- player is the only one who can decide what should not go with it. Nothing in
--- here is worth protecting from them: the report carries no character name and
--- no realm -- what it carries is the addon's build, the client's flavour, and
--- counters -- and a player who wants to trim a line before pasting should be
--- able to.
+-- The text is editable on purpose: the player decides what goes into a public
+-- report. It carries the addon build, the client flavour and counters, never a
+-- character name or realm.
 --
--- It follows the bar's skin like every other surface (the plate's reasoning:
--- two windows of the same addon wearing different skins is a setting nobody
--- asked for), but resolves that skin on every open rather than subscribing to
--- settings changes: it is built on first use and lives a few seconds at a time.
+-- It wears the bar's skin like every other surface, resolved on each open
+-- rather than subscribed to: the frame is built on first use and lives briefly.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
@@ -49,15 +41,14 @@ function CopyDialog.new(options)
 end
 
 function CopyDialog:createFrame()
-  -- Named because two different things need the name: the scroll bar the
-  -- template builds as $parentScrollBar, and UISpecialFrames, which is how a
-  -- frame gets closed by Escape without stealing the key from anything else.
+  -- Named for two reasons: the template builds its scroll bar as
+  -- $parentScrollBar, and UISpecialFrames, which closes a frame on Escape
+  -- without stealing the key, lists frames by name.
   local frame = CreateFrame("Frame", "AscentCopyDialog", UIParent)
   frame:SetSize(WIDTH, HEIGHT)
   frame:SetPoint("CENTER")
-  -- Above the client's own options frame, which is where the button that opens
-  -- this one lives: at DIALOG the report would come up BEHIND the panel the
-  -- player clicked it from.
+  -- Above the client's options frame, which holds the button that opens this:
+  -- at DIALOG strata the report would open behind that panel.
   frame:SetFrameStrata("FULLSCREEN_DIALOG")
   frame:SetToplevel(true)
   frame:SetMovable(true)
@@ -96,8 +87,8 @@ function CopyDialog:createFrame()
   local edit = CreateFrame("EditBox", nil, scroll)
   edit:SetMultiLine(true)
   edit:SetAutoFocus(false)
-  -- No cap: the default is generous but finite, and a diagnostic silently
-  -- missing its last page is the failure this whole window exists to prevent.
+  -- No cap: the default limit is finite and would silently cut the end of a
+  -- long report.
   edit:SetMaxLetters(0)
   edit:SetFontObject("ChatFontNormal")
   edit:SetWidth(WIDTH - PADDING - SCROLLBAR_ROOM - 4)
@@ -105,8 +96,7 @@ function CopyDialog:createFrame()
   scroll:SetScrollChild(edit)
   self.edit = edit
 
-  -- The wheel, because a report is longer than the window and reaching for the
-  -- scroll bar to read one is a small insult.
+  -- Mouse wheel scrolling, three lines per notch.
   scroll:EnableMouseWheel(true)
   scroll:SetScript("OnMouseWheel", function(_, delta)
     scroll:SetVerticalScroll(math.max(0, scroll:GetVerticalScroll() - delta * LINE_HEIGHT * 3))
@@ -116,9 +106,9 @@ function CopyDialog:createFrame()
   return self
 end
 
--- The same skin the bar wears, floored the way the panel floors it: this is a
--- reading surface, and a nearly transparent skin meant for a 24-pixel strip
--- makes a page of diagnostics unreadable over the world.
+-- The bar's skin with the background alpha floored, as the panel does: a
+-- nearly transparent skin meant for a thin strip leaves a page of text
+-- unreadable over the world.
 function CopyDialog:applyAppearance()
   local appearance = SkinResolver.resolve({
     skin = SkinResolver.skinFor(SkinCatalog, self.settings[SettingKey.BAR_SKIN], ns.core.DEFAULT_SKIN_ID),
@@ -142,12 +132,10 @@ function CopyDialog:applyAppearance()
   return self
 end
 
--- How tall the text is, which the scroll frame cannot work out for itself. The
--- count is of LOGICAL lines plus a quarter for the ones that wrap -- an estimate,
--- deliberately, because both ways of being wrong are harmless here: a little
--- empty space under the last line, or a scroll bar that stops a line early on a
--- report made entirely of long lines. The alternative is measuring wrapped text,
--- which is a lot of machinery for a window that shows counters.
+-- How tall the text is, which the scroll frame cannot work out for itself: an
+-- estimate of logical lines plus a quarter for wrapping. Being wrong costs a
+-- little empty space, or a scroll bar that stops a line early when most lines
+-- wrap; measuring wrapped text is not worth it here.
 local function textHeight(text)
   local lines = 1
   for _ in text:gmatch("\n") do
@@ -156,8 +144,7 @@ local function textHeight(text)
   return math.ceil(lines * 1.25) * LINE_HEIGHT + LINE_HEIGHT
 end
 
--- Shown with everything already selected: the player's next keystroke is the
--- copy, not a drag across four hundred lines they did not ask to aim at.
+-- Shown with everything selected, so the next keystroke is the copy.
 function CopyDialog:show(text)
   text = text or ""
 

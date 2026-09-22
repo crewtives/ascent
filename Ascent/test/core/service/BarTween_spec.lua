@@ -110,10 +110,10 @@ describe("BarTween", function()
     assert.is_true(math.abs((subject:boundaries()[3] - subject:boundaries()[2]) - 0.1) < 1e-12)
   end)
 
-  -- The reclassification of D21: experience already counted moves out of
-  -- "unclassified" and into the source it really came from. The total does not
-  -- change, so the right-hand edge of the progress must not move -- if it did,
-  -- the addon's most honest moment would read as a glitch.
+  -- A reclassification moves experience already counted out of "unclassified"
+  -- and into the source it came from. The total does not change, so the
+  -- right-hand edge of the progress must not move, or it would read as a
+  -- glitch.
   it("does not move the end of the progress during a reclassification", function()
     local subject = settleAt(tween(), { mob_kill = 0.3, unknown = 0.2 })
     subject:setTarget({ mob_kill = 0.5, unknown = 0 }, 1)

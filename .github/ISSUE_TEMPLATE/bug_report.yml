@@ -10,6 +10,9 @@ body:
         the build, the client flavour and the interface language — and **no character name and no
         realm**. It is editable before you paste it.
 
+        Title the issue with the symptom, in a sentence: *Sources tab total disagrees with the bar's
+        tooltip*, not *bug*.
+
   - type: textarea
     id: what-happened
     attributes:

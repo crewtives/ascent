@@ -14,8 +14,8 @@ describe("XpLedger", function()
     return XpGain.new(fields)
   end
 
-  -- `sharedBy` left out means nobody counted the group, which is what every kill
-  -- recorded before this distinction existed says about itself.
+  -- `sharedBy` left out means nobody counted the group, as for kills saved by
+  -- older versions.
   local function killOf(name, npcId, creatureLevel, amount, sharedBy)
     return gain({
       amount = amount,
@@ -145,7 +145,7 @@ describe("XpLedger", function()
       assert.is_nil(bucket.key.name)
     end)
 
-    -- And a bucket that IS one creature keeps its name: the rule is about the
+    -- A bucket that is one creature keeps its name: the rule is about the
     -- identity being unknown, not about the name being absent.
     it("keeps the name when the creature was identified", function()
       local record = level(10, 10000)
@@ -207,7 +207,7 @@ describe("XpLedger", function()
 
     -- Nobody counted is its own answer. Filing it under solo would be inventing
     -- the observation, and inventing the likeliest one is what would make it
-    -- impossible to catch afterwards (D84).
+    -- impossible to catch afterwards.
     it("keeps a group nobody counted apart from a group of one", function()
       local record = level(10, 10000)
 
@@ -221,10 +221,9 @@ describe("XpLedger", function()
     end)
   end)
 
-  -- 1.4 -- the invariant this change promises. Breaking the aggregate into finer
-  -- populations is a finer breakdown of the same experience, so everything the
-  -- level says about itself has to come out identical however the kills were
-  -- shared. These are the numbers the panel and every per-kill average read.
+  -- Finer populations are a finer breakdown of the same experience, so
+  -- everything the level says about itself comes out identical however the kills
+  -- were shared. These are the numbers the panel and every per-kill average read.
   describe("the level's own sums", function()
     local AMOUNTS = { 44, 46, 12, 90, 8, 60 }
 
@@ -237,8 +236,8 @@ describe("XpLedger", function()
     end
 
     it("do not move when the same kills are split across group sizes", function()
-      local before = levelKilledIn({})              -- one aggregate, as it was
-      local after = levelKilledIn({ 1, 1, 5, 5, 2 }) -- four, as it is now
+      local before = levelKilledIn({})              -- one aggregate
+      local after = levelKilledIn({ 1, 1, 5, 5, 2 }) -- four aggregates
 
       assert.equal(before.xpTotal, after.xpTotal)
       assert.equal(before:xpFrom(XpSource.MOB_KILL), after:xpFrom(XpSource.MOB_KILL))
@@ -286,6 +285,16 @@ describe("XpLedger", function()
     -- answers, and only one of them is true for a level spent doing quests.
     it("has no ratio to report with no kills at all", function()
       assert.is_nil(level(10, 1000):unproductiveKillRatio())
+    end)
+
+    -- The kills that paid nothing are counted from the combat log's deaths, so
+    -- without it the ratio is a fraction of a fraction, and it is not answered.
+    it("does not answer for a level recorded without the combat log", function()
+      local record = level(10, 1000)
+      record.killsWithXp, record.killsWithoutXp = 3, 1
+      record:markUnavailable(ns.core.RecordedSource.COMBAT_LOG, "absent")
+
+      assert.is_nil(record:unproductiveKillRatio())
     end)
   end)
 
@@ -392,9 +401,9 @@ describe("XpLedger", function()
       assert.equal(0, #landed.gains)
     end)
   end)
-  -- The second dimension (D39). Every point is counted once by source and once by
-  -- place, so the two sums are the same number by construction -- not two numbers
-  -- that happen to agree while every writer remembers to do its part.
+  -- The second dimension. Every point is counted once by source and once by
+  -- place, so the two sums are the same number by construction, not two numbers
+  -- that agree only while every writer remembers to do its part.
   describe("where the experience was earned", function()
     local dungeon, forest
 
@@ -426,8 +435,8 @@ describe("XpLedger", function()
     end)
 
     -- The same gain counts in both dimensions at once: a quest handed in inside a
-    -- dungeon is a turn-in AND a dungeon, and being one does not stop it being the
-    -- other. That is the whole reason the place is not a seventh source.
+    -- dungeon is a turn-in and a dungeon, which is why the place is not a seventh
+    -- source.
     it("counts one gain in both dimensions at once", function()
       local record = level(10, 10000)
 
@@ -495,8 +504,8 @@ describe("XpLedger", function()
 
     -- The client answers a map id before it answers zone text: during a loading
     -- screen the place is already identified and still nameless. Keeping that
-    -- first key left the zone a player spent a whole level in reading as the
-    -- reserved "somewhere we could not name", which is a different place.
+    -- first key would file the zone of a whole level under the reserved
+    -- "somewhere we could not name", which is a different place.
     it("takes the name of a place it first met without one", function()
       local record = level(10, 10000)
 
@@ -515,8 +524,8 @@ describe("XpLedger", function()
       assert.equal("Elwynn Forest", record.places["world:1429"].key.name)
     end)
 
-    -- Answerable without naming a single place, which is the whole reason the
-    -- kind travels inside the key.
+    -- Answerable without naming a single place, which is why the kind travels
+    -- inside the key.
     it("adds up everything earned in places of one kind", function()
       local record = level(10, 20000)
 

@@ -1,5 +1,5 @@
--- The property task 11.7 asks for, literally: a closed view does zero rebuild
--- work, and an opened one rebuilds exactly once until something actually changes.
+-- A closed view does zero rebuild work, and an opened one rebuilds exactly once
+-- until something actually changes.
 
 describe("RebuildGate", function()
   local ns, RebuildGate

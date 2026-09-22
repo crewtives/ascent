@@ -18,6 +18,27 @@ describe("CopyReport", function()
     assert.equal("addon: Ascent 0.1.0\nclient: BURNING_CRUSADE\n\nflavor: BURNING_CRUSADE", report)
   end)
 
+  -- Capabilities switched off are included too, each with the reason for its
+  -- state.
+  it("carries the identified client and every capability with its reason", function()
+    local report = CopyReport.build({
+      header = { { "client", "forever (interface 16001), max level 60" } },
+      lines = CopyReport.capabilityLines({
+        { name = "combat_log", present = false, reason = "unreadable" },
+        { name = "quest_log", present = true, reason = "present" },
+        { name = "xp_chat", present = false, reason = "absent" },
+      }),
+    })
+
+    assert.equal(table.concat({
+      "client: forever (interface 16001), max level 60",
+      "",
+      "  capability combat_log: unreadable",
+      "  capability quest_log: present",
+      "  capability xp_chat: absent",
+    }, "\n"), report)
+  end)
+
   it("ends cleanly when there is a header and nothing to report", function()
     local report = CopyReport.build({ header = { { "addon", "Ascent 0.1.0" } }, lines = {} })
 

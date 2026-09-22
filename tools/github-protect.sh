@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 #
-# Ascent - the rules that guard main, as something you can read and re-apply.
+# Ascent - the rules that guard main, as a script that can be read and re-applied.
 #
-# Kept here rather than only in GitHub's settings screen, because a policy that
-# lives in a web form is a policy nobody can review, diff, or restore after
-# somebody changes it at two in the morning.
+# A policy kept only in GitHub's settings cannot be reviewed, diffed or restored.
 #
 #   ./tools/github-protect.sh                    apply to crewtives/ascent
 #   ./tools/github-protect.sh owner/repo         apply somewhere else
 #
-# Requires `gh` authenticated with the `repo` scope. NOTE: GitHub only offers
-# rulesets on PUBLIC repositories for free accounts -- on a private one this
-# answers 403 asking for Pro, which is not a mistake in this script.
+# Requires `gh` authenticated with the `repo` scope. GitHub offers rulesets on
+# private repositories only on paid plans; there this answers 403.
 #
 set -euo pipefail
 
@@ -19,26 +16,20 @@ REPO="${1:-crewtives/ascent}"
 
 # What each rule is for:
 #
-#   deletion / non_fast_forward   main cannot be deleted, and history cannot be
-#                                 rewritten out from under anyone.
-#   required_linear_history       no merge commits on main; every pull request
-#                                 lands as one squashed commit with a written
-#                                 subject, which is also how this history reads.
-#   pull_request                  nothing reaches main without a pull request,
-#                                 one approving review, the code owner's review,
-#                                 and every conversation resolved. A new push
-#                                 dismisses stale approvals -- an approval is of
-#                                 a diff, not of a person -- and whoever pushed
-#                                 last cannot be the one who approves it, so a
-#                                 future collaborator cannot wave their own work
-#                                 through.
-#   required_status_checks        the three gates (lint, test, smoke) have to be
-#                                 green, against an up-to-date branch. `strict`
-#                                 is what stops two pull requests that each pass
-#                                 alone from breaking main together.
+#   deletion / non_fast_forward   main cannot be deleted or have its history
+#                                 rewritten.
+#   required_linear_history       no merge commits: each pull request lands as one
+#                                 squashed commit.
+#   pull_request                  a pull request with one approval, the code
+#                                 owner's review and every conversation resolved.
+#                                 A new push dismisses earlier approvals, and
+#                                 whoever pushed last cannot approve.
+#   required_status_checks        lint, test and smoke green against an up-to-date
+#                                 branch (`strict`), so two pull requests that each
+#                                 pass alone cannot break main together.
 #
-# The repository admin bypasses all of it on purpose: this repository is
-# published in batches from the development tree, and that push is a direct one.
+# The repository admin bypasses all of it, because each publication is a direct
+# push.
 read -r -d '' RULESET <<'JSON' || true
 {
   "name": "main",
@@ -72,9 +63,8 @@ read -r -d '' RULESET <<'JSON' || true
 }
 JSON
 
-# Update the ruleset called "main" if it is already there, rather than stacking a
-# second one beside it: two rulesets on one branch both apply, and working out
-# which of them refused a push is an afternoon.
+# Update the ruleset called "main" if it exists instead of adding a second one:
+# two rulesets on one branch both apply.
 existing="$(gh api "/repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id' 2>/dev/null || true)"
 
 if [ -n "$existing" ]; then

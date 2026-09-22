@@ -1,0 +1,25 @@
+# Ascent - the scopes a commit header may name: <scope> <what it covers>.
+#
+# Read by .githooks/commit-msg. Add a scope here in the commit that first uses it.
+bar          the experience bar
+panel        the report panel and its tabs
+plate        the live combat summary
+pull         tracking a fight while it happens
+attribution  where each point of experience came from
+rates        what a creature pays, by group size
+places       where experience was earned
+quests       quest experience, pending and forecast
+history      the recorded levels and their saved data
+estimate     time-to-level and progress estimates
+options      the options panel and settings
+look         skins, palettes and motion
+compat       differences between game clients
+update       the version check and the in-game changelog
+copy         the copyable diagnostics
+evidence     the diagnostic recorder
+time-played  the server's played-time figure
+locale       player-facing text
+changelog    CHANGELOG.md and its in-game copy
+release      versions, packaging and publishing
+ci           GitHub Actions
+tooling      dev.sh, tools/ and the git hooks

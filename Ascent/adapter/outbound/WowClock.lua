@@ -2,9 +2,9 @@
 --
 -- `GetTime()` is monotonic seconds since the client started: stable across
 -- /reload and the character select screen, meaningless across sessions.
--- `time()` is the epoch: what gets persisted. Mixing them up is how a level ends
--- up claiming it took nine hours because the player went to bed -- see the Clock
--- port for the full rationale.
+-- `time()` is the epoch, and is what gets persisted. A duration measured on the
+-- epoch would include the hours the client was closed; the Clock port has the
+-- full contract.
 
 local _, ns = ...
 ns.adapter = ns.adapter or {}

@@ -4,17 +4,15 @@
 -- testable on a desktop: everything downstream -- the peer threshold, the
 -- upgrade notice, the downgrade warning -- is this comparison plus bookkeeping.
 --
--- THE CENTRAL RULE IS THAT A STRING WE CANNOT READ IS NEVER NEWER. The versions
--- being compared arrive from somebody else's client, as arbitrary text, and the
--- failure that matters is not "we missed an update": it is telling a player to go
--- and find a version that does not exist. Unparseable input loses, always.
+-- A string that cannot be parsed is never newer. The versions compared arrive
+-- from other players' clients as arbitrary text, and the failure that matters is
+-- not a missed update but telling a player to find a version that does not exist.
 --
 -- This is also why the packaging keeps a clean semver in the TOC instead of the
--- standard packager's @project-version@ substitution, which yields things like
--- v0.1.0-5-gabc1234 on any commit that is not tagged (proposal.md). That string is
--- valid semver -- and is read as a PRE-RELEASE of 0.1.0, so a build five commits
--- after the tag orders before it. The failure would not be a refusal; it would be
--- telling someone ahead of the release that they are behind it.
+-- standard packager's @project-version@ substitution, which yields strings like
+-- v0.1.0-5-gabc1234 on an untagged commit. That is valid semver, read as a
+-- pre-release of 0.1.0, so a build after the tag would order before it and its
+-- player would be told they are behind the release.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -25,7 +23,7 @@ local VersionNumber = {}
 -- A leading "v" is tolerated on the way in -- tags carry one, TOCs do not, and a
 -- version that only differs by it is the same version.
 --
--- Build metadata is parsed so it can be DISCARDED: semver orders two versions
+-- Build metadata is parsed so it can be discarded: semver orders two versions
 -- that differ only in build metadata as equal, and the addon has no use for it.
 function VersionNumber.parse(text)
   if type(text) ~= "string" then
@@ -61,7 +59,7 @@ function VersionNumber.parse(text)
 end
 
 -- One pre-release identifier against another, by semver's rule: all-digit
--- identifiers compare numerically and sort BEFORE alphanumeric ones.
+-- identifiers compare numerically and sort before alphanumeric ones.
 local function compareIdentifier(a, b)
   local numericA, numericB = a:match("^%d+$"), b:match("^%d+$")
 
@@ -85,9 +83,9 @@ local function split(text)
   return parts
 end
 
--- A version WITH a pre-release is older than the same version without one:
--- 0.2.0-beta1 comes before 0.2.0. Getting this backwards would tell everyone
--- running a release that a beta they already passed is an update.
+-- A version with a pre-release is older than the same version without one:
+-- 0.2.0-beta1 comes before 0.2.0. Reversed, everyone running a release would be
+-- offered a beta they already passed as an update.
 local function comparePre(a, b)
   if a == nil and b == nil then return 0 end
   if a == nil then return 1 end

@@ -7,7 +7,7 @@
 -- The experience a creature gives depends on its level, and around a quarter of
 -- creature types spawn across a level range, so `(id, level)` is the unit of
 -- aggregation. When either half is missing the key says so instead of guessing:
--- an unknown bucket is honest, an imputed level quietly poisons the averages.
+-- an imputed level would silently skew the averages.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -65,9 +65,9 @@ function CreatureKey:equals(other)
 end
 
 -- Deliberately no __tostring. In the PUC Lua 5.1 the client runs, `("%s"):format(key)`
--- raises "string expected, got table" even with one defined, while LuaJIT honours it
--- -- so the trap would pass the suite and fail in the game. `key:id()` is the one
--- way to get a creature's string form, and it is also what the aggregates persist.
+-- raises "string expected, got table" even with one defined, while LuaJIT honours it,
+-- so it would pass the suite and fail in the game. `key:id()` is the one way to get
+-- a creature's string form, and it is also what the aggregates persist.
 
 
 -- The three fields a creature is written as, in order, named once here because the
@@ -85,9 +85,8 @@ function CreatureKey.fromFields(fields, offset)
     Packed.text(fields, offset + 2))
 end
 
--- The on-disk form. An absent half stays absent rather than becoming zero: saying
--- the level is unknown is the entire reason this model exists, and a creature of
--- level nil is not a creature of level 0.
+-- The on-disk form. An absent half stays absent rather than becoming zero: a
+-- creature of level nil is not a creature of level 0.
 function CreatureKey:toStored()
   return Packed.join(self:fields())
 end

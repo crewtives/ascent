@@ -1,23 +1,21 @@
 -- Ascent - the store the domain talks to, and the migration chain behind it.
 --
 -- The Repository port deals in plain tables because that is all saved variables can
--- hold. The rest of the addon deals in records with methods and invariants. This is
--- the one place that knows both, so nothing else has to remember to convert -- and
--- the repository double, which rejects anything carrying a metatable, fails the
--- suite the moment something tries.
+-- hold; the rest of the addon deals in records with methods and invariants. This is
+-- the one place that converts between them, and the repository test double rejects
+-- anything carrying a metatable.
 --
 -- It also owns the stored format's version, and there are only two outcomes on load:
 --
 --   the data is at this version, or can be walked up to it       -> it is kept
 --   anything else -- newer, unknown, or a migration that threw   -> it is archived
 --
--- Loading always wins over preserving. The addon must never refuse to start because
--- of what a previous version, a half-finished logout or the player's own text editor
--- left behind; it moves that aside, says so, and starts clean.
+-- Loading always wins over preserving: whatever a previous version, a half-finished
+-- logout or a hand edit left behind is moved aside, reported, and the addon starts
+-- clean rather than refusing to start.
 --
--- Migrations run on STORED TABLES and are handed the repository, never live records.
--- A migration that had to build the model of the version it upgrades from would
--- force that version's code to be kept forever.
+-- Migrations run on stored tables and are handed the repository, never live records,
+-- so no old version's model code has to be kept.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -27,15 +25,13 @@ local Port = ns.core.Port
 local LevelRecord = ns.core.LevelRecord
 local SchemaVersion = ns.core.SchemaVersion
 
--- Wedge a blank field in at position 3 of one packed creature line, which is the
--- whole of the 3 -> 4 conversion: kills and experience stay where they are, the
--- creature's key moves one to the right, and what lands in the gap is the group
--- nobody counted.
+-- Inserts a blank field at position 3 of one packed creature line, the whole of the
+-- 3 -> 4 conversion: kills and experience stay put, the creature's key moves one to
+-- the right, and the gap holds the unknown group size.
 --
--- Built by hand rather than with table.insert because a line holding fewer than two
--- fields is not something this addon ever wrote, and on LuaJIT table.insert past the
--- end of a table raises -- which here would fail the step and archive a character's
--- entire history over one corrupted line.
+-- Built by hand rather than with table.insert: on LuaJIT table.insert past the end
+-- of a table raises, so one corrupted line with fewer than two fields would fail the
+-- step and archive the character's whole history.
 local function widenCreature(fields)
   local shifted = { fields[1], fields[2] or false, false }
   for index = 3, #fields do
@@ -62,32 +58,25 @@ RecordStore.__index = RecordStore
 -- no step archives the data rather than guessing at it, so every version below the
 -- current one has to be here -- including the ones that need no conversion.
 RecordStore.MIGRATIONS = {
-  -- 1 -> 2: the per-place breakdown of a level. Deliberately does nothing, and is
-  -- deliberately not absent. The stored shape only GAINED a field, and a record
-  -- written without it restores with no places at all rather than with a reserved
-  -- entry that nobody observed -- so there is nothing to convert. Leaving this out
-  -- would not mean "no conversion needed": it would archive every existing
-  -- character's history on first login after the update.
+  -- 1 -> 2: the per-place breakdown of a level. Empty but required: the stored shape
+  -- only gained a field, and a record without it restores with no places. A missing
+  -- step would archive every existing character's history.
   [1] = function() end,
 
-  -- 2 -> 3: `seededXp` on a level record. Nothing to convert, and deliberately
-  -- present for the same reason as the step above -- a record written at 2 restores
-  -- with seededXp nil, which is the honest answer and not a converted one.
+  -- 2 -> 3: `seededXp` on a level record. Empty but required, as above: a record
+  -- written at 2 restores with seededXp nil, which is correct.
   [2] = function() end,
 
-  -- 3 -> 4: the size of the group a creature's kills were paid to. The first step
-  -- that has to CONVERT: the group is written ahead of the creature's key, so every
-  -- stored creature line shifts by a field and no default can stand in for that --
-  -- left alone, a line would be read with the npc id where the group belongs.
+  -- 3 -> 4: the size of the group a creature's kills were paid to. The group is
+  -- written ahead of the creature's key, so every stored creature line shifts by a
+  -- field; unconverted, a line would be read with the npc id where the group belongs.
   --
-  -- The gap is filled with blank rather than with one. Most of these kills probably
-  -- were solo, which is exactly what would make writing "1" undetectable: it reads
-  -- as a measurement of a population nobody observed. Blank says unknown, and the
-  -- estimator can then decline to price a kill from it (D84).
+  -- The gap is blank, not one: writing "1" would pass off unobserved group sizes as
+  -- solo measurements. Blank means unknown, and the estimator can decline to price a
+  -- kill from it.
   --
-  -- Only the packed creature text moves. The level's own sums -- xpTotal,
-  -- xpBySource, killsWithXp -- live outside it and are not touched: this separates a
-  -- breakdown, it does not restate a total.
+  -- Only the packed creature text moves. The level's sums (xpTotal, xpBySource,
+  -- killsWithXp) live outside it and are untouched.
   [3] = function(repository)
     local current = widenCreatures(repository:currentRecord())
     if current ~= nil then
@@ -100,6 +89,11 @@ RecordStore.MIGRATIONS = {
       end
     end
   end,
+
+  -- 4 -> 5: the client sources a level was recorded without. Empty but required: a
+  -- record written at 4 came from Classic Era or Burning Crusade Classic, which have
+  -- both sources, so it correctly restores with no mark.
+  [4] = function() end,
 }
 
 function RecordStore.new(options)
@@ -126,8 +120,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function RecordStore:migrate(from)
-  -- Not a version, or written by a build newer than this one. Walking forward is
-  -- the only direction a migration chain has.
+  -- Not a version, or written by a newer build: migrations only walk forward.
   if type(from) ~= "number" or from ~= from or from % 1 ~= 0 or from > self.version then
     return false
   end
@@ -137,8 +130,8 @@ function RecordStore:migrate(from)
     if type(step) ~= "function" then
       return false
     end
-    -- A migration that throws leaves the data half-converted, which is precisely
-    -- the state worth archiving rather than handing to the rest of the addon.
+    -- A migration that throws leaves the data half-converted, so it is archived
+    -- rather than handed to the rest of the addon.
     if not pcall(step, self.repository) then
       return false
     end
@@ -152,8 +145,8 @@ function RecordStore:load()
   local stored = self.repository:schemaVersion()
 
   if stored == nil then
-    -- A character nobody has recorded yet. Nothing to migrate; stamp the format so
-    -- the next version knows where it is starting from.
+    -- A character never recorded. Nothing to migrate; stamp the format so the next
+    -- version knows where it starts from.
     self.repository:setSchemaVersion(self.version)
   elseif stored ~= self.version and not self:migrate(stored) then
     self.repository:archiveIncompatible()
@@ -177,8 +170,7 @@ end
 -- ---------------------------------------------------------------------------
 
 -- The level being played, or nil when there is none. A record that cannot be
--- restored at all counts as none: the caller opens a seeded one and the level goes
--- on being recorded, which is worth more than the fragment that was unreadable.
+-- restored counts as none: the caller opens a seeded one and recording goes on.
 function RecordStore:current()
   assertLoaded(self)
 
@@ -194,10 +186,9 @@ function RecordStore:current()
   return record
 end
 
--- A nil record is how the caller says there is no level in progress, which is the
--- state a character at the client's maximum level is in. Leaving the previous
--- snapshot in the slot would have the next login treat a level whose history is
--- already written as one still being played, and overwrite the real record with it.
+-- A nil record means no level in progress, as for a character at the client's
+-- maximum level. The slot is cleared, or the next login would treat an already
+-- completed level as still being played and overwrite its real record.
 function RecordStore:saveCurrent(record)
   assertLoaded(self)
 
@@ -210,9 +201,8 @@ function RecordStore:saveCurrent(record)
   return record
 end
 
--- Nil is a real answer and stays distinguishable from a level recorded as all
--- zeroes: "you never played this level with the addon on" and "you played it and
--- gained nothing" are different things to show a player.
+-- Nil is a real answer, distinct from a level recorded as all zeroes: "never
+-- played with the addon on" is not "played and gained nothing".
 function RecordStore:completed(level)
   assertLoaded(self)
 

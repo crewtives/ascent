@@ -9,6 +9,8 @@ body:
         an addon **cannot make a network request** of any kind, and this one ships **without external
         libraries**.
 
+        Title the issue with the question you want answered, in a sentence.
+
   - type: textarea
     id: problem
     attributes:

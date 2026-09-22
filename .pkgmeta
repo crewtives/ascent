@@ -1,35 +1,23 @@
-# Ascent - the ecosystem's standard packaging manifest.
+# Ascent - the packaging manifest the ecosystem looks for.
 #
-# THIS REPOSITORY DOES NOT PACKAGE WITH THE BIGWIGS PACKAGER, and nothing here is
-# exercised by any gate: `./dev.sh package` builds the zip and
-# `tools/curseforge-upload.sh` uploads it. The file exists because it is what the
-# ecosystem looks for, and it is written to be SAFE rather than clever -- if
-# somebody does run the packager over this checkout, what must not happen is the
-# repository's planning, tooling and notes ending up inside an addon.
+# This repository does not use it: ./dev.sh package builds the zip and
+# tools/curseforge-upload.sh uploads it. It is kept safe for anyone who runs the
+# BigWigs packager over a checkout, so that nothing but the addon ends up in a zip.
 #
-# Why the packager is not used: its @project-version@ keyword leaves development
-# builds declaring versions like v0.1.0-5-gabc1234 in the TOC. That string is
-# valid semver AND reads as a pre-release OF 0.1.0, so a build five commits after
-# the tag orders BEFORE it -- and the addon's own update check would then tell
-# its author to upgrade to the version they are already past.
-#
-# One caveat, stated rather than hidden: this addon lives in `Ascent/` rather than
-# at the root of the checkout, which is the layout the packager assumes. The
-# ignore list below is exhaustive either way, so the worst case is a folder nested
-# one level too deep -- never a zip carrying anything from the list.
+# The packager's @project-version@ stamps a development build as v0.1.0-5-gabc1234,
+# which semver orders before 0.1.0, so the update check would ask for a version
+# already behind the build. The addon sits in Ascent/, not at the root the packager
+# assumes: the worst case is a folder nested one level too deep.
 
 package-as: Ascent
 
-# The changelog is written for people, not generated from commit subjects. It is
-# also the source the addon's in-game changelog is generated from
-# (tools/changelog.lua).
+# The changelog is written by hand, and the in-game changelog is generated from it.
 manual-changelog:
     filename: CHANGELOG.md
     markup-type: markdown
 
-# Everything that is repository, not addon. The one that matters most is
-# `Ascent/test`: it sits INSIDE the packaged folder, so it is the only entry here
-# that a careless zip would actually pick up.
+# Everything that is repository, not addon. Ascent/test matters most: it sits
+# inside the packaged folder.
 ignore:
     - Ascent/test
     - openspec
@@ -50,6 +38,5 @@ ignore:
     - LICENSE
     - CHANGELOG.md
 
-# No stripped-down second zip: this addon embeds no libraries, so there would be
-# nothing to strip out of it.
+# No second, library-free zip: the addon embeds no libraries.
 enable-nolib-creation: no

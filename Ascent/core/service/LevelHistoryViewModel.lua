@@ -1,5 +1,4 @@
--- Ascent - the level selector and the comparison against the level before
--- (tasks 6.7, 6.8; the capability has asked for both since the first spec).
+-- Ascent - the level selector and the comparison against the level before.
 --
 -- Two questions, both pure functions of what the store already holds:
 --
@@ -8,16 +7,14 @@
 --   compare  how this level went against the one before it -- how long it took
 --            and what it was made of.
 --
--- THE DIRECTION IS A FIELD, NOT A COLOUR. Every difference carries `direction`
+-- The direction is a field, not a colour. Every difference carries `direction`
 -- ("up", "down" or "same") alongside its number, so the panel can show an arrow
--- or a sign and not depend on red-versus-green. That is not a general
--- accessibility gesture -- it is forced by this addon in particular: green and
--- red already MEAN exploration and creatures here, and using them again for
--- better and worse would collide with the one thing the panel exists to teach.
+-- or a sign rather than red versus green: green and red already mean exploration
+-- and creatures here, and reusing them for better and worse would collide.
 --
--- And no value judgement travels with them. A level that took longer is not
--- worse -- it may have been the level someone did every quest in -- so the
--- domain reports the direction and leaves the meaning to the reader.
+-- No value judgement travels with them. A level that took longer is not worse
+-- (it may have been the level someone did every quest in), so the domain reports
+-- the direction and leaves the meaning to the reader.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -42,9 +39,9 @@ end
 --   current   the level in progress, or nil
 --   selected  the level the player picked, or nil for "the one in progress"
 --
--- Returns the entries in DESCENDING order -- most recent first, which is the one
--- a player reaches for -- each marked with whether it is the current selection,
--- plus `empty` for the state where there is no history yet at all.
+-- Returns the entries in descending order (most recent first, the one a player
+-- reaches for), each marked with whether it is the current selection, plus
+-- `empty` for the state where there is no history yet at all.
 function LevelHistoryViewModel.build(options)
   options = options or {}
 
@@ -58,9 +55,9 @@ function LevelHistoryViewModel.build(options)
 
   table.sort(entries, function(a, b) return a.level > b.level end)
 
-  -- A selection pointing at a level that is not there -- data cleared, a level
-  -- trimmed by retention -- falls back to the most recent rather than leaving
-  -- the panel showing nothing with no way back.
+  -- A selection pointing at a level that is not there (data cleared, a level
+  -- trimmed by retention) falls back to the most recent rather than leaving the
+  -- panel showing nothing with no way back.
   local selected = options.selected
   local found = false
   for _, entry in ipairs(entries) do

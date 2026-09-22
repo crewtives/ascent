@@ -1,13 +1,8 @@
-# Cut a release and hand it to CurseForge.
+# Ascent - cut a release and hand it to CurseForge.
 #
-# Tagging is the whole interface: `git tag v0.1.0 && git push --tags` builds the
-# zip and uploads it as a beta. The release type can be raised by hand from the
-# Actions tab when a version is ready to stop being one.
-#
-# Nothing about the release is described twice. The version, the supported
-# clients and the release notes all come out of files that already had to be
-# right -- the TOC and CHANGELOG.md -- so a release cannot disagree with the
-# addon it contains.
+# A `v*` tag builds the zip and uploads it as a beta; the Actions tab can publish
+# it as another release type. The version, the supported clients and the notes
+# come from the TOC and CHANGELOG.md.
 name: Release
 
 on:
@@ -22,8 +17,8 @@ on:
         options: [alpha, beta, release]
 
 env:
-  # Public: it is the number in the project's own authors.curseforge.com URL.
-  # The token that goes with it is a repository secret.
+  # Public: the number in the project's CurseForge URL. Its token is a repository
+  # secret.
   CF_PROJECT_ID: "1706237"
 
 jobs:
@@ -33,26 +28,16 @@ jobs:
   release:
     needs: gates
     runs-on: ubuntu-latest
-    # One repository publishes, and it is the one people clone. This file travels
-    # to both -- it is not excluded from a publication and should not be, since the
-    # shop window is where it has to run -- and it fires on any `v*` tag, so
-    # without this line whichever repository happened to receive the tag would be
-    # the one that published. That is how 0.1.0 went out from the workshop.
-    #
-    # The gates above deliberately run in both: a tag is a fine reason to check a
-    # tree anywhere. It is publishing that has one home.
+    # Only crewtives/ascent publishes. The gates above run wherever a tag is pushed.
     if: github.repository == 'crewtives/ascent'
-    # Only for the GitHub release below. The CurseForge upload authenticates with
-    # its own token and needs nothing from here.
+    # Only for the GitHub release below; the CurseForge upload uses its own token.
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      # A tag that disagrees with the TOC ships a zip whose insides say a
-      # different version than its name -- which is the one packaging mistake
-      # nobody notices until a user reports a bug against a version that does
-      # not exist.
+      # A tag that disagrees with the TOC would ship a zip whose name and contents
+      # give different versions.
       - name: the tag agrees with the TOC
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -67,8 +52,7 @@ jobs:
       - name: build the zip
         run: ./dev.sh package
 
-      # Kept on the run itself, so the exact artefact that went to CurseForge can
-      # be downloaded and compared later.
+      # Kept on the run, so the exact file sent to CurseForge can be downloaded later.
       - uses: actions/upload-artifact@v4
         with:
           name: addon-zip
@@ -82,14 +66,9 @@ jobs:
           ./tools/curseforge-upload.sh \
             --release-type "${{ github.event.inputs.release_type || 'beta' }}"
 
-      # AFTER CurseForge, deliberately. If the upload is rejected there is then no
-      # release yet, so fixing the cause and re-running the workflow is clean --
-      # whereas a release created first would already exist on the second attempt.
-      #
-      # The zip used to live only in this run's artifacts, which expire and are not
-      # a link anyone can be handed. This is the same file, by a URL that lasts,
-      # with the notes the upload used -- read by the same script, so the two
-      # cannot disagree.
+      # After the CurseForge upload, so a rejected upload leaves no release behind
+      # and the workflow can simply run again. The release keeps the zip at a
+      # lasting URL, with the notes the upload used.
       - name: publish the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         env:

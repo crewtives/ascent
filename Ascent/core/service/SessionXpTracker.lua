@@ -1,20 +1,13 @@
--- Ascent - experience gained since this client session started (7.2).
+-- Ascent - experience gained since this client session started.
 --
--- "Session" here is D14's definition: the current client run, stable across
--- /reload and the character select screen, gone only when the client itself
--- restarts. clock:now() already measures that elapsed time directly -- no
--- tracking needed for it -- but the experience gained over it is not something
--- any existing record carries, because a LevelRecord resets to zero at every
--- level and a session can cross several. This is the one piece of state that
--- has to exist for the session's own xp/hour (7.2) to mean anything: a running
--- total, fed by every XP_ATTRIBUTED gain regardless of which level it landed on.
+-- A session is the current client run: stable across /reload and the character
+-- select screen, ended only when the client restarts. clock:now() measures its
+-- time; its experience needs this running total, fed by every XP_ATTRIBUTED gain
+-- whatever level it landed on, since a LevelRecord resets at each level.
 --
--- Deliberately NOT tied to EventTopic.SESSION_STARTED/SESSION_ENDED: those fire
--- on every PLAYER_ENTERING_WORLD, including a loading screen mid-session, not
--- only on login (WowEventRouter's own header explains why: they exist to
--- re-anchor after a gap, a narrower job than D14's session). Resetting this
--- tracker there would make the session's pace jump every time the player enters
--- a dungeon, which is not what "how fast am I leveling this sitting" means.
+-- Not tied to EventTopic.SESSION_STARTED/SESSION_ENDED: those fire on every
+-- PLAYER_ENTERING_WORLD, loading screens included (see WowEventRouter's header),
+-- and resetting there would restart the session's pace at every dungeon.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -41,9 +34,8 @@ function SessionXpTracker.new(options)
   return tracker
 end
 
--- The whole amount the player received, rested bonus included: the session's
--- pace is about how fast the character is actually leveling, and a bonused
--- gain is real experience the same as any other.
+-- The whole amount received, rested bonus included: the session's pace is how
+-- fast the character is actually leveling.
 function SessionXpTracker:onAttributed(payload)
   if type(payload) ~= "table" or payload.gain == nil then
     return

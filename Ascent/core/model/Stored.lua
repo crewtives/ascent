@@ -87,7 +87,7 @@ end
 
 local PLAIN = { boolean = true, number = true, string = true }
 
--- A deep copy of data on its way OUT to disk, which raises on anything the saved
+-- A deep copy of data on its way out to disk, which raises on anything the saved
 -- variables file cannot hold. This direction is allowed to raise: a function or a
 -- metatable here is the addon's own bug, and the file would swallow it silently and
 -- surface it as a half-missing record on the next login.
@@ -125,7 +125,7 @@ function Stored.plainCopy(value, path, seen)
   return copy
 end
 
--- The same walk on the way IN. This direction never raises: it drops whatever the
+-- The same walk on the way in. This direction never raises: it drops whatever the
 -- file should not have been able to hold in the first place and keeps the rest,
 -- because refusing to load is the one outcome the boundary is not allowed to have.
 function Stored.plainRead(value, seen)

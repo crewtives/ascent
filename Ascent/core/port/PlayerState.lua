@@ -27,7 +27,7 @@ ns.core.PlayerState = ns.core.Port.define("PlayerState", {
 
   place = "Returns context, areaId, name: where the character is right now. The "
        .. "context is a PlaceContext, the identifier is the instance id inside an "
-       .. "instance and the map id outside it (D42), and the name is for display "
+       .. "instance and the map id outside it, and the name is for display "
        .. "only. All three are nil when the client cannot say, which is a real "
        .. "answer and not an error: crossing a portal is exactly when it happens.",
 
@@ -35,7 +35,7 @@ ns.core.PlayerState = ns.core.Port.define("PlayerState", {
           .. "now, the character included: one when playing alone, never zero. "
           .. "This is the population a measured average belongs to, which is why "
           .. "it is a count of people and not a reading of whether there is a "
-          .. "group (D82): two and five divide very differently.",
+          .. "group: two and five divide very differently.",
 
   healthFraction = "Current health as a fraction of maximum, from 0 to 1.",
   powerFraction = "Current primary resource as a fraction of maximum, from 0 to 1.",

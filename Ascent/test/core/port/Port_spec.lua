@@ -5,7 +5,7 @@ describe("Port", function()
     ns = AscentTest.loadDomain(
       "core/port/Port.lua", "core/port/Clock.lua", "core/port/PlayerState.lua",
       "core/port/Repository.lua", "core/port/EventBus.lua", "core/port/Logger.lua",
-      "core/port/Locale.lua")
+      "core/port/Locale.lua", "core/port/QuestLog.lua")
     Port = ns.core.Port
   end)
 
@@ -25,8 +25,8 @@ describe("Port", function()
   end)
 
   describe("verifying an implementation", function()
-    -- The point of the whole file: a missing method becomes one clear error at
-    -- wiring time instead of a nil call inside a combat handler an hour later.
+    -- A missing method is one clear error at wiring time instead of a nil call
+    -- inside a combat handler later.
     it("accepts an implementation that has every method", function()
       local clock = { now = function() return 1 end, timestamp = function() return 2 end }
 
@@ -62,11 +62,11 @@ describe("Port", function()
   end)
 
   describe("the six ports of v1", function()
-    -- The design's cut rule is explicit: a port exists only if it enables testing
-    -- without the client or has two plausible implementations. Six qualify. This
-    -- asserts the whole set, so a seventh has to be argued for, not just added.
+    -- A port exists only if it enables testing without the client or has two
+    -- plausible implementations. Asserting the whole set makes a seventh a
+    -- deliberate change.
     it("are exactly these six, with no seventh", function()
-      assert.same({ "Clock", "EventBus", "Locale", "Logger", "PlayerState", "Repository" },
+      assert.same({ "Clock", "EventBus", "Locale", "Logger", "PlayerState", "QuestLog", "Repository" },
         Port.all())
     end)
 

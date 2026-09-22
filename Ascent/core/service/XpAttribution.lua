@@ -1,58 +1,48 @@
 -- Ascent - reconciling what was earned with what announced it.
 --
--- The one rule this whole addon rests on: the amount is authoritative and the
--- source is a claim. The amount comes from the difference between two readings of
--- the player's experience, which is the only figure the client guarantees. The
--- source arrives separately, on channels that are late, duplicated, ambiguous or
--- absent, and no channel is ever allowed to add experience to the record.
+-- The amount is authoritative and the source is a claim. The amount is the
+-- difference between two readings of the player's experience, the only figure
+-- the client guarantees. The source arrives separately, on channels that are
+-- late, duplicated, ambiguous or absent, and no channel may add experience.
 --
 --   delta   44 at t=10.0            <- authoritative, from UnitXP
 --   hint    "Kobold Miner dies,     <- a claim: mob kill, 44, around t=10.0
 --            you gain 44 experience"
 --
--- Each hint is consumed bounded by min(announced, remaining), so the same gain
+-- Each hint is consumed bounded by min(announced, remaining), so a gain
 -- announced on two channels adds up once and no channel can inflate the level.
--- Whatever no hint claims is attributed to UNKNOWN rather than dropped, which is
--- what makes the sources add up to exactly the level total.
+-- Whatever no hint claims is attributed to UNKNOWN rather than dropped, so the
+-- sources add up to exactly the level total.
 --
--- Four properties, each of which cost a defect to learn:
+--   * The window is bidirectional. Whether a hint arrives before or after its
+--     delta is undocumented for Classic Era (1.15.x) and Burning Crusade Classic
+--     (2.5.x), and a queue would be silently wrong for one of the two orders.
 --
---   * The window is BIDIRECTIONAL. Whether a hint arrives before or after its delta
---     is not verified for 1.15.x or 2.5.x -- there is no public trace, note or
---     comment that documents it. A queue would be right for one order and silently
---     wrong for the other. Spike 0.1 measures it; until then this is immune to both.
+--   * A delta is buffered and attributed two windows after it arrives, not one.
+--     One window is when the last hint about it can arrive; two is when that
+--     hint's own window has closed, so any delta it really announced has arrived
+--     too. Settling at the first hint that fills a delta leaves nothing for the
+--     channel carrying the quest id a few milliseconds behind; settling after one
+--     window judges a hint against deltas not yet seen. The cost is a bounded lag.
 --
---   * NOTHING IS DECIDED WITH INCOMPLETE INFORMATION. A delta is buffered on arrival
---     and attributed TWO windows later, not one. One window is when the last hint
---     that could be about it arrives; two is when that hint's own window has closed,
---     so the delta it was really announcing has arrived too. Deciding earlier is not
---     a free optimisation, and it fails in both directions: settle at the first hint
---     that fills the delta and the channel carrying the quest id, milliseconds
---     behind the one that does not, arrives to find nothing left; settle one window
---     in and a hint is judged against deltas that have not been seen yet. The cost
---     is a bounded lag on the breakdown, and it collapses to nothing once spike 0.1
---     says which order the client uses.
+--   * Matching is by amount, not only by time. A hint announcing exactly what a
+--     delta still needs is taken first, and a hint is never fed to a delta it
+--     does not fit while one it fits exactly is waiting (sound only because of
+--     the two-window rule). Otherwise an unexplained delta swallows the front of
+--     the next kill's announcement and the kill is counted twice.
 --
---   * MATCHING IS BY AMOUNT, not merely by time. A hint whose announced figure is
---     exactly what a delta still needs is taken first, and a hint is never fed to a
---     delta it does not fit while a delta it fits exactly is still waiting -- which
---     is a sound test only because of the paragraph above. Without it, an
---     unexplained delta sitting in the window swallows the front of the next kill's
---     announcement and the kill gets counted twice, once per fragment.
+--     Among equally fitting hints the nearer one wins; channel priority only
+--     breaks a tie at the same instant. Priority ranks the channels of one
+--     announcement (the turn-in event above its echo), not two different gains,
+--     and letting it outrank time would swap a kill's experience with a quest's
+--     that pays the same.
 --
---     Among hints that fit equally well, the NEARER one wins and channel priority
---     only breaks a tie between hints at the same instant. Priority ranks the
---     channels of one announcement -- the turn-in event above its echo -- and says
---     nothing about two different gains, so letting it outrank time swaps a kill's
---     experience with a quest's whenever the two happen to pay the same.
+--   * A hint is one announcement and is consumed at most once. A surviving copy
+--     of a twice-announced turn-in would outrank a kill and book it to
+--     QUEST_TURNIN, so copies are retired against each other at intake.
 --
---   * A HINT IS ONE ANNOUNCEMENT and is consumed at most once. Leaving the losing
---     copy of a twice-announced turn-in alive is how a mob kill ends up booked to
---     QUEST_TURNIN: the copy outranks the kill and is still holding its full amount.
---     Copies are retired against each other at intake instead.
---
--- The counters are the other half of honesty: unmatched deltas and unclaimed hints
--- are how the window gets tuned against real play instead of against intuition.
+-- The counters (unmatched deltas, unclaimed hints) are what the window is tuned
+-- against in real play.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -65,25 +55,20 @@ local CreatureKey = ns.core.CreatureKey
 local EventTopic = ns.core.EventTopic
 local RestedReading = ns.core.RestedReading
 
--- settle() waits out 2x this before committing a delta (below), so the window is
--- also the addon's visible lag on every kill. Tuned from a real client rather than
--- from intuition, per the comment above: a solo kill's hint arrived ~0.3s before
--- its delta (design.md's Open Question 1, still open for the reverse order and for
--- non-kill sources), so 0.75s leaves a healthy 2.5x margin on one sample while
--- halving the worst case from 3s to 1.5s. Still bidirectional, not a queue: one
--- clean sample confirms an order, it does not retire the case of it arriving late.
+-- settle() waits out 2x this before committing a delta, so it is also the visible
+-- lag on every kill (1.5s at worst). Measured on a real client, a solo kill's hint
+-- arrived ~0.3s before its delta; 0.75s leaves a 2.5x margin. The order is not
+-- established for other sources, so the window stays bidirectional.
 local DEFAULT_WINDOW = 0.75
 
 local XpAttribution = {}
 XpAttribution.__index = XpAttribution
 
--- The client's rested figure is twice the server's internal reserve, so a kill
--- drops it by twice the base experience -- and the bonus granted equals that base.
--- Halving the drop is therefore a reading of the bonus that owes nothing to the
--- wording of the chat message: a cross-check for spike 0.4 while the parenthetical
--- is ambiguous, and the fallback if it turns out to name the base. Bounded by the
--- announced total, because the last kill before the reserve empties pays a partial
--- bonus.
+-- The client's rested figure (GetXPExhaustion) is twice the server's internal
+-- reserve, so a kill drops it by twice the base experience, and the bonus equals
+-- that base. Halving the drop reads the bonus independently of the chat wording.
+-- Bounded by the announced total, because the last kill before the reserve
+-- empties pays a partial bonus.
 function XpAttribution.restedFromReserve(before, after, amount)
   if type(before) ~= "number" or type(after) ~= "number" then
     return nil
@@ -159,18 +144,14 @@ end
 -- payload: { amount, at, place, sharedBy }. The amount is the authoritative
 -- difference, with any level crossing already folded into it by the adapter.
 --
--- The place rides with the DELTA and not with the hint, which is D43 and is the
--- whole of it: the delta is the authoritative event, the hint can arrive up to a
--- window and a half either side of it, and a kill by the entrance of a dungeon
--- would otherwise be recorded in whichever of the two places the announcement
--- happened to catch. Carried through untouched, including nil -- a caller that
--- knows no place is not the same as one that read the reserved entry, and only the
--- ledger gets to decide what "nobody said" means.
+-- The place rides with the delta, not the hint: the delta is the authoritative
+-- event, and the hint can be a window and a half away, so a kill by a dungeon
+-- entrance could otherwise land in the wrong place. Carried untouched, nil
+-- included: only the ledger decides what an unknown place means.
 --
--- The group size rides with the delta for the same reason and is carried the same
--- way, nil included (D81). A delta is settled two windows after it arrives, so a
--- size read here is the one the server split this payment between and a size read
--- at settling time is whatever the character joined in the meantime.
+-- The group size rides with the delta too, nil included. A delta settles two
+-- windows later, so the size read here is the one the server split this payment
+-- between; one read at settling time could include a group joined since.
 function XpAttribution:observeDelta(payload)
   local amount = Guard.nonNegativeInteger(payload.amount, "XP delta amount")
   local at = Guard.number(payload.at, "XP delta at")
@@ -245,24 +226,19 @@ end
 -- One gain, one announcement
 -- ---------------------------------------------------------------------------
 
--- The anonymous line carries the parenthetical and never names a source, so it can
--- never build a gain of its own. When it duplicates a kill announcement -- same
--- amount, same instant, one event -- the annotation belongs on that kill, and
--- dropping it was how a group kill announced without a creature name recorded a
--- bonus of zero.
+-- The anonymous line carries the parenthetical but never names a source, so it
+-- never builds a gain of its own. When it duplicates a kill announcement (same
+-- amount, same instant) its modifiers belong on that kill; otherwise a group kill
+-- announced without a creature name records a bonus of zero. Guarded three ways:
 --
--- Guarded three ways, and each guard answers a question the spec asks:
---
---   only a KILL, because the group bonus is a share of creature experience and a
---   quest turn-in has none -- adopting onto one would invent a bonus the client
---   never announced;
+--   only a kill: the group bonus is a share of creature experience, and a quest
+--   turn-in has none;
 --
 --   only an unspent anonymous copy, so one line annotates one gain;
 --
---   and only when the named hint carries NEITHER modifier already. The
---   xp-attribution spec forbids a group bonus and a raid penalty on one gain, so
---   the named channel's own reading wins outright rather than being merged with
---   this one. Merging is what would produce that forbidden pair.
+--   only when the named hint carries neither modifier. A gain never carries both
+--   a group bonus and a raid penalty, so the named channel's reading wins
+--   outright instead of being merged into that pair.
 local function adoptModifiers(named, anonymous)
   if named.source ~= XpSource.MOB_KILL or anonymous.spent then
     return
@@ -290,15 +266,13 @@ local function adoptModifiers(named, anonymous)
   payload.raidPenalty = raid > 0 and raid or nil
 end
 
--- The client announces the same gain more than once. Quest experience arrives on
--- both QUEST_TURNED_IN and the system echo -- verified -- and on the anonymous
--- experience line as well. Retiring the copies against each other at intake is what
--- makes the design's claim literally true: the second copy sums zero.
+-- The client announces the same gain more than once: quest experience arrives on
+-- QUEST_TURNED_IN, on the system echo, and on the anonymous experience line.
+-- Copies are retired against each other at intake, so the second sums zero.
 --
--- Two copies are the same announcement when they say the same amount inside the
--- same window and come from DIFFERENT channels. That last condition is load-bearing:
--- two kills worth the same experience a second apart both come from the kill
--- channel, and collapsing them would lose one.
+-- Two copies are the same announcement when they state the same amount inside the
+-- window and come from different channels. Two same-value kills a second apart
+-- both come from the kill channel and must not be collapsed.
 function XpAttribution:linkDuplicate(incoming)
   for index = 1, #self.hints do
     local other = self.hints[index]
@@ -308,9 +282,8 @@ function XpAttribution:linkDuplicate(incoming)
 
       if other.amountOnly ~= incoming.amountOnly then
         -- One of the two is the anonymous line. It never names a source, so the
-        -- other one accounts for it and it is retired as a matter of record: the
-        -- count of claimed versus unclaimed lines is how the addon can answer
-        -- whether discoveries emit this line, which no public source says.
+        -- other accounts for it. The claimed versus unclaimed counts show whether
+        -- discoveries emit this line, which no public source documents.
         if incoming.amountOnly then
           incoming.claimed = true
           adoptModifiers(other, incoming)
@@ -322,11 +295,9 @@ function XpAttribution:linkDuplicate(incoming)
       elseif not other.amountOnly and other.source == incoming.source
         and other.classifierId ~= incoming.classifierId
         and not other.duplicate and not incoming.duplicate then
-        -- `duplicate` is a separate mark from `spent`, and the difference matters.
-        -- A retired copy is spent without having paid for anything, so reading
-        -- `spent` alone as "this one already paid" retires the next real turn-in of
-        -- the same reward against the previous one's echo -- two quests worth 250
-        -- inside a second and a half become one.
+        -- `duplicate` is separate from `spent`: a retired copy is spent without
+        -- having paid, and treating `spent` alone as "already paid" would retire
+        -- the next real turn-in of the same reward against the previous echo.
         local redundant, reason
         if other.spent then
           redundant, reason = incoming, "echo"  -- the other copy already paid; this is the echo
@@ -352,17 +323,15 @@ end
 -- Matching
 -- ---------------------------------------------------------------------------
 
--- Whether a hint accounts for exactly what this delta still needs. This is the
--- design's "matching by amount", and it is what keeps a hint with a delta of its own
--- from being eaten by an older one that happens to still be open.
+-- Whether a hint accounts for exactly what this delta still needs: matching by
+-- amount, which keeps a hint with a delta of its own from being eaten by an older
+-- one still open.
 local function fits(hint, delta)
   return hint.announced == delta.remaining
 end
 
--- Is some delta still waiting that this hint accounts for exactly? If so the hint
--- belongs to that one, and handing a fragment of it to the delta being settled would
--- split one kill into two gains -- two entries in the creature's aggregate for a
--- creature that died once.
+-- Whether a waiting delta fits this hint exactly. If so the hint belongs to it;
+-- giving a fragment to the delta being settled would split one kill into two gains.
 function XpAttribution:fitsAPendingDelta(hint)
   for index = 1, #self.deltas do
     local delta = self.deltas[index]
@@ -374,10 +343,9 @@ function XpAttribution:fitsAPendingDelta(hint)
   return false
 end
 
--- The best hint still available for this delta, or nil. Scanned rather than sorted:
--- the ranking depends on how much of the delta is left, which changes as hints are
--- taken, and a linear scan over a handful of hints is both cheaper and free of
--- table.sort's requirement that the comparator be a strict weak ordering.
+-- The best hint still available for this delta, or nil. Scanned, not sorted: the
+-- ranking depends on the delta's remainder, which changes as hints are taken, and a
+-- linear scan over a handful of hints avoids table.sort's strict weak ordering.
 function XpAttribution:bestHintFor(delta)
   local best, bestExact, bestDistance
 
@@ -419,9 +387,8 @@ function XpAttribution:assign(delta)
     end
 
     local take = math.min(hint.announced, delta.remaining)
-    -- Spent either way. A hint is one announcement: whatever of it the delta could
-    -- not absorb was never real experience, and leaving the remainder alive is how
-    -- it goes on to claim somebody else's.
+    -- Spent either way: a hint is one announcement, and whatever the delta could
+    -- not absorb was never real experience and must not claim another delta's.
     hint.spent = true
 
     if take > 0 then
@@ -435,11 +402,10 @@ end
 -- Settling
 -- ---------------------------------------------------------------------------
 
--- Attribute everything that can no longer be decided differently. Called after every
--- intake and, from the composition root, on a timer, so a lone delta with nothing
--- following it still settles. Deltas leave in arrival order, which is also
--- completion order: the consumer splits gains across level boundaries, and one
--- landing on the wrong side of a level-up would corrupt both levels.
+-- Attributes everything that can no longer be decided differently. Called after
+-- every intake and, from the composition root, on a timer, so a lone delta still
+-- settles. Deltas leave in arrival order: the consumer splits gains across level
+-- boundaries, and one out of order would corrupt both levels.
 function XpAttribution:settle(now)
   Guard.number(now, "XpAttribution settle now")
 
@@ -467,20 +433,17 @@ function XpAttribution:emit(delta)
   end
 
   if delta.remaining > 0 then
-    -- Never dropped. Experience nobody explained is still experience the player
-    -- earned, and leaving it out is exactly how a level stops adding up.
+    -- Never dropped: unexplained experience is still earned, and the sources
+    -- must add up to the level total.
     self.counters.unmatchedDeltas = self.counters.unmatchedDeltas + 1
     if self.logger ~= nil then
       self.logger:debug(("delta at %.3f closed unclaimed: source=%s amount=%d")
         :format(delta.at, tostring(XpSource.UNKNOWN), delta.remaining))
     end
-    -- Unexplained is not the same as unannounced. A group kill the client reported
-    -- without naming the creature leaves exactly one announcement -- the anonymous
-    -- line -- and its parenthetical is then the ONLY record that the player was in
-    -- a group for this experience. The source stays unknown, which is honest; the
-    -- annotation survives, which is the point of D41: a modifier is a note about a
-    -- gain, never an addend, so it costs nothing to carry on a gain whose source
-    -- nobody could name.
+    -- Unexplained is not unannounced. A group kill reported without a creature
+    -- name leaves only the anonymous line, whose parenthetical is the only record
+    -- of the group. The source stays unknown but the modifiers are kept: a
+    -- modifier annotates a gain and is never added to it.
     local group, raid = self:modifiersForRemainder(delta)
     local gain = XpGain.new({
       amount = delta.remaining, source = XpSource.UNKNOWN, at = delta.at,
@@ -491,15 +454,11 @@ function XpAttribution:emit(delta)
   end
 end
 
--- The annotation carried by an anonymous line that nothing else explained. Matched
--- on the exact remaining amount and nothing looser: a remainder that is not the
--- figure the line announced belongs to a different event, and spreading one
--- parenthetical across two of them would invent a number the client never printed.
+-- The modifiers of an anonymous line that nothing else explained. Matched on the
+-- exact remaining amount only: a different remainder belongs to another event.
 --
--- Marks the hint `spent` rather than `claimed`. The two are not synonyms here --
--- `claimed` means a named channel accounted for this line, and that count is how
--- the addon will eventually answer whether discoveries emit this family at all. A
--- line that only annotated an unknown remainder did not answer that question.
+-- Marks the hint `spent`, not `claimed`: `claimed` means a named channel accounted
+-- for the line, the count that shows whether discoveries emit it.
 function XpAttribution:modifiersForRemainder(delta)
   for index = 1, #self.hints do
     local hint = self.hints[index]
@@ -516,8 +475,8 @@ function XpAttribution:modifiersForRemainder(delta)
   return 0, 0
 end
 
--- A hint has to outlive its own window by two more: a delta arriving a full window
--- after it is attributed two windows after that.
+-- A hint outlives its own window by two more: a delta arriving a full window after
+-- it is attributed two windows after that.
 function XpAttribution:pruneHints(now)
   local hints = self.hints
   local write = 1
@@ -538,9 +497,8 @@ function XpAttribution:pruneHints(now)
 end
 
 function XpAttribution:retireHint(hint)
-  -- A kill the addon heard announced but never saw paid still accounts for the
-  -- creature's death. Leaving the death unclaimed would report a kill that paid 44
-  -- experience as one that paid nothing.
+  -- A kill announced but never seen paid still claims the creature's death, or
+  -- the death would be reported as a kill that paid nothing.
   if hint.source == XpSource.MOB_KILL and hint.payload ~= nil then
     self:creatureFor(hint, hint.payload.creatureName)
   end
@@ -563,9 +521,8 @@ function XpAttribution:retireHint(hint)
   end
 end
 
--- A death nothing ever claimed is a creature that paid no experience, which the
--- client announces by saying nothing at all. Published rather than counted here
--- because the count belongs to the level record, and this service does not own one.
+-- A death nothing claimed is a creature that paid no experience (the client says
+-- nothing). Published rather than counted: the count belongs to the level record.
 function XpAttribution:pruneDeaths(now)
   if self.correlator == nil then
     return
@@ -586,13 +543,10 @@ end
 -- ---------------------------------------------------------------------------
 
 -- A hint is consumed once, so a gain is built once. When the delta could not absorb
--- the whole announcement -- the bounded case -- the gain is split and the head kept,
--- which divides every modifier by the rule the model already tests rather than by a
--- second, subtly different one here.
+-- the whole announcement, the gain is split and the head kept, so modifiers divide
+-- by XpGain's own split rule.
 --
--- `sharedBy` comes from the delta and not from the hint, which is the same argument
--- as the place above: the delta is the authoritative event and the hint is a claim
--- that can be a window and a half away from it.
+-- `sharedBy` comes from the delta, not the hint, as with the place above.
 function XpAttribution:gainFor(hint, amount, sharedBy)
   local full = self:fullGainFor(hint, sharedBy)
   if amount >= full.amount then
@@ -627,13 +581,11 @@ function XpAttribution:fullGainFor(hint, sharedBy)
   })
 end
 
--- Claiming a death is destructive, so a hint that both pays a delta and is later
--- retired must not consume two of them for one kill. But a resolve that found
--- nothing CLAIMED nothing, and remembering that answer is how one kill ends up
--- counted twice: as a paying kill with an unknown creature, and then again as an
--- unproductive one when its death is evicted unclaimed. So only a resolve that
--- found a death is final; the other is asked again, and asked non-destructively
--- first so the same hint is not counted uncorrelated more than once.
+-- Claiming a death is destructive, so a hint that pays a delta and is later retired
+-- must not consume two deaths. A resolve that found nothing claimed nothing, and
+-- caching that would count one kill twice (paid with an unknown creature, then
+-- unrewarded when its death expires). So only a found death is final; otherwise it
+-- is asked again, non-destructively first, so the hint is counted uncorrelated once.
 function XpAttribution:creatureFor(hint, name)
   if hint.creature ~= nil and hint.creature:hasKnownType() then
     return hint.creature
@@ -653,8 +605,8 @@ function XpAttribution:creatureFor(hint, name)
 end
 
 function XpAttribution:restedBonusFor(hint, payload)
-  -- Only kills draw on the reserve. A quest or a discovery never carries a rested
-  -- portion, whatever a channel appeared to say about it.
+  -- Only kills draw on the reserve; a quest or a discovery never carries a rested
+  -- portion, whatever a channel appears to say.
   if hint.source ~= XpSource.MOB_KILL then
     return 0
   end
@@ -670,31 +622,24 @@ function XpAttribution:restedBonusFor(hint, payload)
     end
   end
 
-  -- A sentence that was read and announced no rested state settles this by itself,
-  -- and the reserve is not asked. It used to be, and that was a defect the file from
-  -- the 2026-09-21 session caught: the reserve is sampled off the chat line, which
-  -- the client prints BEFORE applying the gain, so the drop it shows belongs to the
-  -- PREVIOUS kill. Every rested kill was charged twice over -- once from its own
-  -- parenthetical and again to the first plain kill behind it -- and level 12 closed
-  -- with 32 points of rested bonus where the truth was 16.
+  -- A sentence that was read and announced no rested state settles it, without
+  -- asking the reserve. The reserve is sampled on the chat line, which the client
+  -- prints before applying the gain, so its drop belongs to the previous kill and
+  -- would charge a rested kill's bonus again to the plain kill after it.
   --
-  -- `false` is not `nil` here. No sentence at all still falls back, because then the
-  -- reserve is the only reading there is; and `true` with no figure -- a fatigue
-  -- line, a locale that prints a percentage -- is the case the fallback exists for.
+  -- `false` is not `nil`: with no sentence the reserve is the only reading, and
+  -- `true` with no figure (a fatigue line, a locale printing a percentage) is what
+  -- the fallback is for.
   if parsed == nil and payload.restedAnnounced == false then
     return 0
   end
 
   local measured = XpAttribution.restedFromReserve(payload.restedBefore, payload.restedAfter, amount)
 
-  -- Worth counting rather than resolving, and what it counts has changed. Spike 0.4
-  -- is closed: the 2026-09-17 session settled that the parenthetical names the BONUS
-  -- and that the reserve falls by exactly twice it. What the counter measures now is
-  -- the OTHER reading being wrong -- the reserve is sampled off the chat line, which
-  -- the client prints before applying the gain, so `measured` describes the previous
-  -- kill. Expect this to climb on every kill whose predecessor paid differently; it
-  -- stops meaning anything until the reserve is re-anchored on PLAYER_XP_UPDATE, and
-  -- only then is a disagreement worth reading as a defect again.
+  -- Counted, not resolved. The parenthetical names the bonus, and the reserve
+  -- falls by exactly twice it, but `measured` describes the previous kill (see
+  -- above), so this climbs whenever the previous kill paid differently. It is a
+  -- defect signal only once the reserve is sampled on PLAYER_XP_UPDATE.
   if parsed ~= nil and measured ~= nil and parsed ~= measured then
     self.counters.restedDisagreements = self.counters.restedDisagreements + 1
     if self.logger ~= nil then
@@ -720,12 +665,10 @@ end
 -- Diagnostics
 -- ---------------------------------------------------------------------------
 
--- The experience the client has already confirmed (XP_DELTA_OBSERVED) but this
--- service has not yet settled into a source -- D21's bounded lag, made readable
--- instead of just endured. record.xpTotal only grows when a delta settles, so
--- none of this is double-counted there; it exists for a caller (the bar) that
--- wants to show it as provisional "unclassified" instead of not moving at all
--- for up to two windows.
+-- Experience the client has confirmed (XP_DELTA_OBSERVED) but this service has not
+-- yet settled into a source: the attribution lag. record.xpTotal grows only when a
+-- delta settles, so nothing is double-counted; the bar shows this as provisional
+-- instead of standing still for up to two windows.
 function XpAttribution:pendingAmount()
   local total = 0
   for index = 1, #self.deltas do

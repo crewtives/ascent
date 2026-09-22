@@ -1,7 +1,6 @@
--- The two things worth stating up front, echoed from ProgressEstimator's own
--- header: the rested projection never claims more than 100% of the level, and
--- every sample-dependent estimate answers "not available" (nil) rather than
--- erroring or inventing a number when the level has nothing to sample yet (7.5).
+-- The rested projection never claims more than 100% of the level, and every
+-- sample-dependent estimate answers nil (not available) rather than erroring or
+-- inventing a number when the level has nothing to sample yet.
 
 describe("ProgressEstimator", function()
   local ns, ProgressEstimator, XpLedger, LevelRecord, XpGain, XpSource
@@ -228,11 +227,9 @@ describe("ProgressEstimator", function()
     end)
   end)
 
-  -- Not a ProgressEstimator test alone: the "no degrada el ritmo" guarantee (7.2)
-  -- lives in the combination -- LevelTracker already excludes offline time from
-  -- playedSeconds (5.3), and this only holds if the pace built on top of it stays
-  -- honest about that. Wiring the two together end to end is what actually proves
-  -- a long disconnect cannot inflate or shrink the level's own xp/hour.
+  -- Wired end to end with LevelTracker, which excludes offline time from
+  -- playedSeconds: a long disconnect must neither inflate nor shrink the level's
+  -- own xp/hour.
   describe("pace unaffected by offline time (7.2, with LevelTracker)", function()
     it("keeps the level's pace intact across a long disconnect", function()
       local domain = AscentTest.loadWith("core/model/", "core/port/",

@@ -1,23 +1,12 @@
 -- Ascent - the life of a pull: when one opens, what lands in it, and when it is
 -- safe to call it finished.
 --
--- WHY THIS SUBSCRIBES TO THE BUS ITSELF instead of registering a collector.
--- Every other combat metric in this addon is a descriptor in MetricRegistry that
--- CombatAggregator dispatches into `currentRecord()`, and `currentRecord()` is
--- always the open LEVEL. A pull has a different lifetime, opens and closes many
--- times inside one of those, and -- the part that decides it -- has to keep
--- accepting events for a few seconds AFTER the client says combat is over. None
--- of that is expressible as a collector without teaching the aggregator about a
--- second kind of record and a second clock, which would put this module's whole
--- problem inside a file that currently has none. A second subscriber costs one
--- more pcall per event on topics that already have one (see EventBus's per
--- subscriber isolation) and leaves the level path untouched.
---
--- The one thing that IS reused rather than rebuilt is the ranking: PullRecord
--- keys its abilities exactly as LevelRecord does, so AbilityRankingViewModel
--- ranks a pull with no change at all.
---
--- THE STATE MACHINE, and every edge in it is load-bearing:
+-- It subscribes to the bus itself instead of registering a collector: collectors
+-- write into `currentRecord()`, which is always the open level, while a pull
+-- opens and closes many times within a level and keeps accepting events for a
+-- few seconds after the client reports combat over. A second subscriber costs
+-- one more pcall per event and leaves the level path untouched. PullRecord keys
+-- abilities as LevelRecord does, so AbilityRankingViewModel ranks a pull as is.
 --
 --        COMBAT_STARTED            COMBAT_ENDED           tick() past the window
 --   IDLE ---------------> ACTIVE ----------------> SETTLING ------------------> CLOSED
@@ -31,32 +20,19 @@
 --                           ^
 --                           +---- COMBAT_STARTED after that: a new pull
 --
--- THE RESUME WINDOW is the settling idea carried one step further, and its length
--- is not arbitrary: it is exactly how long the finished plate stays visible. A
--- player who pulls the next thing while the last fight is still fading meant to
--- keep going -- that is what chain pulling IS -- and the surface in front of them
--- is the affordance saying so. When the plate is gone the offer is gone with it,
--- which is a rule someone can learn by playing rather than by reading.
+-- The resume window is exactly as long as the finished plate stays visible:
+-- pulling again while it is on screen continues the chain, and once it is gone
+-- the next fight is a new pull. SETTLING exists because the client's "combat
+-- over" is not when a pull's numbers are final; see PullPhase in
+-- core/constants/Metrics.lua.
 --
--- SETTLING accepting events is the whole reason this file is not four lines: see
--- PullPhase in core/constants/Metrics.lua for why the client's own "combat over"
--- is not the moment a pull's numbers are final.
+-- The prelude handles the other end. PLAYER_REGEN_DISABLED fires when the target
+-- fights back, after the cast that pulled it, so the events that can precede
+-- combat are buffered briefly, replayed into the pull when it opens, and the
+-- pull is backdated to the earliest of them.
 --
--- THE PRELUDE, which is the same problem at the other end. A pull is opened by
--- PLAYER_REGEN_DISABLED, and that fires when the target FIGHTS BACK -- which is
--- after the shot that started it. The opener is therefore always early: the cast
--- that pulled, and the damage that made it aggro, both land while there is no
--- pull to put them in, and a tracker that simply dropped them lost the one
--- ability the player chose most deliberately in the whole fight.
---
--- So the events that can legitimately precede combat are kept in a small bounded
--- buffer and replayed into the pull the moment it opens, and the pull is
--- backdated to the earliest of them: the fight began when you pulled, not when
--- the server agreed you were in one.
---
--- This module owns no frame and draws nothing. It answers three questions --
--- which pull, what phase, and whether either just changed -- and the view reads
--- them on the tick it already runs.
+-- This module owns no frame. It answers which pull, what phase, and whether
+-- either just changed; the view reads them on its own tick.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -66,33 +42,27 @@ local EventTopic = ns.core.EventTopic
 local PullPhase = ns.core.PullPhase
 local PullRecord = ns.core.PullRecord
 
--- How long after the client says combat ended a pull keeps accepting events.
--- Two full KillCorrelator windows (its default is 1.5s) plus room for the
--- composition root's own once-a-second settle pass to run inside it, because the
--- last unattributed gain of a fight resolves on that pass and not on an event.
+-- How long after the client reports combat over a pull keeps accepting events:
+-- two KillCorrelator windows (default 1.5s) plus room for the composition root's
+-- once-a-second settle pass, where a fight's last unattributed gain resolves.
 local SETTLE_SECONDS = 3.5
 
--- How far back a pull reaches for the shot that started it. Long enough for a
--- cast plus its travel time, short enough that it cannot sweep in an action from
--- something the player did and then walked away from. The trade is explicit:
--- five seconds of idling after a cast that pulled nothing would fold that cast
--- into the next fight, which is a wrong row in a list -- against losing the
--- opener of every fight, which is what the alternative costs.
 -- How long after a pull closes it can still be resumed. The composition root
--- overrides this with the plate's own visible lifetime so the two cannot drift;
--- the value here is what a session with no views falls back to.
+-- passes the plate's visible lifetime so the two cannot drift; this is the
+-- fallback for a session with no views.
 local RESUME_SECONDS = 7.2
 
+-- How far back a pull reaches for the cast that started it: a cast plus its
+-- travel time. The accepted cost is that a cast that pulled nothing, followed
+-- within this window by a fight, is folded into that fight.
 local PRELUDE_SECONDS = 5
 
--- And a ceiling on top of the window, so a flurry of casts that aggroed nothing
--- cannot grow this without bound. Well above what five seconds of opening can
--- hold, and far below anything worth worrying about.
+-- A ceiling on the buffer, so a flurry of casts that pulled nothing cannot grow
+-- it without bound; well above what the window can hold in practice.
 local PRELUDE_LIMIT = 24
 
--- The only topics that can honestly arrive before combat does. A kill, a death or
--- attributed experience with no pull open belongs to no pull, and buffering them
--- would be inventing one.
+-- The only topics that can legitimately arrive before combat. A kill, a death or
+-- attributed experience with no pull open belongs to no pull.
 local PRELUDE_TOPICS = {}
 
 local PullTracker = {}
@@ -102,12 +72,10 @@ PullTracker.__index = PullTracker
 -- options.clock          the session clock (required)
 -- options.settleSeconds  override for the window above
 -- options.resumeSeconds  how long a CLOSED pull can still be reopened. The
---                        composition root passes the plate's visible lifetime.
---                        A number, or a function() -> number read at the moment
---                        the question is asked: how long the plate stays is the
---                        player's now (D89), and a value captured here would ask
---                        them to reload before the answer changed -- the gap
---                        COLLECT_DAMAGE closed by taking a function instead.
+--                        composition root passes the plate's visible lifetime,
+--                        a player setting, as a number or a function() -> number
+--                        read on every question, so a change applies without a
+--                        reload.
 -- options.comboWindow    forwarded to every PullRecord this opens
 -- options.enabled        optional function() -> boolean, read live. False means
 --                        events are dropped and no pull is ever opened, so a
@@ -126,27 +94,26 @@ function PullTracker.new(options)
     bus = options.bus,
     clock = options.clock,
     settleSeconds = options.settleSeconds or SETTLE_SECONDS,
-    -- Kept exactly as given, function or number: resolving it here is the very
-    -- thing that would freeze it (see resumeWindow below).
+    -- Kept as given, function or number: resolving it here would freeze it
+    -- (see resumeWindow below).
     resumeSeconds = options.resumeSeconds,
     comboWindow = options.comboWindow,
     enabled = options.enabled,
 
     pull = nil,
     phase = PullPhase.IDLE,
-    -- When the pull stopped accepting events. What the resume window is measured
-    -- from, and nil for anything that has not closed.
+    -- When the pull stopped accepting events, the start of the resume window;
+    -- nil for anything that has not closed.
     closedAt = nil,
-    -- { topic, payload, at }, oldest first. See the header: this is where the
-    -- shot that started the fight waits for the fight to be acknowledged.
+    -- { topic, payload, at }, oldest first: events that arrived before the
+    -- client reported combat (see the header).
     prelude = {},
-    -- Incremented every time a pull OPENS. A view comparing this against what it
-    -- drew last cannot mistake a new pull for a continuation of the old one, and
-    -- does not have to hold a reference to the record to find out.
+    -- Incremented every time a pull opens, so a view tells a new pull from a
+    -- continuation without holding a reference to the record.
     generation = 0,
-    -- Set by any transition, cleared by consumeChange(). The view drives off
-    -- this instead of subscribing, so there is one tick and one redraw rather
-    -- than a callback firing mid-fight from inside the bus.
+    -- Set by any transition, cleared by consumeChange(). The view polls this
+    -- on its tick instead of subscribing, so it never redraws from inside the
+    -- bus mid-fight.
     changed = false,
   }, PullTracker)
 
@@ -179,15 +146,12 @@ function PullTracker:isEnabled()
   return self.enabled == nil or self.enabled() ~= false
 end
 
--- How long a closed pull can still be reopened, asked every time rather than once
--- at construction. How long the plate stays is a setting now, and the window the
--- tracker honours is the same number by design (D89) -- so a tracker that had
--- captured it would go on offering the old window until the interface was
--- reloaded, which is what "applies without a reload" rules out.
+-- How long a closed pull can still be reopened, read on every call: it equals
+-- the plate's visible lifetime, a setting that applies without a reload.
 --
--- Anything that is not a number falls back to the default: the seam is a closure
--- over the settings table, and a closure that hands back nil must cost the live
--- reading rather than the comparison it feeds.
+-- Anything that is not a number falls back to the default, so a settings
+-- closure that returns nil degrades to the default instead of breaking the
+-- comparison it feeds.
 function PullTracker:resumeWindow()
   local window = self.resumeSeconds
   if type(window) == "function" then
@@ -199,10 +163,9 @@ function PullTracker:resumeWindow()
   return window
 end
 
--- The record events are allowed to land in right now, or nil. ACTIVE and
--- SETTLING both qualify and CLOSED deliberately does not: a closed pull is a
--- finished statement, and a stray combat log line arriving after it must not
--- change a number the player is already reading.
+-- The record events may land in right now, or nil. ACTIVE and SETTLING qualify;
+-- CLOSED does not, so a stray combat log line cannot change a finished pull the
+-- player is reading.
 function PullTracker:recording()
   if self.phase == PullPhase.ACTIVE or self.phase == PullPhase.SETTLING then
     return self.pull
@@ -210,10 +173,9 @@ function PullTracker:recording()
   return nil
 end
 
--- Remembers one event that arrived with no pull open, dropping anything now out
--- of the window. Pruned on write rather than on a timer: the only moment the
--- contents matter is the moment a pull opens, and a buffer nobody is filling is
--- a buffer nobody is paying for.
+-- Remembers one event that arrived with no pull open, dropping anything out of
+-- the window or over the limit. Pruned on write, not on a timer: the contents
+-- only matter when a pull opens.
 function PullTracker:remember(topic, payload, at)
   local prelude = self.prelude
   prelude[#prelude + 1] = { topic = topic, payload = payload, at = at }
@@ -232,10 +194,10 @@ function PullTracker:remember(topic, payload, at)
   end
 end
 
--- Replays the shot that started the fight into the pull it started, and backdates
--- the pull to it. Anything older than the window is dropped here as well as on
--- write, because the buffer may have been sitting untouched since the last fight.
--- `backdate` is false when the pull was already running: see onCombatStarted.
+-- Replays the buffered events into the pull and backdates the pull to the
+-- earliest. The window is checked again here because the buffer may have sat
+-- untouched since the last fight. `backdate` is false when the pull was already
+-- running: see onCombatStarted.
 function PullTracker:replayPrelude(now, backdate)
   local cutoff = now - PRELUDE_SECONDS
   local earliest
@@ -251,9 +213,8 @@ function PullTracker:replayPrelude(now, backdate)
 
   self.prelude = {}
 
-  -- The fight began when the player pulled. Moving the start back is what keeps
-  -- the elapsed time, the damage per second and the experience per hour honest
-  -- about a fight whose first two seconds the client had not noticed yet.
+  -- The fight began when the player pulled; the earlier start keeps the elapsed
+  -- time, damage per second and experience per hour correct.
   if backdate and earliest ~= nil and earliest < self.pull.startedAt then
     self.pull.startedAt = earliest
   end
@@ -272,10 +233,9 @@ end
 
 -- Whether the fight starting now is the one that was already going.
 --
--- SETTLING always is: adds walking in three seconds apart are the same fight,
--- and the experience for the first group has not necessarily landed yet.
---
--- CLOSED is too, for as long as the plate is still on screen. See the header.
+-- SETTLING always is: adds arriving seconds apart are the same fight, and the
+-- first group's experience may not have landed yet. CLOSED is too, while the
+-- plate is still on screen (see the header).
 function PullTracker:canResume(now)
   if self.pull == nil then
     return false
@@ -293,11 +253,8 @@ function PullTracker:onCombatStarted()
     return
   end
 
-  -- Already fighting, so this is not the start of anything. It could not happen
-  -- before -- the client fires PLAYER_REGEN_DISABLED once on the way in, and
-  -- while a pull was ACTIVE the player was in combat by definition -- but an
-  -- engagement can now open a pull a moment before the client agrees, and the
-  -- REGEN event that follows must not throw away the pull it just opened.
+  -- Already fighting. An engagement can open a pull a moment before
+  -- PLAYER_REGEN_DISABLED fires, and that event must not replace the pull.
   if self.phase == PullPhase.ACTIVE then
     return
   end
@@ -308,10 +265,8 @@ function PullTracker:onCombatStarted()
     self.pull.endedAt = nil
     self.closedAt = nil
     self:transition(PullPhase.ACTIVE)
-    -- The opener of the add is replayed too, but the pull is NOT backdated to
-    -- it: this fight started when the first one did, and moving its start
-    -- forward -- or back to something inside it -- would be rewriting a
-    -- duration the player has been watching.
+    -- The add's opener is replayed but the pull is not backdated: it started
+    -- with the first fight, and its duration is already on screen.
     self:replayPrelude(now, false)
     self.changed = true
     return
@@ -348,9 +303,8 @@ function PullTracker:onCreatureDied(payload)
   if pull == nil then
     return
   end
-  -- `at` comes off the payload rather than the clock: the combat log router
-  -- already stamped it, and a kill correlated against that stamp elsewhere must
-  -- not be chained against a different one here.
+  -- `at` comes from the payload, not the clock: the combat log router stamped
+  -- it, and the chain must use the same stamp the kill was correlated against.
   pull:recordKill(payload.name, payload.at or self.clock:now())
   self.changed = true
 end
@@ -371,26 +325,18 @@ function PullTracker:onAbilityUsed(payload)
   self.changed = true
 end
 
--- Who is in this fight, which is a different question from who has been hurt in
--- it. A creature that charged the player, swung and missed belongs in the pull --
--- and so does one the player has not hit back yet, which is the whole of the
--- defect this answers: the plate used to count what the player had damaged, so a
--- fight the player did not start read as a fight against nobody.
+-- Who is in this fight, not who has been hurt in it: a creature that attacked
+-- and missed, or that the player has not hit yet, belongs in the pull.
 function PullTracker:onEnemyEngaged(payload)
   if payload.name == nil then
     return
   end
   local pull = self:recording()
   if pull == nil then
-    -- A creature is fighting this character, and the client has not said
-    -- PLAYER_REGEN_DISABLED yet. That gap is not a corner case: eight of the nine
-    -- fights in the session of 2026-09-22 were opened by a combat log line, and
-    -- the one thing that could have seen a creature coming first -- the nameplate
-    -- sweep -- was switched off until a pull existed, so it never once got to be
-    -- the thing that started one.
-    --
-    -- Remembered as well as opened, so the ordinary path still replays it and the
-    -- pull's own per-creature rule keeps one creature from being counted twice.
+    -- A creature is fighting this character before PLAYER_REGEN_DISABLED has
+    -- fired, which is the common case, so the engagement opens the pull. It is
+    -- also remembered, so the ordinary replay path records it and the pull's
+    -- per-creature rule keeps it from being counted twice.
     if not self:isEnabled() then
       return
     end
@@ -401,9 +347,8 @@ function PullTracker:onEnemyEngaged(payload)
       return
     end
   end
-  -- Only when it was news. A creature already in this pull costs a table lookup
-  -- and nothing else: the combat log announces the same one about thirty times a
-  -- fight, and every one of those used to ask the plate to rebuild itself.
+  -- Only when it was news: the combat log announces the same creature many times
+  -- a fight, and a known one must not trigger a redraw.
   if pull:recordEngagement(payload.name, payload.guid) then
     self.changed = true
   end
@@ -415,16 +360,15 @@ function PullTracker:onDamageDealt(payload)
   end
   local pull = self:recording()
   if pull == nil then
-    -- Same reasoning as the cast above, and it carries the target's name too --
-    -- so the creature that was pulled is already in the list when the plate
-    -- first draws, rather than appearing on the second blow.
+    -- As with the cast above; it also carries the target's name, so the pulled
+    -- creature is listed when the plate first draws.
     if self:isEnabled() then
       self:remember(EventTopic.DAMAGE_DEALT, payload, self.clock:now())
     end
     return
   end
-  -- The name and the guid ride on the same payload as the amount, so the pull
-  -- learns what it is fighting from the first blow rather than from the kill.
+  -- The name and guid ride with the amount, so the pull learns what it is
+  -- fighting from the first blow rather than from the kill.
   pull:recordDamageDealt(payload.amount, payload.name, payload.guid)
   self.changed = true
 end
@@ -435,10 +379,8 @@ function PullTracker:onDamageTaken(payload)
   end
   local pull = self:recording()
   if pull == nil then
-    -- The prelude, from the other side. An ambush lands its first blow before the
-    -- client says you are in combat, and that blow is the only thing naming the
-    -- creature that started it -- so it waits in the same buffer as the shot that
-    -- opens a pull the player chose.
+    -- An ambush lands its first blow before the client reports combat, and that
+    -- blow is the only thing naming the attacker, so it is buffered too.
     if self:isEnabled() then
       self:remember(EventTopic.DAMAGE_TAKEN, payload, self.clock:now())
     end
@@ -470,9 +412,8 @@ end
 -- The tick
 -- ---------------------------------------------------------------------------
 
--- Closes a settled pull. Called from whatever clock the composition root already
--- runs; it costs a comparison when there is nothing open, which is most of the
--- time a character is logged in.
+-- Closes a settled pull. Called from the composition root's ticker; a single
+-- comparison when nothing is settling.
 function PullTracker:tick(now)
   if self.phase ~= PullPhase.SETTLING then
     return false
@@ -502,17 +443,16 @@ function PullTracker:currentGeneration()
   return self.generation
 end
 
--- True exactly once per change, and then false until the next one. The view asks
--- this on every tick and redraws only when the answer is yes, which is what
--- keeps a plate on screen from costing anything while the player reads it.
+-- True exactly once per change, then false until the next. The view asks on
+-- every tick and redraws only on yes, so an idle plate costs nothing.
 function PullTracker:consumeChange()
   local changed = self.changed
   self.changed = false
   return changed
 end
 
--- Drops whatever is open without closing it. Used when the player turns the
--- plate off mid-fight: a pull nobody will ever see must not go on accumulating.
+-- Drops whatever is open without closing it, for when the player turns the
+-- plate off mid-fight.
 function PullTracker:reset()
   self.pull = nil
   self.phase = PullPhase.IDLE
@@ -521,9 +461,8 @@ function PullTracker:reset()
   self.changed = true
 end
 
--- Declared at the top and filled here, once the handlers exist. Replay goes
--- through the SAME functions a live event does, so a prelude can never diverge
--- from what the tracker would have recorded had the client been quicker.
+-- Filled here, once the handlers exist. Replay goes through the same handlers as
+-- a live event, so a replayed prelude records exactly what a live one would.
 PRELUDE_TOPICS[ns.core.EventTopic.ABILITY_USED] = PullTracker.onAbilityUsed
 PRELUDE_TOPICS[ns.core.EventTopic.DAMAGE_DEALT] = PullTracker.onDamageDealt
 PRELUDE_TOPICS[ns.core.EventTopic.DAMAGE_TAKEN] = PullTracker.onDamageTaken

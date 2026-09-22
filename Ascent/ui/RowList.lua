@@ -1,25 +1,13 @@
--- Ascent - rows with columns, instead of one block of tabbed text (tasks 6.2,
--- 6.3, 6.4, 6.5).
+-- Ascent - rows with columns, in a scroll frame that clips.
 --
--- The panel used to build each tab as a single string and hand it to one
--- FontString. That has three problems and only the first is cosmetic: numbers
--- cannot be aligned by padding them with spaces in a proportional font, a long
--- level has no way to scroll, and a FontString anchored only at the top grows
--- past the frame and draws over the world.
+-- One FontString per tab cannot align numbers in a proportional font, cannot
+-- scroll, and grows past its frame over the world. So rows are pooled frames:
+-- a stripe, an optional proportion bar, an optional icon, one FontString per
+-- column. The pool never shrinks, since a WoW frame cannot be destroyed.
 --
--- So: real rows, pooled and reused, inside a scroll frame that clips. A row is a
--- frame with a striping texture, an optional proportion bar, an optional icon
--- and one FontString per column. The pool never shrinks -- hiding a frame is
--- cheap, and a WoW frame cannot be destroyed anyway, so a pool that "frees" its
--- rows would be pretending.
---
--- ON THE SCROLL BACKEND. The client has a modern scroll-box system, and it is
--- better than this one. It is not used here for a specific reason: it needs five
--- globals that are not in the lint allowlist, and none of them can be verified
--- against BC Classic, which this addon supports for real (design D38). A scroll
--- frame from a template as old as the game costs one call, works identically on
--- both clients, and needs no fallback path to rot. If the modern one is ever
--- wanted, it is a change inside this file and nowhere else.
+-- The client's modern scroll-box system is not used: it needs globals that
+-- are unverified on Burning Crusade Classic, while UIPanelScrollFrameTemplate
+-- works the same on both clients. Swapping it would stay inside this file.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
@@ -30,22 +18,17 @@ local ROW_HEIGHT = 18
 local ICON_SIZE = 14
 local CELL_GAP = 6
 
--- The width a list gives up to its icon column, reserved for the WHOLE list and
--- never per row. That is the whole subtlety of it: a row whose icon the client
--- could not resolve must NOT slide its text back to the left, or a missing icon
--- would read as a different kind of row -- which is exactly the "hueco" 6.5
--- asks the degraded path not to leave. So the indent is a property of the list,
--- decided once, and a row without an icon simply leaves the space empty.
+-- The icon column's width, reserved for the whole list, never per row: a row
+-- whose icon the client could not resolve keeps its text where the others have
+-- it and leaves the space empty, rather than reading as a different kind of row.
 local ICON_COLUMN = ICON_SIZE + 4
 
 -- What the panel paints a cell that does not name an experience source with,
 -- when there is no skin resolved yet to say otherwise.
 local DEFAULT_TEXT_COLOR = { r = 0.9, g = 0.9, b = 0.92 }
 
--- The same mapping the bar uses (ui/BarRenderer.lua's applyText). Written as
--- data here because the branch that used to do it collapsed HEAVY into OUTLINE,
--- so a skin whose whole identity is a heavy face got one weight on the bar and
--- a lighter one in the panel, three pixels apart on screen.
+-- The same mapping as BarRenderer's applyText, HEAVY included, so a skin shows
+-- the same font weight on the bar and in the panel.
 local FONT_FLAGS = {
   [TextStyle.PLAIN] = "",
   [TextStyle.OUTLINE] = "OUTLINE",
@@ -63,21 +46,15 @@ RowList.__index = RowList
 -- and `icons` -- true for a list whose rows can carry one, which reserves the
 -- indent for every row in it.
 --
--- A column with no width takes whatever is left, so the common shape -- a name
--- that stretches plus a couple of right-aligned numbers -- needs no arithmetic
--- at the call site.
+-- A column with no width takes whatever is left, so a stretching name plus a
+-- few right-aligned numbers needs no arithmetic at the call site.
 --
--- THE NAME IS REQUIRED HERE, but not for the reason it first appeared to be, and
--- the distinction is worth keeping straight in a project that separates verified
--- from assumed. UIPanelScrollFrameTemplate does declare its scroll bar as
--- `$parentScrollBar` -- but its OnLoad reaches every child through parentKey and
--- never calls GetName(), so an anonymous instance is demonstrably safe on both
--- target clients. Whether the ENGINE tolerates a `$parent`-named child FRAME
--- under an anonymous parent is genuinely not verified: Blizzard's own anonymous
--- instantiations from templates are all regions, never child frames. So the name
--- stays -- it costs nothing and removes a question nobody can answer -- but it
--- was NOT what broke initialisation. That was Frozen.enum returning a proxy for
--- a list, which left this bar with zero channels to animate.
+-- The name is required. UIPanelScrollFrameTemplate declares its scroll bar as
+-- `$parentScrollBar`, but its OnLoad reaches children through parentKey and
+-- never calls GetName(), so the template itself tolerates an anonymous frame.
+-- Whether the engine tolerates a `$parent`-named child frame under an anonymous
+-- parent is unverified: the client's own anonymous template instances are all
+-- regions. A name removes the question.
 function RowList.new(options)
   options = options or {}
   if options.parent == nil then
@@ -130,8 +107,8 @@ function RowList:buildRow(index)
   row.stripe:SetAllPoints(row)
   row.stripe:Hide()
 
-  -- The proportion bar sits behind the text rather than beside it, so a row
-  -- reads as "this much of the level" at a glance without giving up a column.
+  -- The proportion bar sits behind the text, not beside it, so it costs no
+  -- column.
   row.bar = row:CreateTexture(nil, "BORDER")
   row.bar:SetPoint("LEFT", row, "LEFT", 0, 0)
   row.bar:SetHeight(self.rowHeight - 4)
@@ -143,9 +120,9 @@ function RowList:buildRow(index)
   row.icon:SetTexCoord(ICON_INSET, 1 - ICON_INSET, ICON_INSET, 1 - ICON_INSET)
   row.icon:Hide()
 
-  -- HIGHLIGHT layer plus a mouse-enabled button is all a hover needs: the client
-  -- shows and hides that layer itself, so there is no OnEnter/OnLeave pair here
-  -- to get out of step with the row being reused for different data.
+  -- A HIGHLIGHT layer on a mouse-enabled button: the client shows and hides it
+  -- on hover, so no OnEnter/OnLeave pair can fall out of step when the row is
+  -- reused for other data.
   row:EnableMouse(true)
   row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
   row.highlight:SetAllPoints(row)
@@ -160,15 +137,11 @@ function RowList:acquire(index)
   return self.rows[index] or self:buildRow(index)
 end
 
--- One FontString per column, laid out left to right. Widths are fixed so that
--- numbers line up down the column; the one column without a width absorbs the
--- remainder, which is what keeps a long creature name from pushing the figures
--- out of alignment.
--- `cells` is the row's own data, and it is here for one case: a row holding a
--- single cell is a header or a note, not a record, so it gets the whole width
--- instead of the first column's share. Without it a sentence is squeezed into the
--- name column, wraps, and -- since a row is pinned at a fixed height with nothing
--- clipping it -- draws over the rows beneath.
+-- One FontString per column, left to right. Fixed widths line numbers up down
+-- the column; the one column without a width absorbs the remainder, so a long
+-- creature name cannot push the figures out of alignment.
+-- `cells` is the row's data, read for one case: a row holding a single cell is
+-- a header or a note, and gets the whole width instead of the first column's.
 function RowList:layoutCells(row, width, cells)
   local fixed, flexible = 0, 0
   for _, column in ipairs(self.columns) do
@@ -190,12 +163,10 @@ function RowList:layoutCells(row, width, cells)
     local cell = row.cells[index]
     if cell == nil then
       cell = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      -- A cell is given a width and lives in a row pinned to a fixed height with
-      -- nothing clipping it, so a string longer than its column WRAPS onto a
-      -- second line and draws over the row beneath. Turning wrapping off turns
-      -- that overlap into a truncation, which is a legible failure instead of an
-      -- illegible one. Guarded because this is a client call and the two
-      -- flavours are not assumed to agree (design D38).
+      -- A row has a fixed height and nothing clips it, so a string longer than
+      -- its column would wrap and draw over the row beneath; without wrapping it
+      -- truncates instead. SetWordWrap is guarded: it is not assumed present on
+      -- both clients.
       if cell.SetWordWrap then
         cell:SetWordWrap(false)
       end
@@ -203,12 +174,9 @@ function RowList:layoutCells(row, width, cells)
     end
     local cellWidth = column.width or flexibleWidth
     if single then
-      -- The whole width for the one cell that has something in it, and NONE for
-      -- the columns it does not use. The second half is not tidiness: keeping
-      -- their declared widths anchored them one after another past the right
-      -- edge of the row -- empty, so nothing was drawn, but the row was laid out
-      -- outside the panel, and a pooled row reused for a record would have been
-      -- drawing there before its next layout.
+      -- The whole width for the one cell in use and zero for the others: with
+      -- their declared widths they would be anchored past the row's right edge,
+      -- outside the panel, where a pooled row reused for a record would draw.
       cellWidth = index == 1 and math.max(cellWidth, width - indent - CELL_GAP * 2) or 0
     end
     cell:ClearAllPoints()
@@ -235,8 +203,8 @@ function RowList:styleCell(cell)
   if appearance == nil then
     return
   end
-  -- GetFont for the path, never a literal: the client's default font differs by
-  -- locale, and naming a Latin one here is invisible text on a Korean client.
+  -- GetFont for the path, never a literal: the default font differs by locale,
+  -- and a Latin font draws no glyphs on a Korean client.
   local path = cell:GetFont()
   local flags = FONT_FLAGS[appearance.text.style] or "OUTLINE"
   if path ~= nil then
@@ -252,16 +220,15 @@ end
 --   color      optional colour for the first cell, for a row that names a source
 function RowList:setRows(rows)
   local width = self.scroll:GetWidth() or 0
-  -- The skin's own text colour, not an off-white constant. The bar paints its
-  -- text with this; a panel that did not was the same skin in two colours.
+  -- The skin's text colour, the one the bar paints with, so both surfaces agree.
   local textColor = self.appearance ~= nil and self.appearance.text.color or DEFAULT_TEXT_COLOR
 
   for index, data in ipairs(rows) do
     local row = self:acquire(index)
     self:layoutCells(row, width, data.cells)
 
-    -- Striping, not a border per row: alternating backgrounds are what let the
-    -- eye follow a line across three columns without losing it.
+    -- Alternating backgrounds, not a border per row, so the eye can follow a
+    -- line across the columns.
     if index % 2 == 0 then
       row.stripe:SetColorTexture(1, 1, 1, 0.04)
       row.stripe:Show()
@@ -278,10 +245,9 @@ function RowList:setRows(rows)
       row.bar:Hide()
     end
 
-    -- The indent is what makes room for the icon, and a list that did not ask
-    -- for one has none: drawing an icon there would put it straight back under
-    -- the first cell, which is the defect the indent exists to remove. So the
-    -- invariant is enforced here rather than left to the caller to remember.
+    -- The indent makes room for the icon; a list without one would draw the
+    -- icon under the first cell, so an icon is only drawn when there is an
+    -- indent, whatever the caller passes.
     if data.icon ~= nil and self.indent > 0 then
       row.icon:SetTexture(data.icon)
       row.icon:Show()
@@ -301,8 +267,8 @@ function RowList:setRows(rows)
       if column == 1 and data.color ~= nil then
         cell:SetTextColor(data.color.r, data.color.g, data.color.b)
       else
-        -- Alpha included, the way the bar and the panel's own title pass it: a
-        -- skin that dims its text dims it on both surfaces or on neither.
+        -- Alpha included, as the bar and the panel title pass it, so a skin that
+        -- dims its text dims it on every surface.
         cell:SetTextColor(textColor.r, textColor.g, textColor.b, textColor.a or 1)
       end
     end

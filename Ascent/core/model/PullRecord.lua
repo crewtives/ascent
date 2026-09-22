@@ -1,32 +1,24 @@
 -- Ascent - one pull: everything that happened between entering combat and the
 -- moment the last consequence of it landed.
 --
--- Every other record in this addon is keyed to a LEVEL. That is the right unit
--- for "where did this level's experience come from" and the wrong one for the
--- question a player actually asks mid-fight, which is "how did THAT go". A pull
--- is the smallest unit of play that has an answer, and nothing here had one.
+-- Every other record in this addon is keyed to a level, which answers where a
+-- level's experience came from but not how one fight went. A pull is the smallest
+-- unit of play that answers that.
 --
--- WHY `abilities` IS SHAPED LIKE LEVELRECORD'S. It is keyed exactly the way that
--- record keys its own -- spell id, or one of AbilityKey's two reserved synthetic
--- keys for auto attacks -- and holds the same AbilityUsage objects. That is not a
--- coincidence, it is the point: core/service/AbilityRankingViewModel.lua reads
--- nothing but `record.abilities`, so it ranks a pull with no change and no second
--- implementation.
+-- `abilities` has LevelRecord's shape: keyed by spell id, or by one of
+-- AbilityKey's two reserved synthetic keys for auto attacks, and holding the same
+-- AbilityUsage objects. core/service/AbilityRankingViewModel.lua reads nothing
+-- but `record.abilities`, so it ranks a pull with no second implementation.
 --
--- WHAT A COMBO IS, precisely, because the word is vaguer than the number.
--- A combo is consecutive kills separated by less than `comboWindow` seconds.
--- It is NOT the same as the pull's kill count: a pull where three things died
--- in six seconds and a fourth died forty seconds later was a chain of three and
--- then a chain of one, and reporting it as four would flatter the player about a
--- fight they did not have. `bestStreak` keeps the longest chain the pull
--- contained; `streak` is the one still running.
+-- A combo is consecutive kills separated by at most `comboWindow` seconds. It is
+-- not the pull's kill count: three deaths in six seconds and a fourth forty
+-- seconds later are a chain of three and then a chain of one. `bestStreak` keeps
+-- the longest chain the pull contained; `streak` is the one still running.
 --
--- NOTHING HERE IS PERSISTED. A pull is answered while the player can still
--- remember it and then it is gone -- the level record already holds every
--- aggregate that has to survive a logout, and writing a second copy of the same
--- kills to disk once per fight is how a saved variables file gets big for no
--- reason. This model therefore has no toStored/restore pair, deliberately, and
--- that absence is the only thing about it that is worth checking twice.
+-- Nothing here is persisted, so this model deliberately has no toStored/restore
+-- pair: the level record already holds every aggregate that has to survive a
+-- logout, and a second copy of the same kills per fight would only grow the saved
+-- variables file.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -37,16 +29,14 @@ local AbilityUsage = ns.core.AbilityUsage
 
 -- Seconds of quiet after which the next kill starts a new chain rather than
 -- extending the running one. Long enough to survive a pull where one target
--- takes a while to fall, short enough that a pause to drink ends the chain --
--- which is what a player means when they say the combo dropped.
+-- takes a while to fall, short enough that a pause to drink ends the chain.
 local COMBO_WINDOW = 10
 
 local PullRecord = {}
 PullRecord.__index = PullRecord
 
--- `startedAt` is a reading of the session clock, not a wall time: a pull never
--- outlives the session it happened in, so the clock whose contract says it is
--- meaningless between sessions is exactly the right one.
+-- `startedAt` is a reading of the session clock (Clock.now), not a wall time: a
+-- pull never outlives the session it happened in.
 function PullRecord.new(startedAt, options)
   Guard.number(startedAt, "PullRecord.startedAt")
   options = options or {}
@@ -62,17 +52,14 @@ function PullRecord.new(startedAt, options)
     xpBySource = {},
 
     kills = 0,
-    -- name -> { engaged = n, killed = m }. TWO numbers and not one, because the
-    -- question the plate answers mid-fight is "what am I fighting", and a tally
-    -- of the dead cannot answer it -- it is empty for the whole of the first
-    -- fight, which is exactly when a player is looking. `engaged` counts the
-    -- distinct creatures of that name this pull has landed a blow on; `killed`
-    -- counts how many of them fell.
+    -- name -> { engaged = n, killed = m }. Two numbers, because the plate shows
+    -- mid-fight what is being fought, and a tally of the dead is empty until the
+    -- first kill. `engaged` counts the distinct creatures of that name in this
+    -- pull; `killed` counts how many of them fell.
     creatures = {},
     -- The GUIDs already counted as engaged, so ten swings at one kobold are one
-    -- kobold. Cleared with the pull, never persisted, and the only reason a name
-    -- alone is not enough: two Mana Serpents are two, and the same one hit twice
-    -- is still one.
+    -- kobold. Cleared with the pull, never persisted. A name alone is not enough:
+    -- two Mana Serpents are two, and the same one hit twice is still one.
     engagedGuids = {},
 
     abilities = {},   -- LevelRecord's shape exactly; see the header
@@ -127,8 +114,8 @@ function PullRecord:recordKill(name, at)
     entry.killed = entry.killed + 1
     -- A creature can die without this pull ever having recorded a blow on it --
     -- a killing blow from a DoT applied before the pull opened, a pet's kill, a
-    -- swing whose GUID was not a creature. It was still something we fought, so
-    -- the engaged count never sits below the dead one.
+    -- swing whose GUID was not a creature. It was still fought, so the engaged
+    -- count never sits below the dead one.
     if entry.killed > entry.engaged then
       entry.engaged = entry.killed
     end
@@ -151,11 +138,11 @@ end
 -- eight times. With no guid -- a client that gave none, a source this router
 -- could not name -- the creature is counted once by name and never again, which
 -- undercounts a pack of identical adds rather than inventing one per hit.
--- Answers whether this changed anything, because the callers need to know and
--- were all guessing. Both ways of learning that a creature is in the fight are
--- repetitive by nature -- the combat log writes thirty lines about one creature
--- and a sweep sees the same nameplate four times a second -- and the pull is the
--- one place that can say which of them was news.
+--
+-- Returns whether this changed anything. Both ways of learning that a creature is
+-- in the fight repeat themselves -- the combat log writes thirty lines about one
+-- creature and a sweep sees the same nameplate four times a second -- and the pull
+-- is the one place that can say which of them was news.
 function PullRecord:recordEngagement(name, guid)
   if name == nil then
     return false
@@ -191,11 +178,10 @@ function PullRecord:recordDamageDealt(amount, name, guid)
   self:recordEngagement(name, guid)
 end
 
--- The other half of recordDamageDealt, and it was missing: something beating on
--- you is something you are fighting, whether or not you have hit it back yet. Left
--- out, a pull you did not start listed nothing and expected nothing until the first
--- blow the PLAYER landed -- a fight could run half a minute against an empty list.
--- Same engagement rule, so the two ends cannot count one creature twice.
+-- The other half of recordDamageDealt: something hitting the player is being
+-- fought, whether or not the player has hit it back. Without it, a pull the player
+-- did not start would list nothing until the player's first blow. Same engagement
+-- rule, so the two ends cannot count one creature twice.
 function PullRecord:recordDamageTaken(amount, name, guid)
   Guard.nonNegativeInteger(amount, "PullRecord.recordDamageTaken amount")
   self.damageTaken = self.damageTaken + amount
@@ -256,22 +242,13 @@ function PullRecord:xpPerKill()
   return self.xpTotal / self.kills
 end
 
--- Whether anything at all was observed. A pull that opened and closed with
--- nothing in it is a real thing -- combat entered by a passing proximity aggro
--- and left again -- and the plate needs to be able to say so rather than draw a
--- plaque full of zeros.
--- Nothing to say yet, which the plate reads as "stay hidden".
+-- Whether nothing at all was observed, which the plate reads as "stay hidden". A
+-- pull that opened and closed with nothing in it is real -- combat entered by a
+-- passing proximity aggro and left again -- and must not draw a plaque of zeros.
 --
--- Being fought counts, and it did not: the four figures below are all about
--- damage, so a creature beating on an absorb shield left every one of them at
--- zero and the plate stayed down for the whole fight -- reported from a real one
--- on 2026-09-22, with the creature enrolled, the pull open and the plate hidden.
--- The same held for a creature charging across the ground, which is the case the
--- nameplate watch exists for: it would enrol, and nobody would see it.
---
--- A pull with a creature in it HAS something to show -- that row is the thing the
--- plate is for. What this still keeps out is a pull with nothing in it at all,
--- which is the header of zeroes the guard was written for.
+-- Being fought counts. A creature hitting an absorb shield, or charging across
+-- the ground as seen by the nameplate watch, leaves every damage figure at zero,
+-- and a pull with an engaged creature still has that row to show.
 function PullRecord:isEmpty()
   return self.kills == 0 and self.xpTotal == 0 and self.damageDealt == 0
     and self.damageTaken == 0 and self:engagedCount() == 0

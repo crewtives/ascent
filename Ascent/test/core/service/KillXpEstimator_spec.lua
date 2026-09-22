@@ -1,15 +1,14 @@
--- Pricing the kills a quest still asks for, out of what this character has
--- actually been paid. The three rules under test are that the good number comes
--- from the creature itself as killed with the same number of people sharing the
--- pay, that nothing is ever borrowed from a different group size, and that
--- anything wider than that says so.
+-- Prices the kills a quest still asks for from what this character has been
+-- paid. The good number comes from the creature itself, killed with the same
+-- number of people sharing the pay; nothing is borrowed from a different group
+-- size; and anything wider than that says so.
 
 describe("KillXpEstimator", function()
   local ns, KillXpEstimator, Basis, LevelRecord, XpLedger, XpGain, CreatureKey, XpSource, QuestObjective
 
   -- The populations these tests keep apart. Playing alone is a measurement and
   -- has a number; nil is nobody having counted, which is not the same thing and
-  -- deliberately not the same key (D84).
+  -- not the same key.
   local ALONE, DUO, FIVE = 1, 2, 5
 
   before_each(function()
@@ -59,10 +58,9 @@ describe("KillXpEstimator", function()
     end)
   end)
 
-  -- D82: the group size IS the population, and a rate is only ever the average of
-  -- one of them. Three answers make up the whole rule -- what that size paid,
-  -- nothing when that size has paid nothing, and still nothing when a different
-  -- size has plenty.
+  -- The group size is the population, and a rate is only ever the average of one
+  -- of them: what that size paid, nothing when that size has paid nothing, and
+  -- still nothing when a different size has plenty.
   describe("one group size at a time", function()
     it("answers with the kills taken at the size it was asked about", function()
       local record = level()
@@ -92,7 +90,7 @@ describe("KillXpEstimator", function()
     end)
 
     -- The kills nobody counted are a third population, not a spare copy of any
-    -- other one: they answer only when they are what was asked for (D84).
+    -- other one: they answer only when they are what was asked for.
     it("keeps what nobody counted out of every size that was counted", function()
       local record = level()
       kill(record, "Springpaw Lynx", 15343, 6, 30)
@@ -111,8 +109,8 @@ describe("KillXpEstimator", function()
 
       assert.equal(42, KillXpEstimator.creatureRate(record, "Springpaw Lynx", DUO))
       assert.equal(22, KillXpEstimator.creatureRate(record, "Springpaw Lynx", FIVE))
-      -- 32 is the average over all four kills: the number a pooled read gives to
-      -- both sizes, true of neither, and the reason this change exists.
+      -- 32 is the average over all four kills: what a pooled read would give both
+      -- sizes, and true of neither.
       assert.not_equal(32, KillXpEstimator.creatureRate(record, "Springpaw Lynx", DUO))
       assert.not_equal(32, KillXpEstimator.creatureRate(record, "Springpaw Lynx", FIVE))
     end)
@@ -174,8 +172,8 @@ describe("KillXpEstimator", function()
       assert.equal(Basis.LEVEL, estimate.basis)
     end)
 
-    -- D83: a history written before the context was counted still prices things,
-    -- and the price says what it is rather than claiming to be of this moment.
+    -- A history written before the context was counted still prices things, and
+    -- the price says what it is rather than claiming to be of this moment.
     it("declares a rate from before the context was counted as one that groups contexts", function()
       local record = level()
       kill(record, "Springpaw Lynx", 15343, 6, 40)

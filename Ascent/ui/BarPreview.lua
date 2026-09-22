@@ -1,25 +1,11 @@
--- Ascent - a bar to look at while you change how it looks (tasks 7.2, 7.3).
+-- Ascent - a bar to look at while you change how it looks.
 --
--- No addon in the ecosystem shows you the bar while you configure it; you pick a
--- texture from a dropdown and go outside to see what you did. This is the piece
--- that closes that, and it exists at all because of design D34: the renderer was
--- split from the compositor precisely so a second bar could be built that has no
--- saved position, no drag, no scale and no ability to hide itself. A preview
--- cannot be allowed to move or hide the real bar.
---
--- It derives its channel shares through core's own XpBarViewModel, the same call
--- the real bar makes, so the preview cannot drift into showing something the bar
--- would never show.
---
--- IT DOES NOT OWN THE LEVEL IT DRAWS (7.3). The sample is handed in, and the
--- composition root takes it from the demo driver -- the module that already
--- scripts a synthetic level, and the only one that should. A sample declared in
--- here instead would be a second synthetic level to keep level with the first by
--- hand, and it would drift the first time either changed.
---
--- Two sizes of the same thing: the big one at the top of the options panel, which
--- animates and replays events, and the small ones in the skin gallery, which are
--- static and exist only to answer "what does this one look like".
+-- Built on BarRenderer alone, so it has no saved position, drag, scale or
+-- hiding of its own and cannot move or hide the real bar. Its shares come from
+-- XpBarViewModel, the same call the real bar makes. The sample level is handed
+-- in from the demo driver, the one module that scripts a synthetic level.
+-- Two sizes: the animated one at the top of the options panel, and the static
+-- swatches of the skin gallery.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
@@ -70,9 +56,8 @@ function BarPreview.new(options)
   return self
 end
 
--- `showQuestPending` is true whatever the player's own setting says: this bar
--- exists to show what the bar CAN draw while they are choosing how it looks, and
--- a channel hidden by a setting is a channel they cannot see themselves style.
+-- `showQuestPending` is true whatever the player's setting says: the preview
+-- shows every channel the bar can draw, so each one can be seen while styled.
 function BarPreview:shares()
   return XpBarViewModel.shares(XpBarViewModel.build(self.sample.record, {
     restedXp = self.sample.restedXp,
@@ -81,9 +66,9 @@ function BarPreview:shares()
   }))
 end
 
--- Applies an appearance and repaints. `motion` of 0 -- the default for a gallery
--- swatch -- lands on the final state with no animation at all, which is the same
--- code path the real bar takes when the player turns motion off.
+-- Applies an appearance and repaints. `motion` of 0, the default for a gallery
+-- swatch, lands on the final state at once: the path the real bar takes with
+-- motion turned off.
 function BarPreview:apply(appearance, motion)
   self.renderer:applyAppearance(appearance)
   self.tween:setTarget(self:shares(), self.animated and (motion or 1) or 0)
@@ -107,8 +92,7 @@ function BarPreview:tick(elapsed)
   return true
 end
 
--- Replays the move from empty to full, so the player can see the motion settings
--- they just changed without going outside to kill something.
+-- Replays the move from empty to full, to show the current motion settings.
 function BarPreview:replay(motion)
   self.tween:setTarget({}, 0)
   self.tween:setTarget(self:shares(), motion or 1)

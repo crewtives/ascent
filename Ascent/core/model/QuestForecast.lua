@@ -2,8 +2,8 @@
 --
 -- The stored reward is always the full, unreduced value. The reduction for
 -- handing in a quest far below your level is applied when reporting, never when
--- storing: store a reduced value once and the next level-up reduces it again,
--- and the forecast drifts quietly downwards with nothing to show for it.
+-- storing: a reduced value stored once is reduced again at the next level-up,
+-- and the forecast drifts downwards.
 --
 -- `reward = nil` and `reward = 0` are different answers. Nil means no trustworthy
 -- source had a number, and those quests are counted and reported rather than
@@ -114,7 +114,7 @@ function QuestForecast.restore(stored)
 
   -- The constructor's invariant, restated rather than enforced. Stored data that
   -- claims a reward with no provenance, or a provenance with no reward, disagrees
-  -- with itself, and the honest reading of a disagreement is that nobody knows.
+  -- with itself, and is read as unknown.
   if reward == nil then
     origin = QuestXpOrigin.UNKNOWN
   elseif origin == QuestXpOrigin.UNKNOWN then

@@ -41,9 +41,6 @@ describe("PullTracker", function()
     assert.equal(1, tracker:currentGeneration())
   end)
 
-  -- The whole of the reported defect, end to end: a fight the player never struck
-  -- back in used to list nothing, so the plate showed a pull against no one and
-  -- expected no experience from it.
   it("lists what is beating on you in a fight you never struck back in", function()
     bus:publish(EventTopic.COMBAT_STARTED, {})
     bus:publish(EventTopic.DAMAGE_TAKEN,
@@ -73,8 +70,8 @@ describe("PullTracker", function()
     assert.equal(10, pull.startedAt, "the fight began when the first blow landed")
   end)
 
-  -- What the player actually asked for after the first fix: it should not take a
-  -- blow landing. A creature that swung and missed is in the fight.
+  -- It should not take a blow landing: a creature that swung and missed is in the
+  -- fight.
   it("counts a creature that is fighting you before it has hurt you", function()
     bus:publish(EventTopic.COMBAT_STARTED, {})
     bus:publish(EventTopic.ENEMY_ENGAGED,
@@ -89,10 +86,9 @@ describe("PullTracker", function()
     assert.equal(0, pull.damageTaken, "and nothing has hurt anyone yet")
   end)
 
-  -- The defect the whole nameplate path existed to answer, and could not: a
-  -- creature fighting this character before the client says PLAYER_REGEN_DISABLED
-  -- left the plate empty, because only that event opened a pull. Eight of the
-  -- nine fights recorded on 2026-09-22 were opened by a combat log line.
+  -- A creature can be fighting this character before the client fires
+  -- PLAYER_REGEN_DISABLED, so a combat log line opens a pull on its own; most
+  -- real fights open that way.
   it("opens a pull for a creature fighting the player before the client agrees", function()
     clock:advance(10)
 
@@ -105,9 +101,8 @@ describe("PullTracker", function()
     assert.equal(10, pull.startedAt)
   end)
 
-  -- The event that used to be the only opener arrives a moment later, and must
-  -- not throw away the pull that is already running. It could not happen before:
-  -- while a pull was ACTIVE the player was in combat by definition.
+  -- COMBAT_STARTED (the client's PLAYER_REGEN_DISABLED) arriving a moment later
+  -- must not throw away the pull that is already running.
   it("does not restart the pull when combat is declared just after", function()
     clock:advance(10)
     bus:publish(EventTopic.ENEMY_ENGAGED,
@@ -170,7 +165,7 @@ describe("PullTracker", function()
   end)
 
   -- The other end of the settling window. The client opens combat when the target
-  -- FIGHTS BACK, so the shot that started it is always early.
+  -- fights back, so the shot that started it is always early.
   describe("the prelude", function()
     it("takes the opener into the pull it opened", function()
       bus:publish(EventTopic.ABILITY_USED, { key = 589, name = "Shadow Word: Pain" })
@@ -213,9 +208,9 @@ describe("PullTracker", function()
     end)
 
     it("does not replay the same opener into a second pull", function()
-      -- Far enough past the close that the pull is genuinely over, not resumed:
-      -- inside the resume window this is the SAME fight carrying on, and the
-      -- opener it already holds is its own.
+      -- Far enough past the close that the pull is over, not resumed: inside the
+      -- resume window this is the same fight carrying on, and the opener it
+      -- already holds is its own.
       tracker = build({ resumeSeconds = 1 })
       bus:publish(EventTopic.ABILITY_USED, { key = 589, name = "Shadow Word: Pain" })
       bus:publish(EventTopic.COMBAT_STARTED, {})
@@ -239,7 +234,8 @@ describe("PullTracker", function()
     end)
   end)
 
-  -- The whole reason this module is not four lines. See PullPhase.
+  -- After combat ends the record still accepts what was in flight, and combat
+  -- resuming cancels the close (see PullPhase).
   describe("the settling window", function()
     before_each(function()
       tracker = build({ settleSeconds = 3 })
@@ -328,9 +324,9 @@ describe("PullTracker", function()
     end)
   end)
 
-  -- The settling window carried one step further: a pull stays resumable for as
-  -- long as the plate that shows it is still on screen. Pulling the next thing
-  -- while the last one fades IS chain pulling, and the counter should follow.
+  -- A pull stays resumable for as long as the plate that shows it is on screen:
+  -- pulling the next thing while the last one fades is chain pulling, and the
+  -- counter follows.
   describe("resuming a closed pull", function()
     local function closedPull(options)
       options = options or {}
@@ -396,12 +392,10 @@ describe("PullTracker", function()
       assert.equal(0, tracker:current().xpTotal)
     end)
 
-    -- How long the plate stays is the player's (D89) and this window is the same
-    -- number, so it arrives as a function and is asked for at the moment the
-    -- question comes up. A tracker built with the old value would go on offering
-    -- the old window until the interface was reloaded -- and this is the tracker
-    -- that decides what counts as the same fight, so that would be a reload
-    -- between changing a slider and the records agreeing with what is on screen.
+    -- How long the plate stays is the player's setting and this window is the
+    -- same number, so it arrives as a function and is asked for when needed. A
+    -- tracker holding the value it was built with would keep the old window until
+    -- a reload, and its records would disagree with what is on screen.
     it("asks for the window every time rather than keeping the one it was built with", function()
       local window = 7
       tracker = build({ settleSeconds = 1, resumeSeconds = function() return window end })
@@ -423,9 +417,9 @@ describe("PullTracker", function()
       assert.equal(0, tracker:current().xpTotal)
     end)
 
-    -- The other direction, and the one that says WHEN it is read: the pull was
-    -- closed while the window was short, and what decides whether it can carry on
-    -- is the window in force at the moment somebody pulls again.
+    -- The other direction, and when it is read: the pull closed while the window
+    -- was short, and whether it can carry on is decided by the window in force
+    -- when somebody pulls again.
     it("measures a pull that closed earlier against the window in force now", function()
       local window = 3
       tracker = build({ settleSeconds = 1, resumeSeconds = function() return window end })
@@ -445,8 +439,7 @@ describe("PullTracker", function()
       assert.equal(44, tracker:current().xpTotal, "the counter kept what it had")
     end)
 
-    -- A session with no views at all still has to answer the question, and the
-    -- fallback is the value this file has always carried.
+    -- A session with no views at all still has to answer the question.
     it("falls back to its own window when the seam answers with nothing", function()
       tracker = build({ settleSeconds = 1, resumeSeconds = function() return nil end })
 
@@ -519,10 +512,10 @@ describe("PullTracker", function()
     end)
     assert.equal(1, tracker:current().kills)
   end)
-  -- The plate rebuilds when the tracker says something changed, and every one of
-  -- the ~30 lines the combat log writes about one creature used to say so. The
-  -- pull is the one place that knows which of them was news; both ways of
-  -- learning a creature is in the fight are repetitive by nature.
+  -- The plate rebuilds when the tracker says something changed, and the combat
+  -- log writes some thirty lines about one creature. The pull is the one place
+  -- that knows which of them was news; both ways of learning a creature is in the
+  -- fight repeat by nature.
   it("asks for a redraw once per creature, not once per line about it", function()
     bus:publish(EventTopic.COMBAT_STARTED, {})
     assert.is_true(tracker:consumeChange())
@@ -531,8 +524,8 @@ describe("PullTracker", function()
       { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
     assert.is_true(tracker:consumeChange(), "the first one is news")
 
-    -- Consumed between each, or the flag being reset would hide the difference
-    -- and this would pass with or without the gate -- which it did, first try.
+    -- Consumed between each line, or the flag being reset would hide the
+    -- difference and this would pass with or without the gate.
     for line = 2, 10 do
       bus:publish(EventTopic.ENEMY_ENGAGED,
         { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })

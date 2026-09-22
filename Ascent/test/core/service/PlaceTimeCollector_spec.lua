@@ -1,7 +1,6 @@
--- The denominator of every per-place rate. What makes this collector worth its own
--- file is the case nothing else records: a place that paid no experience at all
--- still cost the level its minutes, and a breakdown that left it out would flatter
--- every place that did pay.
+-- The denominator of every per-place rate. It records what nothing else does: a
+-- place that paid no experience still cost the level its minutes, and leaving it
+-- out would flatter every place that did pay.
 
 describe("PlaceTimeCollector", function()
   local ns, collector, record, clock, EventTopic
@@ -51,8 +50,7 @@ describe("PlaceTimeCollector", function()
     assert.equal(120, secondsAt("dungeon:389"))
   end)
 
-  -- The whole reason this collector exists. The ledger only ever creates an entry
-  -- for a place that paid something.
+  -- The ledger only creates an entry for a place that paid something.
   it("records a place that never paid a single point of experience", function()
     observe(FOREST)
     clock:advance(600)
@@ -72,9 +70,8 @@ describe("PlaceTimeCollector", function()
     assert.equal(12, secondsAt("unknown:?"))
   end)
 
-  -- 6.8, for time as well as for experience: a level-up in the middle of a long
-  -- stay fires nothing here, so the stretch has to be credited as it passes rather
-  -- than when the character finally moves.
+  -- A level-up in the middle of a long stay fires nothing here, so the stretch
+  -- is credited as it passes rather than when the character finally moves.
   it("credits a stretch that crosses a level-up to the level it happened in", function()
     observe(CHASM)
     clock:advance(60)
@@ -102,10 +99,9 @@ describe("PlaceTimeCollector", function()
       assert.equal(40, secondsAt("world:1429"))
     end)
 
-    -- The gap is ABANDONED, not carried. `record` is nil for as long as
-    -- experience gain is switched off, and the session topics do not fire in that
-    -- state either -- so a standing mark meant the first tick after recording
-    -- resumed credited hours to whichever place the character left off in.
+    -- The gap is abandoned, not carried. `record` is nil while experience gain is
+    -- switched off, and the session topics do not fire then either, so a standing
+    -- mark would credit hours to the place the character left off in.
     it("does not credit a stretch where nothing was being recorded", function()
       observe(FOREST)
       clock:advance(30)
@@ -166,9 +162,9 @@ describe("PlaceTimeCollector", function()
       assert.equal(0, reads)
     end)
 
-    -- Caching the key alone still paid for a string.format and a tostring on every
-    -- tick, because placeEntry keys its map by key:id(). Five times a second for a
-    -- whole session, for a character standing still.
+    -- Caching the key alone would still pay a string.format and a tostring per
+    -- tick, because placeEntry keys its map by key:id(): five times a second, for
+    -- a character standing still.
     it("does not look the entry up again while the character has not moved", function()
       observe(FOREST)
       local lookups = 0
@@ -204,10 +200,10 @@ describe("PlaceTimeCollector", function()
     end)
   end)
 
-  -- A zone first sampled during a loading screen answers with no name and gets one
-  -- a tick or two later. The key used to be rebuilt only on a change of context or
-  -- area, so that whole stay stayed nameless and the panel reported hours spent
-  -- "somewhere the client could not name" for a zone it names perfectly well.
+  -- A zone first sampled during a loading screen answers with no name and gets
+  -- one a tick or two later. Rebuilding the key only on a change of context or
+  -- area would leave the whole stay reported as "somewhere the client could not
+  -- name".
   describe("a name that arrives after the place does", function()
     local NAMELESS_FOREST = { "world", 1429, nil }
 

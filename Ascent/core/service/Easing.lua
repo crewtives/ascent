@@ -1,16 +1,13 @@
--- Ascent - the curves motion is allowed to follow (task 4.1).
+-- Ascent - the curves motion is allowed to follow.
 --
--- Named, not passed as functions, and that is the point (design D33's corollary
--- about movement being DATA): a skin or a preset that travels as text can carry
--- "out_cubic", and cannot carry a closure. Everything that decides how the bar
--- moves therefore stays serializable, comparable and diffable.
+-- Named, not passed as functions: a skin or a preset that travels as text can
+-- carry "out_cubic" but not a closure, so everything that decides how the bar
+-- moves stays serializable, comparable and diffable.
 --
--- Every curve here obeys the same contract, and the tests assert it rather than
--- assuming it: f(0) is exactly 0, f(1) is exactly 1, and nothing in between
--- leaves [0, 1]. The last part is not decoration -- a curve that overshoots
--- would drive a boundary past its neighbour's, and a bar whose pieces cross each
--- other mid-animation is a defect, not a flourish. An overshoot curve can exist
--- one day; it will need the tween to clamp, and that is a decision to take then.
+-- Every curve obeys one contract, asserted by the tests: f(0) is exactly 0, f(1)
+-- is exactly 1, and nothing in between leaves [0, 1]. A curve that overshoots
+-- would drive a boundary past its neighbour's and make the bar's pieces cross
+-- mid-animation; adding one would need the tween to clamp.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -43,8 +40,8 @@ local CURVES = {
 Easing.DEFAULT = EasingName.OUT_CUBIC
 
 -- Never raises and never returns nil. A name out of saved data, out of an
--- imported preset, or out of a version that had one more curve than this one,
--- all resolve to the default -- losing an easing is not worth a broken bar.
+-- imported preset, or out of a version that had one more curve than this one
+-- resolves to the default.
 function Easing.byName(name)
   return CURVES[name] or CURVES[Easing.DEFAULT]
 end

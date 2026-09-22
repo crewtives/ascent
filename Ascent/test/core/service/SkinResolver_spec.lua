@@ -11,9 +11,8 @@ describe("SkinResolver", function()
   end)
 
   -- Every key of the shape, at every depth, as a sorted list of dotted paths.
-  -- This is the assertion the whole "normalize" contract rests on, and it is one
-  -- assertion rather than a combinatorial sweep of skins: if a normalized skin
-  -- has exactly the shape's keys, no downstream read can hit a missing one.
+  -- If a normalized skin has exactly the shape's keys, no downstream read can
+  -- hit a missing one, so one assertion stands in for a sweep over skins.
   local function paths(value, prefix, out)
     out = out or {}
     prefix = prefix or ""
@@ -212,9 +211,9 @@ describe("SkinResolver", function()
       assert.equal(0.3, appearance.fill.gloss)
     end)
 
-    -- One surface's own tweaks, over the choices every surface shares (D87). The
-    -- pull plate is the caller: it follows the bar's skin and the bar's own map,
-    -- and may then adjust a handful of axes for itself.
+    -- One surface's own tweaks, over the choices every surface shares. The pull
+    -- plate is the caller: it follows the bar's skin and the bar's own map, and
+    -- may then adjust a handful of axes for itself.
     describe("a surface's own layer", function()
       local function layered(skin, overrides, own)
         return SkinResolver.resolve({
@@ -228,8 +227,8 @@ describe("SkinResolver", function()
         assert.equal(7, appearance.border.thickness)
       end)
 
-      -- The whole point of the map being partial: what it leaves out is not a
-      -- decision, so changing the bar's skin still carries the plate with it.
+      -- The map is partial: what it leaves out is not a decision, so changing
+      -- the bar's skin still carries the plate with it.
       it("leaves an axis it does not state following the layer below", function()
         local skin = { border = { kind = BorderKind.BEVEL, thickness = 2 } }
 
@@ -256,10 +255,9 @@ describe("SkinResolver", function()
       assert.has_error(function() return appearance.bordr end)
     end)
 
-    -- The rule D28 states, applied to the one table a drawer reads on every
-    -- single redraw. The domain's palette carries r/g/b only, and every drawer
-    -- asks for alpha -- so if this is not filled in here, the first repaint
-    -- raises "'a' is not a key of" and takes the whole bar with it.
+    -- The table a drawer reads on every redraw. The domain's palette carries
+    -- r/g/b only and every drawer asks for alpha, so without it the first
+    -- repaint raises "'a' is not a key of" and takes the whole bar with it.
     it("gives every resolved colour a complete r/g/b/a, so a drawer can read alpha", function()
       for _, highContrast in ipairs({ false, true }) do
         local appearance = resolve({

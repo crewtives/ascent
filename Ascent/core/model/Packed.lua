@@ -3,9 +3,9 @@
 -- The client's saved variables writer spends about forty-five bytes on a line: a
 -- tab per level of nesting, the key in brackets and quotes, the assignment, the
 -- comma, and for an array element a `-- [n]` comment after it. That is a fine price
--- for a field, and a ruinous one for a field of a record of a collection. Written
--- that way an individual gain costs about 210 bytes; there are tens of thousands of
--- them in a run from one to seventy, and the file was heading for four megabytes.
+-- for a field, and far too much for a field of a record of a collection: written
+-- that way an individual gain costs about 210 bytes, and a run from one to seventy
+-- has tens of thousands of them, around four megabytes.
 --
 -- So the collections that are counted in thousands are written as text instead. One
 -- record is one line:
@@ -15,19 +15,16 @@
 --
 -- and a whole collection is one string, records separated by semicolons. That is
 -- about 31 bytes a gain rather than 210, it loses nothing, and it is what makes
--- keeping every level's full detail affordable in the first place -- the alternative
--- on the table was throwing the detail away, which would have cost the panel the
--- one thing a leveling addon is for.
+-- keeping every level's full detail affordable.
 --
--- Two rules keep the format honest:
+-- Two rules:
 --
 --   * Trailing empty fields are dropped and leading ones are not, so the position of
 --     a field is its identity and a record can gain a field in a future version
 --     without every record written before it becoming unreadable.
---   * The separators are escaped inside values. Only names ever carry free text, a
---     creature called "Grunt, the Loyal" is not something to find out about from a
---     player's corrupted history, and escaping costs nothing on the names that do
---     not need it.
+--   * The separators are escaped inside values. Only names carry free text, a
+--     creature called "Grunt, the Loyal" would otherwise corrupt its record, and
+--     escaping costs nothing on the names that do not need it.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -86,10 +83,10 @@ end
 -- asks for field 7 and gets what field 7 was written as or nothing, never the value
 -- of field 8 shifted into its place.
 --
--- False rather than nil, and that is not a detail: a table with a hole in it has no
--- defined length in 5.1, so `join(split(text))` would drop everything after the
--- first empty field and a quest id in field nine would vanish on the way back from
--- disk. Keeping the sequence dense makes that round trip an identity.
+-- False rather than nil: a table with a hole in it has no defined length in 5.1,
+-- so `join(split(text))` would drop everything after the first empty field and a
+-- quest id in field nine would vanish on the way back from disk. Keeping the
+-- sequence dense makes that round trip an identity.
 function Packed.split(text)
   local fields = {}
   if type(text) ~= "string" then
@@ -153,7 +150,7 @@ function Packed.flag(fields, index)
   return fields[index] == "1"
 end
 
--- A sequence as one string, in the order it is in. Used where the order IS the
+-- A sequence as one string, in the order it is in. Used where the order is the
 -- data: the gains of a level are its time series.
 function Packed.list(items, pack)
   local records = {}
@@ -163,10 +160,10 @@ function Packed.list(items, pack)
   return table.concat(records, RECORD)
 end
 
--- A keyed collection as one string, sorted. The sort is not tidiness: `pairs` walks
--- a map in whatever order the hash gives it, so without it the same unchanged record
--- writes a different file at every logout, and a stored format nobody can diff is a
--- stored format nobody can migrate with confidence.
+-- A keyed collection as one string, sorted. `pairs` walks a map in whatever order
+-- the hash gives it, so without the sort the same unchanged record would write a
+-- different file at every logout, and a file that cannot be diffed cannot be
+-- migrated with confidence.
 function Packed.set(items, pack)
   local records = {}
   for _, item in pairs(items) do
@@ -195,9 +192,8 @@ function Packed.unlist(text, unpack)
     end
 
     if chunk ~= "" then
-      -- Both forms, because a reader that wants a field asks for the fields and one
-      -- that restores a model of its own wants the record it was written as, and
-      -- rebuilding the second from the first is work nobody needs done twice.
+      -- Both forms: a reader that wants a field asks for the fields, and one that
+      -- restores a model of its own wants the record as it was written.
       local item = unpack(Packed.split(chunk), chunk)
       if item ~= nil then
         items[#items + 1] = item

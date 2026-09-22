@@ -1,13 +1,12 @@
 -- Ascent - the key every player-visible string is looked up by.
 --
--- Frozen on purpose (D13, D9): a typo in a key is the one localization bug that
--- would otherwise reach the player as a blank label, which "Idioma de la interfaz"
--- forbids outright. A misspelled key errors where it is read instead.
+-- Frozen so a misspelled key errors where it is read instead of reaching the
+-- player as a blank label.
 --
--- What is NOT here, deliberately: diagnostic output. The `logger:debug()` lines
--- composed in core/, the /ascent debug counter labels and the error() preconditions
--- stay literal English -- they are material for a bug report, not product copy, and
--- task 13.2 scopes this work to "barra, panel y comandos".
+-- Deliberately not here: diagnostic output. The `logger:debug()` lines composed
+-- in core/, the /ascent debug counter labels and the error() preconditions stay
+-- literal English -- they are material for a bug report, not product copy. What
+-- is localized is the bar, the panel and the commands.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -16,8 +15,7 @@ local Frozen = ns.core.Frozen
 
 ns.core.TextKey = Frozen.enum("TextKey", {
   -- Shared: one key per source, read by the bar tooltip, the panel and /ascent summary
-  -- alike. Before this table those four names existed three times over, in ui/XpBarView,
-  -- ui/ReportPanelView and app/Bootstrap.
+  -- alike.
   SOURCE_CREATURES    = "source_creatures",
   SOURCE_QUESTS       = "source_quests",
   SOURCE_EXPLORATION  = "source_exploration",
@@ -58,6 +56,14 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   BAR_NOT_OBSERVED    = "bar_not_observed",
   BAR_UNEXPLAINED     = "bar_unexplained",
   BAR_PARTIAL         = "bar_partial",
+
+  -- What stands in for a figure a level was recorded without: the source that was
+  -- missing, and whether it was missing from the start or closed part-way. Read
+  -- through UnavailableText below, never picked by a surface.
+  UNAVAILABLE_COMBAT_LOG_ABSENT = "unavailable_combat_log_absent",
+  UNAVAILABLE_COMBAT_LOG_CLOSED = "unavailable_combat_log_closed",
+  UNAVAILABLE_KILLS_ABSENT      = "unavailable_kills_absent",
+  UNAVAILABLE_KILLS_CLOSED      = "unavailable_kills_closed",
 
   -- Panel: frame and tabs
   PANEL_TITLE         = "panel_title",
@@ -117,9 +123,8 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   PANEL_NO_ABILITIES  = "panel_no_abilities",
   PANEL_TOTAL_USES    = "panel_total_uses",
   PANEL_ABILITY_ROW   = "panel_ability_row",
-  -- The two attacks that have no spell behind them, named apart. They used to
-  -- share one label, which made a melee swing and a ranged shot indistinguishable
-  -- on a surface whose whole job is to say what you pressed.
+  -- The two attacks that have no spell behind them, named apart so a melee swing
+  -- and a ranged shot can be told apart.
   PANEL_AUTO_ATTACK   = "panel_auto_attack",
   PANEL_RANGED_ATTACK = "panel_ranged_attack",
   PANEL_SPELL         = "panel_spell",
@@ -249,8 +254,8 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   CMD_APPEARANCE_RESET= "cmd_appearance_reset",
 
   -- The plate, from chat. Its own keys and not the bar's status lines, even where
-  -- the words would be the same: two surfaces sharing one key is the mistake 11.5
-  -- had to undo, and these are read side by side with the bar's.
+  -- the words would be the same: a key shared by two surfaces ends up wrong on one
+  -- of them, and these are read side by side with the bar's.
   CMD_PLATE_STATUS    = "cmd_plate_status",
   CMD_PLATE_FRAME     = "cmd_plate_frame",
   CMD_PLATE_AT        = "cmd_plate_at",
@@ -345,11 +350,11 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   OPT_BAR_HEIGHT      = "opt_bar_height",
   OPT_MOTION_SCALE    = "opt_motion_scale",
 
-  -- The pull plate's own page (D92). One page carrying the surface's name, with
-  -- three headings inside it -- the frame, what it shows, and its own look --
-  -- rather than its lock filed under Behaviour and its width under Size.
+  -- The pull plate's own page. One page carrying the surface's name, with three
+  -- headings inside it -- the frame, what it shows, and its own look -- rather
+  -- than its lock filed under Behaviour and its width under Size.
   --
-  -- Three of its controls deliberately have NO key of their own: the background
+  -- Three of its controls deliberately have no key of their own: the background
   -- opacity, the border thickness and the text size are the same three words on
   -- this page as on the bar's, and a second string saying "Text size" is a second
   -- thing to translate and one more place for the two to drift apart.
@@ -363,9 +368,9 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   OPT_PLATE_SCALE     = "opt_plate_scale",
   OPT_PLATE_WIDTH     = "opt_plate_width",
   OPT_PLATE_OPACITY   = "opt_plate_opacity",
-  -- Says what it costs, in the label, because it is not only a look: the plaque's
-  -- time on screen IS the window a closed pull can be carried on in (D89), and a
-  -- consequence the player only meets in their records is a consequence hidden.
+  -- The label says what it costs, because it is not only a look: the plaque's
+  -- time on screen is also the window in which a closed pull can be continued,
+  -- which the player would otherwise only discover in their records.
   OPT_PLATE_HOLD      = "opt_plate_hold",
   OPT_PLATE_ROWS      = "opt_plate_rows",
   OPT_PLATE_ZONE_CLOCK     = "opt_plate_zone_clock",
@@ -382,7 +387,7 @@ ns.core.TextKey = Frozen.enum("TextKey", {
 
   -- The pull plate. Short on purpose: every one of these sits in a frame a
   -- couple of hundred pixels wide, next to a number that is the actual content,
-  -- and a label that wraps is a label that should have been an icon.
+  -- and must not wrap.
   PLATE_TITLE         = "plate_title",
   PLATE_XP            = "plate_xp",
   PLATE_KILLS         = "plate_kills",
@@ -400,4 +405,27 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   CMD_UNKNOWN_OPTION  = "cmd_unknown_option",
   CMD_UNKNOWN         = "cmd_unknown",
   CMD_HANDLER_FAILED  = "cmd_handler_failed",
+})
+
+-- The sentence a surface says in place of what a level was recorded without, by
+-- the source and the reason it was off. One table rather than a choice in each
+-- surface, because three of them say it -- the panel, the bar and the chat
+-- summary -- about the same level, and a level read in two places must not read
+-- two ways. Strict like every frozen table: a reason is kept on a record only if
+-- it is in SourceState, so the lookup cannot miss.
+local RecordedSource, SourceState = ns.core.RecordedSource, ns.core.SourceState
+local TextKey = ns.core.TextKey
+
+ns.core.UnavailableText = Frozen.enum("UnavailableText", {
+  -- the three combat metrics the combat log feeds: not recorded at all
+  [RecordedSource.COMBAT_LOG] = {
+    [SourceState.ABSENT]     = TextKey.UNAVAILABLE_COMBAT_LOG_ABSENT,
+    [SourceState.UNREADABLE] = TextKey.UNAVAILABLE_COMBAT_LOG_CLOSED,
+  },
+  -- the kill line: the rest of the breakdown stands, and this says where the
+  -- experience of creatures went instead
+  [RecordedSource.XP_CHAT] = {
+    [SourceState.ABSENT]     = TextKey.UNAVAILABLE_KILLS_ABSENT,
+    [SourceState.UNREADABLE] = TextKey.UNAVAILABLE_KILLS_CLOSED,
+  },
 })

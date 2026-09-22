@@ -1,23 +1,20 @@
--- The invariant every one of these cases is really about: the amount is
--- authoritative and the source is a claim. No hint may add experience, no hint may
--- inflate it, and nothing the addon fails to explain may be dropped.
+-- The amount is authoritative and the source is a claim: no hint may add
+-- experience, no hint may inflate it, and nothing the addon fails to explain may
+-- be dropped.
 --
 -- Nothing is attributed until the window closes, so almost every test drives the
 -- events and then settles past it. That is the behaviour, not a testing artefact:
--- deciding earlier is what let a channel without the quest id beat the one with it.
+-- deciding earlier would let a channel without the quest id beat the one with it.
 
 describe("XpAttribution", function()
   local ns, bus, registry, service
   local XpSource, XpHintKind, EventTopic, RestedReading
 
   local WINDOW = 0.75 -- mirrors XpAttribution.lua's DEFAULT_WINDOW
-  -- KillCorrelator's own default (unrelated to XpAttribution's, and unchanged) --
-  -- production wires KillCorrelator.new() with no override either. Kept as its own
-  -- constant rather than reusing WINDOW: the two windows happened to be the same
-  -- number before, never the same *thing*, and the "wired to the correlator" cases
-  -- below specifically need a death to still count as within the hint's window --
-  -- and to survive in the correlator's retention -- well past XpAttribution's own,
-  -- faster window.
+  -- KillCorrelator's own default, which production uses too. Not the same thing
+  -- as WINDOW: the "wired to the correlator" cases below need a death to stay
+  -- within the hint's window, and in the correlator's retention, well past
+  -- XpAttribution's own, faster window.
   local CORRELATOR_WINDOW = 1.5
   local LATER = 1000 -- comfortably past every window used in this file
 
@@ -118,8 +115,8 @@ describe("XpAttribution", function()
     service = newService()
   end)
 
-  -- D43. The delta is the authoritative event and the hint can arrive up to a
-  -- window and a half either side of it, so reading the place beside the hint would
+  -- The delta is the authoritative event and the hint can arrive up to a window
+  -- and a half either side of it, so reading the place beside the hint would
   -- record a kill at a dungeon's door in whichever of the two places the
   -- announcement happened to catch.
   describe("where the experience was earned", function()
@@ -181,11 +178,10 @@ describe("XpAttribution", function()
     end)
   end)
 
-  -- D81, and the same shape as the place above for the same reason: what the size
-  -- describes is the server's decision about THIS payment, and the hint that
-  -- explains it can be a window and a half away -- long enough to leave a party in.
-  -- It is also the denominator of every per-creature average once the buckets are
-  -- split by it, so a gain that gets the wrong one is not a cosmetic error.
+  -- Read beside the delta, like the place above: the size describes the server's
+  -- decision about this payment, and the hint that explains it can be a window and
+  -- a half away, long enough to leave a party. It is also the denominator of every
+  -- per-creature average, so the wrong one is not a cosmetic error.
   describe("how many shared what the delta paid", function()
     it("carries the delta's group onto the kill it explained", function()
       kill("Kobold Miner", 44, 10.0)
@@ -217,8 +213,8 @@ describe("XpAttribution", function()
     end)
 
     -- A publisher that counted nobody says nothing, and nothing has to survive as
-    -- nothing all the way to the record (D84). One would be an observation this
-    -- service never made, and it is the plausible one, so it would never be caught.
+    -- nothing all the way to the record. One would be an observation this service
+    -- never made, and it is the plausible one, so it would never be caught.
     it("says nothing when the delta counted nobody, rather than saying one", function()
       kill("Kobold Miner", 44, 10.0)
       delta(44, 10.05)
@@ -239,8 +235,8 @@ describe("XpAttribution", function()
       assert.equal(XpSource.MOB_KILL, gains()[1].source)
     end)
 
-    -- Which of the two orders the client uses is not verified for either flavour,
-    -- so both have to work. This is the whole reason the window is bidirectional.
+    -- Which order the client uses is not verified on Classic Era or Burning Crusade
+    -- Classic, so both have to work, which is why the window is bidirectional.
     it("attributes a kill announced just after the experience arrived", function()
       delta(44, 10.0)
       kill("Kobold Miner", 44, 10.3)
@@ -316,10 +312,10 @@ describe("XpAttribution", function()
       assert.equal(0, service:diagnostics().pendingDeltas)
     end)
 
-    -- Regression. The delta used to settle the moment some hint filled it, which
-    -- handed it to whichever channel spoke first. The system echo of a turn-in
-    -- carries no quest id and the event that does can be milliseconds behind it, and
-    -- a delta already attributed cannot take the better answer.
+    -- The system echo of a turn-in carries no quest id, and the event that does
+    -- can be milliseconds behind it. Settling the moment a hint fills the delta
+    -- would hand it to whichever channel spoke first, and a delta already
+    -- attributed cannot take the better answer.
     it("lets the channel carrying the quest id win even when it speaks second", function()
       delta(250, 10.0)
       questEcho(250, 10.05)
@@ -334,8 +330,8 @@ describe("XpAttribution", function()
   end)
 
   describe("consumption bounded by the delta", function()
-    -- Quest experience is announced on two channels, verified. With min against the
-    -- delta the second copy adds nothing and needs no special case.
+    -- Quest experience is announced on two channels. With min against the delta
+    -- the second copy adds nothing and needs no special case.
     it("records a gain announced twice only once", function()
       quest(1234, 250, 10.0)
       questEcho(250, 10.02)
@@ -374,10 +370,9 @@ describe("XpAttribution", function()
       assert.equal(250, attributedTotal())
     end)
 
-    -- Regression. The losing copy of a twice-announced turn-in used to keep its full
-    -- amount and stay eligible, and it outranks the kill channel -- so the next
-    -- creature's experience was booked to the quest, the kill hint expired unused,
-    -- and the creature's death was reported as having paid nothing.
+    -- The losing copy of a twice-announced turn-in outranks the kill channel: if it
+    -- kept its amount and stayed eligible, the next creature's experience would be
+    -- booked to the quest and that death reported as having paid nothing.
     it("does not let the second copy of a turn-in claim the next kill", function()
       quest(1234, 500, 10.0)
       questEcho(500, 10.02)
@@ -391,10 +386,10 @@ describe("XpAttribution", function()
       assert.equal(1, service:diagnostics().duplicateAnnouncements)
     end)
 
-    -- Regression. Retiring a copy marked it spent, and spent was then read as "this
-    -- one already paid" -- so the next real turn-in of the same reward was retired
-    -- against the previous one's echo and its experience fell to UNKNOWN. Two quests
-    -- worth the same amount a second apart is ordinary play.
+    -- Retiring a copy must not read as "this one already paid", or the next real
+    -- turn-in of the same reward would be retired against the previous one's echo
+    -- and fall to UNKNOWN. Two quests worth the same amount a second apart is
+    -- ordinary play.
     it("does not collapse two real turn-ins that happen to pay the same", function()
       quest(111, 250, 10.0)
       questEcho(250, 10.02)
@@ -437,11 +432,10 @@ describe("XpAttribution", function()
   end)
 
   describe("matching by amount", function()
-    -- Regression, and the reason the design says the window matches by amount and
-    -- not only by time. An unexplained delta stays open for its whole window; with
-    -- purely time-based matching it took the front of the next kill's announcement,
-    -- splitting one creature's death into two gains -- two kills in the aggregate,
-    -- and half the experience per creature.
+    -- The window matches by amount, not only by time. An unexplained delta stays
+    -- open for its whole window, and purely time-based matching would let it take
+    -- the front of the next kill's announcement, splitting one creature's death
+    -- into two gains.
     it("does not let an older, unrelated delta take a hint that fits a later one", function()
       delta(20, 10.0)
       died("Kobold Miner", 10.5, 5644, 6)
@@ -469,10 +463,10 @@ describe("XpAttribution", function()
       assert.equal(1, kills)
     end)
 
-    -- Regression. An unexplained delta used to be attributed at one window, before
-    -- the delta belonging to a hint in its window had necessarily arrived -- so the
-    -- reservation check had nothing to see and the kill's announcement was eaten
-    -- anyway, leaving the creature credited with 20 experience instead of 44.
+    -- At one window the delta a hint is reserved for may not have arrived yet, so
+    -- the reservation check would have nothing to see and the unexplained delta
+    -- would eat the kill's announcement, crediting the creature with 20 experience
+    -- instead of 44.
     it("waits long enough to see the delta a hint is reserved for", function()
       delta(20, 10.0)
       kill("Kobold Miner", 44, 11.4)
@@ -484,10 +478,9 @@ describe("XpAttribution", function()
       assert.equal(44, totalBySource(XpSource.MOB_KILL))
     end)
 
-    -- Regression. Channel priority used to outrank proximity, so when two gains from
-    -- different channels happened to pay the same amount their experience was
-    -- swapped -- and with a third gain in the chain the kill vanished from the level
-    -- entirely, counted neither as productive nor as unproductive.
+    -- Proximity outranks channel priority: when two gains from different channels
+    -- pay the same amount, ranking by channel would swap their experience, and with
+    -- a third gain in the chain the kill would vanish from the level entirely.
     it("gives a delta the nearest hint, not the one from the higher-ranked channel", function()
       kill("Kobold Miner", 250, 10.0)
       delta(250, 10.02)
@@ -586,8 +579,8 @@ describe("XpAttribution", function()
       assert.equal(60, gain:baseAmount())
     end)
 
-    -- Spike 0.4 decides which half the parenthetical names. What must not change
-    -- either way is that the two halves add back up to what the player received.
+    -- Which half the parenthetical names is not verified in the client, so it is a
+    -- setting; either way the two halves add back up to what the player received.
     it("reads it as the base when the spike says so, and still adds up", function()
       local gain = restedGain(RestedReading.BASE, { restedRaw = 40 })
 
@@ -633,8 +626,9 @@ describe("XpAttribution", function()
   end)
 
   describe("the rested bonus read from the reserve", function()
-    -- The client's figure is twice the server's reserve, so a kill drops it by twice
-    -- the base experience: halving the drop reads the bonus without the message.
+    -- The client's figure (GetXPExhaustion) is twice the server's reserve, so a kill
+    -- drops it by twice the base experience: halving the drop reads the bonus
+    -- without the message.
     it("is half the drop in the reserve", function()
       assert.equal(40, ns.core.XpAttribution.restedFromReserve(1000, 920, 100))
     end)
@@ -665,8 +659,8 @@ describe("XpAttribution", function()
       assert.equal(0, service:diagnostics().restedDisagreements)
     end)
 
-    -- While the spike is open, a systematic disagreement is the evidence that the
-    -- parenthetical is being read as the wrong half.
+    -- Until the reading is verified, a systematic disagreement is the evidence
+    -- that the parenthetical is being read as the wrong half.
     it("counts a disagreement without overruling the parsed value", function()
       kill("Kobold Miner", 100, 10.0, { restedRaw = 40, restedBefore = 1000, restedAfter = 900 })
       delta(100, 10.0)
@@ -686,8 +680,8 @@ describe("XpAttribution", function()
 
     -- A sentence that announced no rested state needs no stand-in: the client prints
     -- the parenthetical whenever a bonus applies, so its absence is a zero. Standing
-    -- in anyway read the reserve, which is sampled off the chat line and therefore
-    -- describes the PREVIOUS kill.
+    -- in anyway would read the reserve, which is sampled off the chat line and so
+    -- still describes the previous kill.
     it("does not stand in for a line that announced no rested state at all", function()
       kill("Kobold Miner", 100, 10.0,
         { restedAnnounced = false, restedBefore = 1000, restedAfter = 920 })
@@ -710,9 +704,9 @@ describe("XpAttribution", function()
       assert.equal(40, gains()[1].restedBonus)
     end)
 
-    -- The sequence as the 2026-09-21 file recorded it, twice: a rested kill, then a
-    -- plain one whose reserve snapshot still shows the first one's drain. The bonus
-    -- belongs to the first kill and to that kill only.
+    -- A sequence recorded in the client, twice: a rested kill, then a plain one
+    -- whose reserve snapshot still shows the first one's drain. The bonus belongs
+    -- to the first kill and to that kill only.
     it("charges a rested kill once, not again to the plain kill behind it", function()
       kill("Crazed Dragonhawk", 46, 10.0,
         { restedAnnounced = true, restedRaw = 7, restedBefore = 14, restedAfter = 14 })
@@ -756,11 +750,10 @@ describe("XpAttribution", function()
       assert.equal(5, gains()[1].groupBonus)
     end)
 
-    -- The anonymous family. Its templates print the same parenthetical beside an
-    -- amount and NO creature name, which is what the client sends when it reports a
-    -- group kill without naming what died. The channel resolves no source, so for a
-    -- long time the annotation it carried was simply dropped -- and the task that
-    -- claimed modifiers reach the level record only ever tested the named channel.
+    -- The anonymous family: its templates print the same parenthetical beside an
+    -- amount and no creature name, which is what the client sends for a group kill
+    -- it does not name. The channel resolves no source, but the annotation it
+    -- carries must still reach the gain.
 
     it("adopts the parenthetical of an anonymous line onto the kill it duplicates", function()
       kill("Kobold Miner", 120, 10.0)
@@ -784,7 +777,7 @@ describe("XpAttribution", function()
       assert.equal(24, gains()[1].raidPenalty)
     end)
 
-    -- The spec forbids a group bonus and a raid penalty on one gain, so the named
+    -- A gain never carries both a group bonus and a raid penalty, so the named
     -- channel's own reading wins outright instead of being merged with this one.
     it("leaves a kill that already read a modifier of its own alone", function()
       kill("Kobold Miner", 120, 10.0, { raidPenalty = 14 })
@@ -808,7 +801,7 @@ describe("XpAttribution", function()
       assert.equal(0, gains()[1].groupBonus)
     end)
 
-    -- The case the whole thing exists for: the client announced the gain ONLY on
+    -- The case the whole thing exists for: the client announced the gain only on
     -- the anonymous line, so its parenthetical is the only record that the player
     -- was in a group for it. The source stays unknown, which is honest.
     it("keeps the annotation when the anonymous line is the only announcement", function()
@@ -895,9 +888,8 @@ describe("XpAttribution", function()
     end)
   end)
 
-  -- D21: the bar reads this to show what the client already confirmed while the
-  -- source is still settling, instead of showing a stale total for up to two
-  -- windows.
+  -- The bar reads this to show what the client already confirmed while the source
+  -- is still settling, instead of showing a stale total for up to two windows.
   describe("pendingAmount", function()
     it("is zero with nothing observed", function()
       assert.equal(0, service:pendingAmount())
@@ -982,9 +974,9 @@ describe("XpAttribution", function()
       assert.equal(0, bus:countOf(EventTopic.KILL_UNREWARDED))
     end)
 
-    -- Regression. A death used to be evicted one window after it happened, but the
-    -- hint that claims it resolves only when its delta settles, which is later. The
-    -- panel was telling a player that a kill worth 44 experience had paid nothing.
+    -- The hint that claims a death resolves only when its delta settles, later
+    -- than one window after the death: evicting the death then would report a kill
+    -- worth 44 experience as one that paid nothing.
     it("keeps a death until the gain that pays for it has been attributed", function()
       died("Kobold Miner", 9.2, 5644, 6)
       kill("Kobold Miner", 44, 10.0)
@@ -998,8 +990,8 @@ describe("XpAttribution", function()
       assert.equal(476, unrewarded[1].creature.npcId)
     end)
 
-    -- Regression. A kill the addon heard announced but never saw paid still killed
-    -- the creature: reporting it as unproductive would be believing the silence over
+    -- A kill the addon heard announced but never saw paid still killed the
+    -- creature: reporting it as unproductive would be believing the silence over
     -- the message that said it paid.
     it("does not call a kill unproductive when its announcement went unclaimed", function()
       died("Kobold Miner", 10.0, 5644, 6)
@@ -1010,22 +1002,15 @@ describe("XpAttribution", function()
       assert.equal(1, service:diagnostics().unclaimedHints)
     end)
 
-    -- Regression, and a defensive one. A lookup that found no death CLAIMED no
-    -- death, so remembering it as the answer is how one kill gets counted twice:
-    -- once as a paying kill with an unknown creature, and again as an unproductive
-    -- one when its death is later evicted unclaimed. Settling two windows out means
-    -- the combat log should always have spoken first, so this is the belt behind
-    -- the braces -- driven here by handing the correlator a death whose instant is
-    -- inside the hint's window but which reaches the addon after the gain is out.
+    -- A lookup that found no death claimed none; remembering it as the answer would
+    -- count one kill twice, as a paying kill with an unknown creature and as an
+    -- unproductive one once its death is evicted. The death here is inside the
+    -- hint's window but reaches the addon after the gain is out.
     --
-    -- THE TIMES ARE DERIVED, and they have to be. This case lives in a gap between
-    -- two thresholds that are both multiples of the window: a delta is committed
-    -- once it is two windows old, and the hint that explains it survives for three
-    -- -- and it is the RETIRING hint that finally claims the late death (see
-    -- XpAttribution:retireHint). So the gain must go out while the hint is still
-    -- alive, which means settling between those two. Written as a literal, that
-    -- instant silently fell out of the gap the moment the window was retuned, and
-    -- the case stopped testing what it says it tests while still failing loudly.
+    -- The times are derived from the window: a delta commits at two windows old and
+    -- its hint survives for three, and the retiring hint claims the late death
+    -- (XpAttribution:retireHint). The gain has to go out between the two, which a
+    -- literal would miss as soon as the window is retuned.
     it("does not count a kill twice when its death reaches the addon late", function()
       local ANNOUNCED = 10.0
       -- Past the commit at 2 windows, inside the hint's retention at 3.
@@ -1064,7 +1049,7 @@ describe("XpAttribution", function()
   describe("debug logging", function()
     -- A logger is optional and, absent, changes nothing: every test above already
     -- exercises that path. These only prove logging happens at the right moments
-    -- when a logger IS given, not the exact wording of any message.
+    -- when a logger is given, not the exact wording of any message.
     local function fakeLogger()
       local messages = {}
       return { debug = function(_, msg) table.insert(messages, msg) end }, messages

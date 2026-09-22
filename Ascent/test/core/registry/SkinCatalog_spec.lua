@@ -1,7 +1,6 @@
--- The catalogue is data, so what is worth asserting about it is not what any one
--- skin looks like -- that is a judgement call and it will change -- but the two
--- properties every entry has to have no matter how it looks: it normalizes to the
--- full shape, and it cannot make the palette unreadable.
+-- Not what any skin looks like, which will change, but what every entry must
+-- have whatever it looks like: it normalizes to the full shape, and it cannot
+-- make the palette unreadable.
 
 describe("SkinCatalog", function()
   local ns, SkinCatalog, SkinResolver, Frozen, Palette

@@ -1,4 +1,4 @@
--- GUID shapes per D6: unitType-0-serverID-instanceID-zoneUID-ID-spawnUID for a
+-- GUID shapes: unitType-0-serverID-instanceID-zoneUID-ID-spawnUID for a
 -- Creature; a Player GUID is a different, shorter shape entirely.
 
 describe("CreatureGuid", function()

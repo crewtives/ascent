@@ -49,9 +49,9 @@ describe("RetentionPolicy", function()
     assert.equal(10, record.gains[4].amount)
   end)
 
-  -- The point of trimming detail is that it costs the panel its fine grain and
-  -- never costs the level its arithmetic: everything the discarded gains
-  -- contributed is already in the aggregates.
+  -- Trimming detail costs the panel its fine grain and never the level its
+  -- arithmetic: what the discarded gains contributed is already in the
+  -- aggregates.
   it("leaves every total exactly where it was", function()
     local record = recordWith(10)
     local total, bySource = record.xpTotal, record:xpFrom(XpSource.MOB_KILL)

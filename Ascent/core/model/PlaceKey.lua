@@ -4,13 +4,12 @@
 -- changes the client's language would come back to a history split in two, the same
 -- ground recorded under two names with nothing saying they are one place.
 --
--- And no single client identifier covers both cases (D42). The map id does not
--- exist for the dungeons of one supported client and names the FLOOR rather than
--- the instance in the other; the instance id collapses the whole open world into a
--- handful of continents. So the rule is: inside an instance the instance id
--- identifies the place, outside it the map id does -- and the KIND of place travels
--- inside the key, which is what lets a place describe itself without anything
--- having to look it up afterwards.
+-- No single client identifier covers both cases. The map id does not exist for
+-- the dungeons of one supported client and names the floor rather than the
+-- instance in the other; the instance id collapses the whole open world into a
+-- handful of continents. So inside an instance the instance id identifies the
+-- place, outside it the map id does -- and the kind of place travels inside the
+-- key, so a place describes itself without a later lookup.
 --
 -- The name is kept so the place can be shown and is never part of the identity,
 -- exactly the rule CreatureKey already follows for creature names.
@@ -31,9 +30,9 @@ local UNKNOWN_ID = "?"
 local PlaceKey = {}
 PlaceKey.__index = PlaceKey
 
--- A place the client could not put a number on is THE unknown place, whatever kind
--- it claimed to be. Keeping the kind would split the one reserved entry into five
--- of them, and five buckets that all mean "somewhere" are not five places.
+-- A place the client could not put a number on is the one unknown place, whatever
+-- kind it claimed to be. Keeping the kind would split the reserved entry into five
+-- buckets that all mean "somewhere".
 function PlaceKey.new(context, areaId, name)
   if context ~= nil then
     Guard.member(PlaceContext, "PlaceContext", context, "PlaceKey.context")
@@ -68,9 +67,9 @@ function PlaceKey:equals(other)
   return other ~= nil and getmetatable(other) == PlaceKey and self:id() == other:id()
 end
 
--- Deliberately no __tostring, for the reason spelled out in CreatureKey: the PUC
--- Lua 5.1 the client runs raises on `("%s"):format(table)` even with one defined,
--- while LuaJIT honours it -- a trap that passes the suite and fails in the game.
+-- Deliberately no __tostring, as in CreatureKey: the PUC Lua 5.1 the client runs
+-- raises on `("%s"):format(table)` even with one defined, while LuaJIT honours it,
+-- so it would pass the suite and fail in the game.
 
 -- The three fields a place is written as, in order. `false` rather than nil so the
 -- sequence stays dense, which is what keeps a field's position its identity.

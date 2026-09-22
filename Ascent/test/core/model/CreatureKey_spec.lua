@@ -15,8 +15,8 @@ describe("CreatureKey", function()
     assert.equal("5644:24", key:id())
   end)
 
-  -- Experience depends on the creature's level, so the same type at two levels is
-  -- two different things to average. Collapsing them would quietly dirty the data.
+  -- Experience depends on the creature's level, so the same type at two levels
+  -- is two different things to average.
   it("treats the same type at different levels as different keys", function()
     local low = CreatureKey.new(5644, 22)
     local high = CreatureKey.new(5644, 24)

@@ -1,22 +1,22 @@
--- Ascent - the level-report panel's "combat" tab view-model (D7, task 11.3).
+-- Ascent - the level-report panel's "combat" tab view-model.
 --
 -- Pure read of the combat-related metrics a LevelRecord already carries: nothing
--- here is derived beyond what CombatSummary and LevelRecord's own methods already
--- compute. The one decision this module owns is `hasData` -- the spec's "sin
--- datos" scenario needs a truthful yes/no the UI can switch on instead of reading
--- zeros and guessing whether they mean "nothing happened" or "nothing was
--- measured".
+-- here is derived beyond what CombatSummary and LevelRecord's own methods
+-- compute. The one decision this module owns is `hasData`, a truthful yes/no the
+-- UI can switch on instead of reading zeros and guessing whether they mean
+-- "nothing happened" or "nothing was measured".
 
 local _, ns = ...
 ns.core = ns.core or {}
 
 local MetricId = ns.core.MetricId
+local RecordedSource = ns.core.RecordedSource
 
 local CombatBreakdownViewModel = {}
 
--- { average, worst }, both nil when the summary has no samples -- "no hubo
--- combate" and "el promedio fue cero" are different claims, and CombatSummary
--- already keeps them apart; this just reads its two pairs of accessors through.
+-- { average, worst }, both nil when the summary has no samples: "there was no
+-- combat" and "the average was zero" are different claims, and CombatSummary
+-- already keeps them apart.
 local function buildVitals(summary, averageMethod, worstMethod)
   if summary == nil then
     return { average = nil, worst = nil }
@@ -44,13 +44,20 @@ function CombatBreakdownViewModel.build(record)
   local hasData = record:combatSeconds() > 0 or record:deathCount() > 0
   local summary = record.metrics[MetricId.COMBAT_OUTCOME]
 
+  -- Damage and healing come from the combat log. On a level recorded without it,
+  -- from the start or from a point part-way, whatever was counted is a fraction
+  -- of the level, and a fraction is reported as not measured, with why. The rest
+  -- of this tab does not depend on the combat log.
+  local withoutCombatLog = record:unavailableReason(RecordedSource.COMBAT_LOG)
+  local damage = withoutCombatLog ~= nil and { unavailable = withoutCombatLog } or buildDamage(record)
+
   return {
     active = true,
     hasData = hasData,
     health = buildVitals(summary, "averageHealth", "worstHealth"),
     power = buildVitals(summary, "averagePower", "worstPower"),
     deathCount = record:deathCount(),
-    damage = buildDamage(record),
+    damage = damage,
     time = {
       combatSeconds = record:combatSeconds(),
       recoverySeconds = record:recoverySeconds(),

@@ -1,8 +1,8 @@
--- Ascent - reading a creature's identity out of its GUID (D6).
+-- Ascent - reading a creature's identity out of its GUID.
 --
--- A GUID is unitType-0-serverID-instanceID-zoneUID-ID-spawnUID. The level is
--- deliberately not read here: it is not in the GUID at all (see CombatLogRouter,
--- which resolves it via UnitTokenFromGUID at the point of death instead).
+-- A GUID is unitType-0-serverID-instanceID-zoneUID-ID-spawnUID. The level is not
+-- in the GUID at all: CombatLogRouter resolves it via UnitTokenFromGUID at the
+-- point of death.
 
 local _, ns = ...
 ns.adapter = ns.adapter or {}

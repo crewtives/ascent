@@ -1,22 +1,18 @@
 -- Ascent - the real Logger, printing to the default chat frame with the addon's
 -- own prefix.
 --
--- `warn` is the one method with a stated behaviour beyond printing: the same
--- warning is shown once, not on every recurrence -- the addon-lifecycle spec asks
--- for a single notice per failure, not a repeat on every subsequent event that
--- hits the same broken collector.
+-- `warn` shows the same warning once, not on every later event that hits the
+-- same broken collector.
 --
--- `debug` also has one: every debug line is appended to AscentCharDB.debugLog, a
--- circular buffer capped at DEBUG_LOG_LIMIT. Chat scrollback is not enough to
--- reconstruct an ordering question after the fact -- it is shared with every
--- other addon's output and gone once it scrolls past -- and the group 0 spikes
--- exist specifically to answer ordering questions. SavedVariables is the only
--- thing a WoW addon can actually write to disk with, and the client only flushes
--- it on logout/reload, so this is written to be read afterward, not tailed live.
--- This module reaches the global directly (not through the Repository port,
--- which is for the domain's own records) the same way SavedVariablesRepository
--- reaches AscentDB/AscentCharDB directly: both are adapters, and this is
--- diagnostic infrastructure, not a domain model with invariants to guard.
+-- `debug` also appends every line to AscentCharDB.debugLog, a circular buffer
+-- capped at DEBUG_LOG_LIMIT, because chat scrollback is shared with every other
+-- addon and gone once it scrolls past, which is too little to reconstruct the
+-- order of events afterwards. SavedVariables is the only thing an addon can
+-- write to disk, and the client flushes it only on logout or /reload, so the log
+-- is read afterwards, not tailed live. It reaches the global directly, not
+-- through the Repository port, as SavedVariablesRepository reaches AscentDB and
+-- AscentCharDB: the port is for the domain's own records, and this is diagnostic
+-- infrastructure.
 
 local ADDON_NAME, ns = ...
 ns.adapter = ns.adapter or {}
@@ -47,16 +43,13 @@ function ChatLogger:emit(message)
   DEFAULT_CHAT_FRAME:AddMessage(PREFIX .. message)
 end
 
--- WHAT THE PLAYER CAN HAND OVER.
+-- No addon can send anything over the network, so a bug report is whatever the
+-- player pastes, and chat text cannot be selected. The diagnostics run again with
+-- their output diverted into a table and the lines go to the copy dialog.
+-- Diverting rather than regenerating keeps a single builder for the report.
 --
--- The addon cannot send anything anywhere (no addon can), so a bug report is
--- whatever the player pastes. Chat text cannot be selected, so the diagnostics
--- run again with their output diverted into a table and the lines go to the copy
--- dialog instead. Diverted rather than regenerated on purpose: a second builder
--- for the same report is two reports the day somebody edits one of them.
---
--- The lines come back without the chat prefix -- it is on every line and says
--- nothing the report's own header does not.
+-- The lines come back without the chat prefix, which the report's header makes
+-- redundant.
 function ChatLogger:capture(fn)
   local sink = {}
   self.sink = sink
@@ -65,9 +58,8 @@ function ChatLogger:capture(fn)
   -- like an addon that went silent.
   self.sink = nil
   if not ok then
-    -- The lines already collected are kept and the failure is appended to them.
-    -- A diagnostic that dies halfway is exactly the one worth reading, and the
-    -- place it stopped is the report.
+    -- The lines already collected are kept and the failure is appended: where a
+    -- diagnostic stopped is the most useful part of the report.
     sink[#sink + 1] = "the report stopped early: " .. tostring(err)
   end
   return sink

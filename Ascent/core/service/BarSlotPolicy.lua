@@ -1,17 +1,13 @@
 -- Ascent - what taking over the client's bar costs the player's own settings.
 --
--- The bar can live in two places: free on the screen, where the player put it, or
--- in the place of the client's own experience bar, where its position and its size
--- are not its own any more -- they are inherited (D47).
+-- The bar lives either free on the screen, where the player put it, or in the
+-- place of the client's own experience bar, where it inherits position and size.
+-- While it does, some saved settings are inapplicable. The rule lives here so the
+-- view and the options panel ask the same question and get the same answer.
 --
--- That inheritance makes two saved settings inapplicable while it lasts. The rule
--- for which ones lives here, in the domain, for one reason: the view can then ask
--- rather than decide, and the options panel can ask the same question and get the
--- same answer, instead of each holding its own copy of a rule that must not drift.
---
--- Suspended is not cleared (D50). Nothing here writes, and nothing that reads it is
--- allowed to overwrite a suspended setting with the value it inherited: the whole
--- point is that turning the slot off gives the player back the bar they had.
+-- Suspended is not cleared. Nothing here writes, and nothing that reads it may
+-- overwrite a suspended setting with the inherited value: turning the slot off
+-- gives the player back the bar they had.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -35,31 +31,24 @@ end
 -- Nil when there is no slot to stand in, or when the client cannot say how deep
 -- its own frame is.
 --
--- The two slots differ in WHO DRAWS ON TOP, and until this existed neither of them
--- said so. The bar is a frame of its own, hung on UIParent, and a frame that
--- declares no level takes whatever the creation order gave it -- so the client's
--- own frame art landed above the bar or below it by accident, and a loading screen
--- or anything that made the client lay its bar out again could swap the two. What
--- the player saw was a bar that sat inside the client's frame all evening and then
--- painted over it, with nothing done to cause it.
+-- The two slots differ in who draws on top. The bar is a frame of its own on
+-- UIParent, and a frame that declares no level takes whatever creation order
+-- gave it, so the client's frame art would land above or below the bar by
+-- accident, and a loading screen or a client re-layout could swap the two.
 --
---   inset   -- the client's frame stays visible and the bar goes INSIDE it, so the
+--   inset   -- the client's frame stays visible and the bar goes inside it, so the
 --              bar has to draw first and the frame's art over it. One level below.
 --   replace -- the place belongs to the bar alone, so it draws last. One above.
 --
 -- A client frame already at zero has nothing below it: the bar ties with it and
--- the creation order decides again. That is the old behaviour, for one frame in
--- one client, rather than a second rule to get right.
+-- creation order decides.
+--
 -- `floorLevel` is the lowest level among the frames whose art has to stay on top,
--- and it is NOT the anchor's. The anchor is the client's experience bar, and the
--- addon makes that one invisible outright; what still draws in that strip is the
--- art of the frame AROUND it -- the divisions along the bar, the caps at its
--- ends -- which belongs to the anchor's parent and survives the anchor being
--- quieted. Going one level under the anchor therefore lands level with the parent
--- or above it, and a tie is decided by creation order, which is where this whole
--- defect lives. The floor is what makes "under the client's frame" mean the frame
--- that actually paints. Absent, the anchor's own level is used and the answer is
--- the best it can be with what it was given.
+-- not the anchor's. The anchor, the client's experience bar, is made invisible;
+-- what still draws in that strip is the art of the frame around it (the divisions
+-- along the bar, the end caps), which belongs to the anchor's parent. One level
+-- under the anchor can tie with that parent, and a tie falls to creation order.
+-- Absent, the anchor's own level is used.
 function BarSlotPolicy.depth(slot, clientLevel, floorLevel)
   if not BarSlotPolicy.active(slot) or type(clientLevel) ~= "number" then
     return nil
@@ -71,16 +60,13 @@ function BarSlotPolicy.depth(slot, clientLevel, floorLevel)
   return math.max(0, floor - 1)
 end
 
--- Which of the player's saved settings the slot makes inapplicable. Returned as a
--- table rather than two booleans so that a third suspended setting, if one ever
--- appears, is a key here and not a new return value at every call site.
+-- Which of the player's saved settings the slot makes inapplicable, as a table so
+-- another suspended setting is a new key rather than a new return value.
 function BarSlotPolicy.suspends(slot)
   local active = BarSlotPolicy.active(slot)
-  -- textAnchor joins the other two on the owner's instruction, from the client.
-  -- Where the text goes is a choice the player HAS, until the bar stands in the
-  -- client's slot -- and there, every position but inside the bar lands on the
-  -- client's own interface. It is suspended for the same reason position and size
-  -- are: not broken, not cleared, and handed straight back on the way out.
+  -- In the client's slot every text position but inside the bar lands on the
+  -- client's own interface, so textAnchor is suspended like position and size:
+  -- not cleared, and handed back when the slot is turned off.
   return { position = active, size = active, textAnchor = active }
 end
 

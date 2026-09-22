@@ -1,8 +1,6 @@
--- The client's limits are not negotiable and not remembered: they are asserted
--- here against the addon's own values, including the version the TOC actually
--- declares. A release that changed that version to something unorderable would
--- break the whole update check silently, in the client, on somebody else's
--- machine -- so it breaks here instead.
+-- The client's limits, asserted against the addon's own values, including the
+-- version the TOC declares: a version that cannot be ordered would silently
+-- break the update check in the client, so it fails here instead.
 
 describe("the version channel's contract", function()
   local ns, UpdateWatch
@@ -47,7 +45,7 @@ describe("the version channel's contract", function()
     end
 
     -- WHISPER is an unsolicited message to one person; SAY and YELL do carry
-    -- addon messages in Classic and are exactly the noise this addon must not be.
+    -- addon messages in Classic and are noise to everyone nearby.
     for _, forbidden in ipairs({ "WHISPER", "SAY", "YELL", "CHANNEL", "OFFICER" }) do
       assert.is_nil(channels[forbidden], forbidden .. " is not a channel for this")
     end

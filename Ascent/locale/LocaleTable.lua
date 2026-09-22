@@ -1,19 +1,15 @@
 -- Ascent - the Locale port, backed by the tables in this directory.
 --
--- Three branches, in the order core/port/Locale.lua fixes them: the client's
--- language has the text, so it wins; only the base has it, so the base is used;
--- nobody has it, and then the key itself shows *only* in diagnostic mode and the
--- bar's own "no data" marker shows otherwise. That last split is what keeps
--- "Idioma de la interfaz" honest -- a missing text is never a blank, and never an
--- internal identifier in front of a player who did not ask for one.
+-- Lookup order, as core/port/Locale.lua defines it: the client's language, then
+-- the base language, then a fallback. The fallback is the key itself in
+-- diagnostic mode and the "no data" marker otherwise, so a missing text is never
+-- a blank and never an internal identifier shown to a player who did not ask.
 --
--- isDebug is a function, not a captured boolean, for the same reason the options
--- panel re-reads its state on every open: the player can toggle debug mid-session
--- and a value read once at boot would answer for the rest of it.
+-- isDebug is a function, not a captured boolean: the player can toggle debug
+-- mid-session, and a value read once at boot would stay stale.
 --
--- This lives in locale/ rather than adapter/outbound/ because GetLocale is the one
--- client global .luacheckrc grants to this directory -- the layering was drawn with
--- this file in mind.
+-- It lives in locale/ rather than adapter/outbound/ because GetLocale is the one
+-- client global .luacheckrc grants to this directory.
 
 local _, ns = ...
 ns.locale = ns.locale or {}
@@ -67,8 +63,8 @@ function LocaleTable:get(key, ...)
   local text = self.current and self.current[key] or self.base[key]
 
   if text == nil then
-    -- The key is the point in diagnostic mode: it is what the player pastes into a
-    -- bug report so the gap can be found.
+    -- In diagnostic mode the key is shown so the player can paste it into a bug
+    -- report and the gap can be found.
     text = self.isDebug() and tostring(key) or self.missing
   end
 

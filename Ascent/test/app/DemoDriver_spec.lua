@@ -1,11 +1,10 @@
 -- The demo is scenery, but scenery that lies is worse than none: if it can show
--- a bar the real addon could never produce, every skin verified against it is
--- verified against a fiction. So what is asserted here is not that it looks
--- nice -- it is that every state it produces is a state the domain permits, and
--- that between them they cover what the change's requirements actually name.
+-- a bar the real addon could never produce, every skin checked against it is
+-- checked against a fiction. So every state it produces must be one the domain
+-- permits, and between them they must cover the states the bar has to draw.
 --
--- It is testable at all because DemoDriver touches no client API: it builds a
--- LevelRecord and calls one method on whatever it was handed as a bar.
+-- DemoDriver touches no client API: it builds a LevelRecord and calls one method
+-- on whatever it was handed as a bar.
 
 describe("DemoDriver", function()
   local ns, DemoDriver, XpSource
@@ -75,10 +74,9 @@ describe("DemoDriver", function()
     assert.is_true(sawAbsent and sawPresent, "no step introduces a source that was not there")
   end)
 
-  -- The reclassification of D21 is the hardest state to reach by playing -- it
-  -- needs attribution to settle several seconds after a kill -- and the one the
-  -- motion spec makes the strongest promise about. If the demo cannot produce
-  -- it, that promise cannot be checked against a real client at all.
+  -- A reclassification is the hardest state to reach by playing -- attribution
+  -- settles several seconds after a kill -- and the one the bar's animation
+  -- promises most about. Without the demo it cannot be seen on demand in a client.
   it("reproduces a reclassification: the total holds while a source hands over", function()
     local bar = fakeBar()
     local updates = walk(bar, driverWith(bar))
@@ -186,12 +184,10 @@ describe("DemoDriver", function()
     assert.equal(0, restored)
   end)
 
-  -- 7.3: the options panel's preview draws this, and no longer a sample of its
-  -- own. What the appearance spec asks of that preview is "representative data
-  -- -- several sources, a rested reserve and pending experience" and progress
-  -- that does not depend on the character earning any, so that is what is
-  -- asserted: the sample is a real level of the script, not an empty one, and it
-  -- is a whole state rather than a record with the two loose channels missing.
+  -- The options panel's preview draws this sample: representative data (several
+  -- sources, a rested reserve and pending experience) whose progress does not
+  -- depend on the character earning any. It is a real level of the script and a
+  -- whole state, not a record with the two loose channels missing.
   describe("the sample it hands the options panel", function()
     it("is a level the domain permits", function()
       local sample = DemoDriver.sample()

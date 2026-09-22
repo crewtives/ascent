@@ -30,11 +30,10 @@ describe("Pulse", function()
     end
   end)
 
-  -- The property this module exists for: a burst must not produce a falling edge
-  -- between bumps, because a falling edge repeated is a strobe. Between two
-  -- bumps the amplitude only ever decreases, and a bump only ever increases it,
-  -- so the shape is a single rise and a single fall -- never an oscillation
-  -- through zero.
+  -- A burst must not produce a falling edge between bumps: repeated, that is a
+  -- strobe. Between two bumps the amplitude only decreases and a bump only
+  -- increases it, so the shape is a single rise and a single fall, never an
+  -- oscillation through zero.
   it("never drops back to nothing in the middle of a burst", function()
     local pulse = Pulse.new()
 

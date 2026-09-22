@@ -1,11 +1,8 @@
--- Ascent - composes the report panel's three tabs into one view-model (11.1).
+-- Ascent - composes the report panel's tabs into one view-model.
 --
--- Each tab already knows how to build itself from a LevelRecord (11.2, 11.3,
--- 11.4); this only bundles the three so ui/ReportPanelView.lua has one call to
--- make per rebuild instead of three, and one `active` flag instead of three
--- that would always agree with each other anyway -- all three tab builders
--- share the exact same "record == nil" inactive convention, so there is
--- nothing to reconcile here, only to read once.
+-- Each tab builds itself; this bundles them so ui/ReportPanelView.lua makes one
+-- call per rebuild and reads one `active` flag. All tab builders share the same
+-- "record == nil" inactive convention, so there is nothing to reconcile.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -18,10 +15,8 @@ local QuestPendingViewModel = ns.core.QuestPendingViewModel
 local ReportPanelViewModel = {}
 
 -- params.questReport/questEntries are QuestForecastService:report()/:entries()'s
--- own return values (11.5) -- plain data, not the service itself, the same
--- "params is a bag of things the record does not carry" shape XpBarViewModel
--- already uses for restedXp/questPending. Pending experience is quest-log-wide,
--- not level-scoped, so it rides along here rather than coming from `record`.
+-- return values, plain data like XpBarViewModel's params. Pending experience is
+-- quest-log-wide, not level-scoped, so it comes here rather than from `record`.
 function ReportPanelViewModel.build(record, params)
   params = params or {}
 
@@ -31,18 +26,15 @@ function ReportPanelViewModel.build(record, params)
 
   return {
     active = true,
-    -- `params.sharedBy` is the group of NOW here too, even when `record` is a
-    -- level finished months ago: the per-creature rows carry the group each was
-    -- measured in, and this is what says which of them describes the character's
-    -- current situation (D81).
+    -- `params.sharedBy` is the current group size even when `record` is a past
+    -- level: each per-creature row carries the group it was measured in, and
+    -- this picks the one matching the character's current situation.
     breakdown = LevelBreakdownViewModel.build(record, params.sharedBy),
     combat = CombatBreakdownViewModel.build(record),
     abilities = AbilityRankingViewModel.build(record),
-    -- `params.currentRecord`, not `record`: the pending tab describes the quest
-    -- log of NOW even while the rest of the panel is reading a past level, and
-    -- what a creature pays is a fact about the character's current level. Pricing
-    -- today's objectives with a finished level's averages would be quoting a
-    -- character who no longer exists.
+    -- `params.currentRecord`, not `record`: the pending tab describes the current
+    -- quest log even while the panel shows a past level, and what a creature pays
+    -- depends on the character's current level.
     pending = QuestPendingViewModel.build(params.questReport, params.questEntries,
       params.currentRecord, params.sharedBy),
   }

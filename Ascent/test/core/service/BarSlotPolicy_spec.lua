@@ -42,10 +42,9 @@ describe("BarSlotPolicy", function()
     assert.is_false(BarSlotPolicy.suspends(nil).position)
   end)
 
-  -- The whole of the defect this answers: the two slots differ in who draws on
-  -- top, and a bar that states no depth takes whatever the creation order gave
-  -- it -- which is why the same setting looked inset one evening and painted over
-  -- the client's frame the next.
+  -- The two slots differ in who draws on top, and a bar that states no depth
+  -- takes whatever the creation order gave it, so the same setting could look
+  -- inset in one session and paint over the client's frame in the next.
   it("draws under the client's frame in the inset slot, and over it in replace", function()
     assert.equals(4, BarSlotPolicy.depth(BarSlot.INSET, 5))
     assert.equals(6, BarSlotPolicy.depth(BarSlot.REPLACE, 5))
@@ -64,11 +63,10 @@ describe("BarSlotPolicy", function()
     assert.is_nil(BarSlotPolicy.depth(BarSlot.REPLACE, "2"))
   end)
 
-  -- The floor, and the reason it exists. The anchor is the client's experience
-  -- bar and the addon makes THAT invisible; what still draws in the strip is the
-  -- art of the frame around it, which belongs to the anchor's parent. One level
-  -- under the anchor lands level with that parent, and a tie goes to creation
-  -- order -- which is the defect.
+  -- The floor: the anchor is the client's experience bar, which the addon makes
+  -- invisible; what still draws in the strip is the art of the frame around it,
+  -- owned by the anchor's parent. One level under the anchor would tie with that
+  -- parent, and a tie goes to creation order.
   it("goes under the frame that paints, not under the one it stands in", function()
     -- Anchor at 5, the frame whose art must stay on top at 2.
     assert.equals(1, BarSlotPolicy.depth(BarSlot.INSET, 5, 2))
@@ -94,10 +92,9 @@ describe("BarSlotPolicy", function()
     assert.equals(4, BarSlotPolicy.depth(BarSlot.INSET, 5, "2"))
   end)
 
-  -- There is nothing below zero. The bar ties with the client's frame and the
-  -- creation order decides, which is the behaviour this whole function exists to
-  -- end -- but for one frame on one client, rather than a second rule that can
-  -- itself be wrong.
+  -- There is nothing below zero: the bar ties with the client's frame and the
+  -- creation order decides. That is accepted for one frame on one client rather
+  -- than adding a second rule that could itself be wrong.
   it("cannot go below the floor the client leaves it", function()
     assert.equals(0, BarSlotPolicy.depth(BarSlot.INSET, 0))
     assert.equals(0, BarSlotPolicy.depth(BarSlot.INSET, 5, 0))

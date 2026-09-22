@@ -1,6 +1,6 @@
 -- Ascent - settings contract.
 --
--- Every tunable value has exactly one home: DEFAULTS. Services never read a
+-- Every tunable value has exactly one home: Defaults. Services never read a
 -- global config object and never carry their own fallbacks -- they are handed a
 -- resolved settings table at construction. That is what makes them testable with
 -- a different threshold without touching saved variables or the client.
@@ -27,12 +27,11 @@ ns.core.Defaults = Frozen.enum("Defaults", {
   -- Individual gains kept per level. Aggregates are always kept in full; this only
   -- bounds the fine-grained detail, and with it the saved variables file.
   --
-  -- Set high enough that a real level never reaches it. The sequence of a level's
-  -- gains is its time series and the addon exists to show it, so the limit is here
-  -- to bound growth in the worst case rather than to throw data away routinely. It
-  -- is affordable because of how a gain is written, not because there are few of
-  -- them: packed into a line of its own a gain costs about 31 bytes on disk, so even
-  -- a level that somehow reached this limit would store about 62 KB.
+  -- Set high enough that a real level never reaches it: a level's sequence of
+  -- gains is its time series, which the addon shows, so the limit bounds growth in
+  -- the worst case rather than discarding data routinely. Packed into a line of its
+  -- own a gain costs about 31 bytes on disk, so a level at this limit stores about
+  -- 62 KB.
   [SettingKey.RETENTION_LIMIT] = 2000,
 
   [SettingKey.BAR_TEXT_TOKENS] = {
@@ -45,26 +44,24 @@ ns.core.Defaults = Frozen.enum("Defaults", {
 
   [SettingKey.COLLECT_DAMAGE] = true,
 
-  -- On: an addon this early is going to be corrected version by version, and a
-  -- player running a stale one reports bugs that were fixed weeks ago. Turning it
-  -- off silences BOTH halves -- the announcing and the warning (D74).
+  -- On: a player running a stale version reports bugs that are already fixed.
+  -- Turning it off silences both halves, the announcing and the warning.
   [SettingKey.UPDATE_CHECK] = true,
   [SettingKey.LAST_SEEN_VERSION] = "",
   [SettingKey.SHOW_QUEST_PENDING] = true,
   [SettingKey.BAR_LOCKED] = false,
   [SettingKey.BAR_SCALE] = 1.0,
   -- Spelled out rather than left empty. A default of `{}` declares no shape, so
-  -- a saved position that lost a key -- an older build, a hand-edited file --
-  -- reached the views as a frozen table missing it, and reading that key raised
-  -- instead of returning nil. The default IS the shape: see resolve below.
+  -- a saved position missing a key -- an older build, a hand-edited file -- would
+  -- reach the views as a frozen table where reading that key raises. The default
+  -- is the shape: see resolve below.
   [SettingKey.BAR_POSITION] = { point = "CENTER", x = 0, y = 200 },
   [SettingKey.PANEL_POSITION] = { point = "CENTER", x = 0, y = -20, width = 420, height = 360 },
   [SettingKey.HIDE_WITHOUT_XP] = false,
 
-  -- 400x24 rather than the 200x20 the view used to hard-code. At two hundred
-  -- pixels, four segments, a one-pixel separator between each and a line of
-  -- text on top have nowhere to be: every one of them is competing for the same
-  -- handful of pixels. This is a default, not a limit -- see RANGES below.
+  -- 400x24: at 200 pixels, four segments, a one-pixel separator between each and
+  -- a line of text on top all compete for the same handful of pixels. A default,
+  -- not a limit -- see SettingRange below.
   [SettingKey.BAR_WIDTH] = 400,
   [SettingKey.BAR_HEIGHT] = 24,
 
@@ -75,16 +72,15 @@ ns.core.Defaults = Frozen.enum("Defaults", {
   -- client's slot is something the player turns on, never something they find on.
   [SettingKey.BAR_SLOT] = BarSlot.OFF,
 
-  -- Off: the bar says what it says, all the time. On, it is quiet until the
-  -- cursor is on it -- which is what a player who wants the bar to be a bar and
-  -- not a readout asks for, and it costs nothing to offer.
+  -- Off: the bar shows its text all the time. On, it is quiet until the cursor
+  -- is on it.
   [SettingKey.BAR_TEXT_ON_HOVER] = false,
 
-  -- Deliberately an EMPTY list, not a map. A map-valued default would declare a
-  -- shape, and completing this one against a shape is exactly the wrong thing:
-  -- its whole meaning is "only the fields the player actually changed", so that
-  -- those survive switching skins. Readers go through SkinResolver, which reads
-  -- possibly-frozen, possibly-partial tables safely.
+  -- Deliberately an empty list, not a map. A map-valued default would declare a
+  -- shape and have this completed against it, but its meaning is "only the
+  -- fields the player actually changed", so that those survive switching skins.
+  -- Readers go through SkinResolver, which reads possibly-frozen, possibly-partial
+  -- tables safely.
   [SettingKey.BAR_APPEARANCE] = {},
 
   -- Same shape and same reason as BAR_APPEARANCE: only what the player actually
@@ -95,34 +91,29 @@ ns.core.Defaults = Frozen.enum("Defaults", {
   [SettingKey.HIGH_CONTRAST] = false,
   [SettingKey.MOTION_SCALE] = 1,
 
-  -- On: a pull that happens is a pull the player sees. The plate answers a
-  -- question nothing else in the addon answers -- how did THAT fight go -- and a
-  -- feature nobody finds is a feature nobody has.
+  -- On: the plate answers what nothing else in the addon does, how the current
+  -- fight is going, and a player who never sees it would not know to enable it.
   [SettingKey.PLATE_ENABLED] = true,
-  -- Spelled out for the same reason BAR_POSITION is: the default IS the shape,
-  -- and a saved table that lost a key must not reach a frozen read that raises.
-  -- relativePoint is part of the shape, not an optional extra: the client can
-  -- leave a dragged frame hung BY one point TO a different one, and a stored
-  -- position missing the second half reaches a frozen read that raises.
+  -- Spelled out for the same reason as BAR_POSITION. relativePoint is part of
+  -- the shape, not an optional extra: the client can leave a dragged frame
+  -- anchored by one point to a different one, and a stored position missing the
+  -- second half would reach a frozen read that raises.
   [SettingKey.PLATE_POSITION] = { point = "CENTER", relativePoint = "CENTER", x = 0, y = -120 },
 
   -- Unlocked, like the bar's own lock and for the same reason: an update must not
-  -- hand anyone a surface they cannot move. Whoever locked the bar in order to
-  -- lock both finds the plate loose after updating -- the cost is declared in the
-  -- proposal, and the alternative was a schema version and a migration for one
-  -- checkbox (D88).
+  -- hand anyone a surface they cannot move. A player who had locked the bar finds
+  -- the plate unlocked; carrying that lock over would need a schema migration for
+  -- one checkbox.
   [SettingKey.PLATE_LOCKED] = false,
 
   [SettingKey.PLATE_SCALE] = 1.0,
 
-  -- These four were file literals in ui/PullPlateView.lua until they became
-  -- settings -- WIDTH = 240, HOLD_SECONDS = 6 -- and the row counts were
-  -- PullViewModel's own TOP_CREATURES and TOP_ABILITIES. The defaults ARE those
-  -- numbers, so the first session after updating draws the plate that was there
-  -- before and nothing moves under anyone who never opens the page.
+  -- These defaults are the plate's original fixed values, so an existing install
+  -- draws the same plate after updating and nothing moves for a player who never
+  -- opens the page.
   [SettingKey.PLATE_WIDTH] = 240,
   -- A factor, not an alpha: 1 is "whatever the plate would have drawn anyway",
-  -- which is the only default that changes nothing (D91).
+  -- the only default that changes nothing.
   [SettingKey.PLATE_OPACITY] = 1,
   [SettingKey.PLATE_HOLD_SECONDS] = 6,
   [SettingKey.PLATE_ROWS] = 4,
@@ -141,11 +132,10 @@ ns.core.Defaults = Frozen.enum("Defaults", {
     PlateZone.FOOTER,
   },
 
-  -- Empty, exactly like BAR_APPEARANCE and for exactly the same reason: an empty
-  -- table is array-like to Frozen, so it declares no shape and is taken or
-  -- rejected WHOLE rather than completed key by key. That is the point -- what is
-  -- stored here means "only what the player changed", so their one tweak survives
-  -- the bar switching skins underneath it (D87).
+  -- Empty, like BAR_APPEARANCE and for the same reason: an empty table is
+  -- array-like to Frozen, so it declares no shape and is taken or rejected whole
+  -- rather than completed key by key. What is stored here means "only what the
+  -- player changed", so their tweak survives the bar switching skins under it.
   [SettingKey.PLATE_APPEARANCE] = {},
 
   [SettingKey.EVIDENCE] = false,
@@ -165,15 +155,15 @@ ns.core.SettingRange = Frozen.enum("SettingRange", {
   [SettingKey.MOTION_SCALE] = { min = 0, max = 1 },
   [SettingKey.RECOVERY_THRESHOLD] = { min = 0, max = 1 },
 
-  -- The plate's half. Wide on purpose -- see SettingPanelRange below for the half
-  -- the player is actually offered. A hold of zero would be a plaque gone before
-  -- it can be read AND a resume window shut before the client has paid the
-  -- experience for the last kill of the pull, which in Classic arrives after it.
+  -- The plate's half. Wide on purpose -- see SettingPanelRange below for what the
+  -- player is offered. A hold of zero would remove the plaque before it can be
+  -- read and shut the resume window before the client has paid the experience for
+  -- the last kill of the pull, which in Classic arrives after it.
   [SettingKey.PLATE_WIDTH] = { min = 120, max = 800 },
   [SettingKey.PLATE_SCALE] = { min = 0.5, max = 3.0 },
   [SettingKey.PLATE_OPACITY] = { min = 0, max = 1 },
   [SettingKey.PLATE_HOLD_SECONDS] = { min = 1, max = 120 },
-  -- The ceiling here is also how many rows the plate BUILDS: they are created
+  -- The ceiling here is also how many rows the plate builds: they are created
   -- once and shown or hidden, never built in combat, so this number is paid for
   -- at load whether or not anybody asks for it.
   [SettingKey.PLATE_ROWS] = { min = 1, max = 8 },
@@ -184,16 +174,14 @@ ns.core.SettingRange = Frozen.enum("SettingRange", {
 -- above is the last line before a hand-edited file reaches a frame, and this one
 -- is what makes sense to drag.
 --
--- The bar has had both halves for a while -- its width admits 60..1600 and its
--- slider offers 120..900 -- with the panel's half written as a literal in
--- ui/OptionsPanel.lua. The plate's is declared here instead because the
--- containment between the two is a claim worth a test, and core/ is the only
--- layer that has any (D93).
+-- The bar's panel half is a literal in ui/OptionsPanel.lua (its width admits
+-- 60..1600 and its slider offers 120..900). The plate's is declared here, in core/,
+-- so a test can assert it sits inside SettingRange without loading ui/.
 --
 -- It matters most for how long the plate stays. That number also decides how long
--- a closed pull can be resumed (D89), so a hold of minutes would quietly make
--- every fight in a zone the same pull: the setting still admits it, the panel
--- does not offer it.
+-- a closed pull can be resumed, so a hold of minutes would quietly make every
+-- fight in a zone the same pull: the setting still admits it, the panel does not
+-- offer it.
 ns.core.SettingPanelRange = Frozen.enum("SettingPanelRange", {
   [SettingKey.PLATE_SCALE] = { min = 0.75, max = 2.0, step = 0.05 },
   [SettingKey.PLATE_WIDTH] = { min = 180, max = 480, step = 10 },
@@ -206,30 +194,28 @@ ns.core.SettingPanelRange = Frozen.enum("SettingPanelRange", {
 })
 
 -- Settings whose value is a closed vocabulary rather than a number or a flag.
--- Type is not enough for these: "banana" is a perfectly good string and would
--- sail through `usable` into a view that then asks what to do with it. Unlike a
--- number out of range, a word outside the vocabulary carries no intent worth
--- honouring, so it falls back to the default rather than being pulled to an edge.
+-- Type is not enough for these: any string passes `usable` and would reach a view
+-- that cannot draw it. Unlike a number out of range, a word outside the
+-- vocabulary carries no intent worth honouring, so it falls back to the default
+-- rather than being pulled to an edge.
 --
 -- Not every enumerated setting belongs here. BAR_SKIN deliberately does not: an
--- unknown skin id falls back at the reader (SkinResolver.skinFor), which is what
--- lets a skin removed in an update leave the player's choice on disk for when it
--- comes back. A slot the client cannot honour is a different thing -- see D49.
+-- unknown skin id falls back at the reader (SkinResolver.skinFor), which lets a
+-- skin removed in an update leave the player's choice on disk for when it comes
+-- back. A slot the client cannot honour right now is resolved at runtime and also
+-- kept on disk (ClientXpBar:effectiveSlot).
 ns.core.SettingChoices = Frozen.enum("SettingChoices", {
   [SettingKey.BAR_SLOT] = { [BarSlot.OFF] = true, [BarSlot.INSET] = true, [BarSlot.REPLACE] = true },
 })
 
--- Settings whose value is a LIST, every entry of which must belong to a closed
--- vocabulary. What separates these from SettingChoices above is what a bad value
--- costs: a scalar outside its vocabulary carries no intent and the whole value
--- falls back, but a list is several choices in one key, and throwing all of them
--- away because a hand-edited file carries one word this build does not know would
--- charge the player for six decisions they did make. The unknown entry is dropped
--- and the key reported, the same way a value of the wrong type is.
+-- Settings whose value is a list, every entry of which must belong to a closed
+-- vocabulary. Unlike SettingChoices above, a list is several choices in one key,
+-- so one word this build does not know must not discard the others: the unknown
+-- entry is dropped and the key reported, the same way a value of the wrong type
+-- is.
 --
--- An empty list survives this untouched, and that is deliberate: every accessory
--- zone off is a player who wants the headline and nothing else (D90), not a
--- corrupt file.
+-- An empty list survives this untouched: every accessory zone off means a player
+-- who wants the headline and nothing else, not a corrupt file.
 ns.core.SettingListChoices = Frozen.enum("SettingListChoices", {
   [SettingKey.PLATE_ZONES] = {
     [PlateZone.CLOCK] = true,
@@ -246,14 +232,13 @@ ns.core.SettingListChoices = Frozen.enum("SettingListChoices", {
 -- this list -- the button on the plate's page and `/ascent options plate reset`
 -- -- and they have to return the same keys, because the one a player reaches for
 -- is whichever surface they can still use. The bar is absent on purpose: the
--- plate follows its skin, palette and contrast (D87), so a reset that reached
--- those would undo, from a page and a command that never mention the bar,
--- choices made for the other surface.
+-- plate follows its skin, palette and contrast, so a reset that reached those
+-- would undo choices made for the bar from a page and a command that never
+-- mention it.
 --
 -- Written out rather than matched on the `plate_` prefix the persisted strings
--- happen to share: which keys belong to the plate is a decision, and the prefix
--- is what the spec uses as an independent oracle to catch this list drifting
--- behind the vocabulary.
+-- share: which keys belong to the plate is a decision, and the test suite uses
+-- the prefix as an independent check that this list keeps up with the vocabulary.
 ns.core.PlateSettingKeys = Frozen.enum("PlateSettingKeys", {
   SettingKey.PLATE_ENABLED,
   SettingKey.PLATE_POSITION,
@@ -270,9 +255,8 @@ ns.core.PlateSettingKeys = Frozen.enum("PlateSettingKeys", {
 local Settings = {}
 
 -- A number outside its declared range is pulled back to the edge rather than
--- thrown away for its default. The distinction matters: someone who typed 2000
--- for a width wanted a very wide bar, and the widest allowed is a better answer
--- than the default one.
+-- thrown away for its default: someone who typed 2000 for a width wanted a very
+-- wide bar, and the widest allowed is a better answer than the default.
 local function clamped(key, value)
   if type(value) ~= "number" or not Frozen.has(ns.core.SettingRange, key) then
     return value
@@ -327,7 +311,7 @@ local function usable(override, fallback)
   return override ~= nil and type(override) == type(fallback)
 end
 
--- A setting whose default is a map declares a SHAPE, and a stored value for it is
+-- A setting whose default is a map declares a shape, and a stored value for it is
 -- never taken or rejected whole -- it is completed key by key. Anything absent or
 -- of the wrong type falls back to that key's default, and anything this version
 -- does not know is dropped. Two things depend on this: the resolved table is
@@ -348,9 +332,9 @@ local function completeShape(override, shape)
   return resolved
 end
 
--- Only a frozen MAP declares a shape. A list-valued default (the bar's text
+-- Only a frozen map declares a shape. A list-valued default (the bar's text
 -- tokens) is copied plain by Frozen rather than proxied, so it is taken or
--- rejected whole, the way it always was.
+-- rejected whole.
 local function definesShape(fallback)
   return Frozen.isFrozen(fallback)
 end

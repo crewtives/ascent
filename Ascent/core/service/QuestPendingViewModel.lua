@@ -1,16 +1,12 @@
--- Ascent - the level report panel's "experience pendiente" tab view-model.
+-- Ascent - the level report panel's pending-experience tab view-model.
 --
--- Pure shaping, no math: total/readyTotal/unknownCount pass straight through
--- from QuestForecastService:report()'s own return value, and entries are
--- QuestForecastService:entries()'s own array, already sorted. This module has
--- no access to a LevelRecord at all, which is what makes "this projection
--- never gets folded into experience obtained" a structural guarantee rather
--- than a rule to remember (level-report-panel spec: "identificados como
--- proyección, no como experiencia obtenida").
+-- Pure shaping: total, readyTotal and unknownCount pass through from
+-- QuestForecastService:report(), and entries is its already-sorted entries()
+-- array. The level record is used only to price open kill objectives; the
+-- pending rewards are a projection and never become experience obtained.
 --
--- `active` is false only when BOTH arguments are nil -- no forecast has ever
--- been built. A report of all zeros with an empty entries array is a
--- different, active case: "Sin misiones aceptadas".
+-- `active` is false only when both report and entries are nil (no forecast has
+-- been built). All zeros with no entries is active: no quests accepted.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -19,17 +15,13 @@ local KillXpEstimator = ns.core.KillXpEstimator
 
 local QuestPendingViewModel = {}
 
--- The kills a quest still asks for, priced against what this level has actually
--- paid. Only the ones still open: an objective already finished has nothing left
--- to kill and a row saying so would be a row about the past.
+-- The kills a quest still asks for, priced against what this level has paid.
+-- Finished objectives are skipped.
 --
--- `record` is optional, and without it there are no estimates -- not estimates of
--- zero. A view built with no level in progress must not print a price.
+-- `record` is optional; without it there are no estimates, not estimates of zero.
 --
--- `sharedBy` is how many characters are sharing the pay right now, and it is the
--- group of NOW for the same reason the record is the level of now: it says which
--- population to price these kills from, and the kills a quest still asks for will
--- be taken by whoever is standing there when they are (D81, D82).
+-- `sharedBy` is how many characters share the pay right now; it picks which
+-- measured rate prices these kills, as the record picks the level.
 local function buildObjectives(objectives, record, sharedBy)
   if objectives == nil then
     return nil
@@ -45,8 +37,7 @@ local function buildObjectives(objectives, record, sharedBy)
         done = objective.done,
         needed = objective.needed,
         remaining = objective:remaining(),
-        -- nil when this level cannot price it, which is a different answer from
-        -- a price of zero and is shown as a different row.
+        -- nil when this level cannot price it, shown differently from zero.
         estimate = estimate and estimate.amount or nil,
         basis = estimate and estimate.basis or nil,
       }
@@ -66,10 +57,9 @@ local function buildEntries(entries, record, sharedBy)
       complete = entry.complete,
       adjustedReward = entry.adjustedReward,
       isKnown = entry.reward ~= nil,
-      -- Deliberately NOT added into adjustedReward, nor into the totals below:
-      -- the reward is experience that exists nowhere else, while these kills will
-      -- be recorded as creatures when they happen. One number for both would
-      -- count the same afternoon twice (design.md D2).
+      -- Not added into adjustedReward or the totals: these kills will be
+      -- recorded as creature experience when they happen, and adding them here
+      -- would count them twice.
       objectives = buildObjectives(entry.objectives, record, sharedBy),
     }
   end

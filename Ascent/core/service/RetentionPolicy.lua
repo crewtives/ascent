@@ -1,29 +1,21 @@
 -- Ascent - bounding what a level costs on disk.
 --
--- Saved variables are serialized whole at every logout, so their size is a cost the
--- player pays each time they quit. The aggregates of a level are small and bounded
--- and are kept forever; the list of individual gains is neither, and is what gets
--- trimmed.
+-- Saved variables are serialized whole at every logout, so their size is paid each
+-- time the player quits. A level's aggregates are small and kept forever; the list
+-- of individual gains is not, and is what gets trimmed.
 --
--- The trim is from the front, so what a level keeps is its most recent detail. The
--- design calls this a circular buffer, and a ring is what it is functionally -- but
--- it is realized as a bounded sequence, because the persisted form has to be a plain
--- array either way and a true ring would have to store its head index and hand every
--- reader a rotation to undo.
+-- The trim is from the front, so a level keeps its most recent detail. It is a ring
+-- functionally, realized as a bounded sequence because the persisted form is a plain
+-- array either way and a true ring would have to store its head index.
 --
--- What is NOT trimmed is the point: the per-source totals, the per-creature
--- aggregates and the kill counts already hold everything the discarded gains
--- contributed. Dropping detail costs the panel its fine grain; it never costs the
+-- The per-source totals, per-creature aggregates and kill counts already hold what
+-- the discarded gains contributed: trimming costs the panel fine grain, never the
 -- level its arithmetic.
 --
--- A finished level keeps its detail. The sequence of a level's gains is its time
--- series -- when the questing stopped and the grinding started, where the rested
--- bonus ran out -- and that is the most interesting thing a leveling analytics addon
--- holds, not a cache to be swept. What makes keeping it affordable is the on-disk
--- encoding rather than a smaller buffer: written one field per line, a gain costs
--- about 210 bytes; packed into a line of its own it costs about 31. The limit below
--- exists because the spec requires growth to be bounded, and it is set high enough
--- that a real level never reaches it.
+-- A finished level keeps its detail, because the sequence of gains is the level's
+-- time series. The packed on-disk encoding is what makes that affordable (about 31
+-- bytes a gain, against about 210 written one field per line). The limit bounds
+-- growth and is set high enough that a real level never reaches it.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -48,8 +40,8 @@ function RetentionPolicy.new(settings)
   return setmetatable({ limit = math.floor(limit) }, RetentionPolicy)
 end
 
--- Trim a record to the limit, oldest first. Returns how many were discarded, so a
--- caller in debug mode can say so rather than the detail thinning out in silence.
+-- Trims a record to the limit, oldest first. Returns how many were discarded, so
+-- a caller in debug mode can report it.
 function RetentionPolicy:apply(record)
   local gains = record.gains
   local total = #gains

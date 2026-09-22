@@ -1,10 +1,8 @@
--- The tracker is where a level record spends its life, so most of these cases are
--- about the addon not having been there: installed halfway through a level, not
--- running while three of them went by, logged out for a day, or watching a character
--- that cannot gain experience at all.
---
--- The rule they all test is the same one. The addon says what it observed and says
--- what it deduced, and never dresses the second up as the first.
+-- Most cases are about the addon not having been there: installed halfway
+-- through a level, not running while three levels went by, logged out for a day,
+-- or watching a character that cannot gain experience. The rule is the same
+-- throughout: the addon says what it observed and what it deduced, and never
+-- passes the second off as the first.
 
 describe("LevelTracker", function()
   local ns, clock, player, repository, bus, store, tracker
@@ -253,17 +251,16 @@ describe("LevelTracker", function()
       assert.equal(200, tracker:current():xpFrom(XpSource.UNKNOWN))
       assert.equal(300, tracker:current():xpFrom(XpSource.MOB_KILL))
       assert.is_true(tracker:current():sourcesAddUp())
-      -- And says it did not watch it. This assertion used to read is_false, which
-      -- was the whole defect: a gap the addon slept through arrived in UNKNOWN
-      -- indistinguishable from experience it saw and could not classify, so the
-      -- breakdown blamed itself for a failure it never had.
+      -- And says it did not watch it: otherwise a gap the addon slept through
+      -- would land in UNKNOWN indistinguishable from experience it saw and could
+      -- not classify.
       assert.is_true(tracker:current().partial)
       assert.equal(200, tracker:current().seededXp)
     end)
 
     -- Same rule as the seed, at the other site that posts experience the addon did
     -- not watch arrive: the gap belongs to whatever group the character was in
-    -- while the addon was off, which is nothing anyone can now say (D81).
+    -- while the addon was off, which nobody can now say.
     it("imputes the gap without claiming to know who shared it", function()
       seedStored({ level = 5, xpTotal = 300, xpRequired = 800, xpBySource = { mob_kill = 300 } })
       player:set("xp", 500):set("sharedBy", 5)
@@ -294,10 +291,10 @@ describe("LevelTracker", function()
       assert.is_true(tracker:current():sourcesAddUp())
     end)
 
-    -- A record written before the figure existed. The gap is real and the mark is
-    -- deserved, but how its EXISTING unclassified experience divides is unknowable
-    -- now, and putting a number on it would invent the split for everything that
-    -- came before this login.
+    -- A record saved before the figure existed. The gap is real and the mark is
+    -- deserved, but how its existing unclassified experience divides is
+    -- unknowable, and a number would invent the split for everything that came
+    -- before this login.
     it("declines to invent a split for a record that never kept the figure", function()
       seedStored({
         level = 5, xpTotal = 300, xpRequired = 800, partial = true,
@@ -312,8 +309,8 @@ describe("LevelTracker", function()
       assert.is_nil(tracker:current().seededXp)
     end)
 
-    -- The level it did not see finish is closed, and deliberately NOT topped up to a
-    -- hundred percent. The addon did not watch that experience arrive.
+    -- The level it did not see finish is closed, and deliberately not topped up to
+    -- a hundred percent. The addon did not watch that experience arrive.
     it("closes a level it did not see finish, without declaring it complete", function()
       seedStored({ level = 5, xpTotal = 300, xpRequired = 800, xpBySource = { mob_kill = 300 } })
       player:set("level", 6)
@@ -364,10 +361,10 @@ describe("LevelTracker", function()
       assert.is_true(tracker:current():sourcesAddUp())
     end)
 
-    -- And says HOW MUCH it seeded, which is the half `partial` cannot express. Both
-    -- the seed and a gain nobody could explain land in UNKNOWN, so without this
-    -- figure a surface reading that bucket cannot tell experience the addon never
-    -- watched from experience it watched and failed to attribute.
+    -- And says how much it seeded, which `partial` cannot express. Both the seed
+    -- and a gain nobody could explain land in UNKNOWN, so without this figure a
+    -- surface reading that bucket cannot tell experience the addon never watched
+    -- from experience it watched and failed to attribute.
     it("records how much it seeded, not only that it did", function()
       player:set("xp", 640)
 
@@ -376,10 +373,9 @@ describe("LevelTracker", function()
       assert.equal(640, tracker:current().seededXp)
     end)
 
-    -- D81: the seed is experience earned at instants nobody watched, so it goes in
-    -- with the group unknown even while the character stands in one right now.
-    -- Stamping the present group on it is the reclassification the decision exists
-    -- to prevent, and it would be invisible: a party of five at login would price
+    -- The seed is experience earned at instants nobody watched, so it goes in with
+    -- the group unknown even while the character stands in one. Stamping the
+    -- present group on it would be invisible: a party of five at login would price
     -- the whole level as if every kill in it had been shared.
     it("seeds without claiming to know who shared it", function()
       player:set("xp", 640):set("sharedBy", 5)
@@ -507,13 +503,10 @@ describe("LevelTracker", function()
     end)
   end)
 
-  -- Every case below is a defect a review reproduced against the real modules, kept
-  -- here so the next change has to break it deliberately.
   describe("regressions", function()
-    -- At the cap the tracker lets go of the record and logout writes nothing, so the
-    -- previous snapshot stayed in the current slot. Every later login found a record
-    -- for a level whose history was already written, closed it again, and overwrote
-    -- the real one with the stale half of it.
+    -- At the cap the tracker lets go of the record and logout writes nothing, so
+    -- the previous snapshot stays in the current slot. A later login must not close
+    -- that level again and overwrite its history with the stale half of it.
     it("does not overwrite the last level of a run on every login after the cap", function()
       player = ns.fakes.FakePlayerState.new({ level = 5, maxLevel = 6, xpForLevel = xpForLevel })
       repository = ns.fakes.InMemoryRepository.new()
@@ -542,9 +535,9 @@ describe("LevelTracker", function()
       assert.is_nil(store:current())
     end)
 
-    -- There is no event for the instant gain comes back on, so the tracker finds out
-    -- because something arrives to be recorded. It used to find out with its clock
-    -- still stopped, and the whole session's time went uncounted.
+    -- No client event fires when experience gain comes back on, so the tracker
+    -- finds out when something arrives to be recorded, and its clock has to start
+    -- then or the session's time goes uncounted.
     it("counts the play that follows experience being switched back on", function()
       seedStored({ level = 5, xpTotal = 300, xpRequired = 800, xpBySource = { mob_kill = 300 } })
       player:set("isXpDisabled", true)
@@ -561,9 +554,9 @@ describe("LevelTracker", function()
       assert.equal(60, store:current().playedSeconds)
     end)
 
-    -- Freezing ran before reconciling, so a character several levels beyond its
-    -- stored record held that old record open. Switching gain back on then wrote
-    -- experience into a level it had already left.
+    -- Reconciling runs before freezing: otherwise a character several levels
+    -- beyond its stored record would hold that old record open, and switching gain
+    -- back on would write experience into a level it had already left.
     it("does not freeze a record for a level the character has already left", function()
       seedStored({ level = 5, xpTotal = 300, xpRequired = 800, xpBySource = { mob_kill = 300 } })
       player:set("isXpDisabled", true)
@@ -625,13 +618,10 @@ describe("LevelTracker", function()
       assert.equal(120, tracker:playedSeconds())
     end)
 
-    -- XpLedger.post's own guard used to trust xpRequired blindly: a level opened
-    -- right as the client's UnitXPMax read comes back 0 (a beat after a level
-    -- transition, before it repopulates) got a REAL but non-positive requirement
-    -- instead of "unknown", and the next gain crossing it threw inside onAttributed
-    -- -- silently, since the event bus swallows it, and only once out loud (the
-    -- warning is deduped) -- with nothing left to call publishUpdate() and mark
-    -- the bar dirty. This is the "always shows an old number" bug from real play.
+    -- UnitXPMax reads 0 for a beat after a level transition, before it
+    -- repopulates. A level opened then gets an unknown requirement, not a
+    -- non-positive one: the next gain crossing it would throw inside onAttributed,
+    -- where the event bus swallows it, and nothing would mark the bar dirty again.
     it("never opens a level with a non-positive requirement", function()
       player:set("xpMax", 0) -- what the client reads for a beat right after a transition
       login(1000)
@@ -640,15 +630,14 @@ describe("LevelTracker", function()
 
       assert.is_nil(tracker:current().xpRequired)
 
-      -- Would have thrown inside XpLedger.post (xpRequired <= 0) before this fix.
+      -- With a non-positive requirement this would throw inside XpLedger.post.
       attribute(50)
       assert.equal(50, tracker:current().xpTotal)
     end)
 
-    -- Without this, a record stuck at "unknown" -- the case above, or any level
-    -- opened before the client's data was ready -- stayed stuck until the next
-    -- reload/start(), because openLevel/resume only resolve xpRequired once, at
-    -- open time.
+    -- openLevel/resume resolve xpRequired only once, at open time, so a record left
+    -- at "unknown" (the case above, or any level opened before the client's data
+    -- was ready) is resolved on the next gain rather than at the next reload.
     it("resolves an unknown requirement on the next gain instead of staying stuck until reload", function()
       player:set("xpMax", 0)
       login(1000)
@@ -769,8 +758,7 @@ describe("LevelTracker", function()
       assert.is_true(loggedSomething("time anchor ignored"))
     end)
 
-    -- The default every existing test in this file already uses: logging is entirely
-    -- optional, and nothing above requires a logger to behave correctly.
+    -- Logging is optional: nothing above requires a logger to behave correctly.
     it("does not error and behaves the same when no logger is given", function()
       tracker:start()
       attribute(350)

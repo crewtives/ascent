@@ -1,3 +1,6 @@
+<!-- The title is a commit header, because it becomes the commit: `type(scope): summary`, at most 72
+     characters. See "Writing conventions" in CONTRIBUTING.md. -->
+
 ## What changes, and why
 
 <!-- One or two sentences. The "why" is the part a reviewer cannot reconstruct from the diff. -->
@@ -19,5 +22,6 @@
 - [ ] `core/` still references no outer layer, and still calls no WoW API
 - [ ] No external libraries were added
 - [ ] Code, comments and player-facing strings are in English
+- [ ] The title, the comments and any changelog entry follow the writing conventions in `CONTRIBUTING.md`
 - [ ] If `CHANGELOG.md` changed, `Ascent/core/constants/Changelog.lua` was regenerated with
       `luajit tools/changelog.lua`

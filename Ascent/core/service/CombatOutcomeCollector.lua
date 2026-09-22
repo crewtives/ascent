@@ -1,4 +1,4 @@
--- Ascent - metric collector: health and primary resource on leaving combat (6.3).
+-- Ascent - metric collector: health and primary resource on leaving combat.
 --
 -- Reads the player's state at the exact instant COMBAT_ENDED fires -- health and
 -- power are not part of that event's payload, so this is the one collector that

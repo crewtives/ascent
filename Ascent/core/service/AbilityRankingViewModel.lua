@@ -1,38 +1,28 @@
--- Ascent - the level report panel's "abilities used" tab, as a pure view-model
--- (11.4).
+-- Ascent - the report panel's "abilities used" tab, as a pure view-model.
 --
--- `record.abilities` is a plain table keyed by spell id or by one of AbilityKey's
--- two reserved synthetic keys for auto attacks (D9) -- this view-model does not
--- care which, it just ranks whatever is there. Resolving an icon from a spell id
--- is a UI-layer concern (it needs the client API, which core/ may never touch):
--- this module only carries `key` along so the UI can resolve one itself, and
--- knows there is nothing to resolve for the two synthetic keys.
+-- `record.abilities` is keyed by spell id or by one of AbilityKey's two reserved
+-- synthetic keys for auto attacks, and the ranking treats both alike. Resolving
+-- an icon needs the client API, which core/ may not touch, so each entry carries
+-- `key` for the UI to resolve; the synthetic keys have nothing to resolve.
 --
--- totalUses -- the sum of every ability's count, auto attacks included -- is the
--- one shared denominator every entry's percentage is computed against, per this
--- task's own scenario (a single ranking, not a with/without-auto-attacks split).
+-- totalUses, the sum of every ability's count with auto attacks included, is the
+-- single denominator of every entry's percentage: one ranking, not a split.
 
 local _, ns = ...
 ns.core = ns.core or {}
 
 local AbilityRankingViewModel = {}
 
--- ONE ROW PER ABILITY, NOT PER RANK.
+-- One row per ability, not per rank: in these clients every rank of a spell is
+-- its own spell id, so a spell outgrown mid-level (Lesser Heal, say) would
+-- otherwise show as two rows the player cannot tell apart. Grouped by name,
+-- because that is what the player reads; a usage the client could not name
+-- stands on its own key. The two synthetic auto-attack keys carry distinct
+-- names, so nothing folds them together.
 --
--- In these clients every rank of a spell is its own spell id, so a priest who
--- outgrew Lesser Heal mid-level has two ids, two usages, and -- before this --
--- two rows reading "Lesser Heal" with nothing to tell them apart. Two rows the
--- player cannot distinguish is not a finer answer, it is a worse one: the
--- question this tab asks is what you pressed, and Lesser Heal is one button.
---
--- Grouped by NAME because that is what the player reads. A usage the client
--- could not name cannot be grouped that way and stands on its own key, which is
--- what it did before. The two synthetic auto-attack keys group themselves: they
--- carry distinct names, so nothing folds them together.
---
--- The row keeps the key of its BIGGEST rank, because the key is only there for
--- the UI to resolve an icon from, and ties go to the lower key so the choice
--- does not depend on `pairs`'s undefined order.
+-- The row keeps the key of its biggest rank, since the key only serves the UI to
+-- resolve an icon; ties go to the lower key so the choice does not depend on
+-- `pairs` order.
 local function groupByName(abilities)
   local groups, order = {}, {}
 
@@ -68,11 +58,9 @@ local function groupByName(abilities)
   return order
 end
 
--- One entry per ability that was actually used; an ability sitting at zero (there
--- is no such thing today, but nothing guarantees it never will be) produces no
--- entry, the same call XpBarViewModel makes for a zero segment. Sorted by count
--- descending, ties broken by the string form of the key so the order is the same
--- on every build regardless of `pairs`'s own (undefined) iteration order.
+-- One entry per ability actually used; a zero count produces no entry, as a zero
+-- segment does in XpBarViewModel. Sorted by count descending, ties broken by the
+-- string form of the key so the order does not depend on `pairs` order.
 local function buildEntries(abilities, totalUses)
   local entries = {}
   for _, group in ipairs(groupByName(abilities)) do
@@ -96,12 +84,21 @@ local function buildEntries(abilities, totalUses)
 end
 
 -- `record` may be nil (no level selected yet, or the report opened before any
--- data arrived) -- that is the only inactive case this view has: an active
--- record with no abilities used yet (a level just started) is not an error, it
--- is a ranking that happens to be empty.
+-- data arrived), the only inactive case. An active record with no abilities used
+-- yet is an empty ranking, not an error.
 function AbilityRankingViewModel.build(record)
   if record == nil then
     return { active = false }
+  end
+
+  -- A level recorded without the combat log ranks nothing, not even the uses it
+  -- did count (that would rank part of a level as if it were the level), and
+  -- says why. Read from the record's data rather than LevelRecord's accessor: the
+  -- plate ranks a pull through this same function, and a pull keeps no such mark.
+  local marks = record.unavailable
+  local withoutCombatLog = marks ~= nil and marks[ns.core.RecordedSource.COMBAT_LOG] or nil
+  if withoutCombatLog ~= nil then
+    return { active = true, unavailable = withoutCombatLog, entries = {} }
   end
 
   local totalUses = 0

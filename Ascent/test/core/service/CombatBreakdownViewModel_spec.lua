@@ -1,7 +1,6 @@
--- The panel's combat tab has one job the spec calls out by name: never show a
--- zero that could mean "measured and it was zero" when it actually means "never
--- measured at all". `hasData` is the switch the tests below hold to that
--- standard, alongside a straight pass-through check for every field it reports.
+-- The combat tab never shows a zero that means "never measured" as if it meant
+-- "measured and zero": `hasData` is the switch for that, and every field it
+-- reports is checked as a straight pass-through.
 
 describe("CombatBreakdownViewModel", function()
   local ns, CombatBreakdownViewModel, LevelRecord, MetricId, CombatSummary
@@ -153,6 +152,46 @@ describe("CombatBreakdownViewModel", function()
       record.xpTotal = 300
 
       assert.is_nil(CombatBreakdownViewModel.build(record).efficiency.xpPerCombatMinute)
+    end)
+  end)
+
+  -- The three metrics the combat log feeds come back as not measured, and
+  -- everything it does not feed is exactly what it would have been with it.
+  describe("a level recorded without the combat log", function()
+    local function recorded(reason)
+      local record = LevelRecord.new(10, 0)
+      record.playedSeconds = 600
+      record.xpTotal = 1200
+      record.metrics[MetricId.TIME] = { combatSeconds = 240, recoverySeconds = 30 }
+      record.metrics[MetricId.DEATHS] = { count = 2, timeLostToDeath = 45 }
+      local summary = CombatSummary.new()
+      summary:record(0.5, 0.25)
+      record.metrics[MetricId.COMBAT_OUTCOME] = summary
+      -- What a closure part-way leaves behind: real figures for the part before.
+      record.metrics[MetricId.DAMAGE] = { dealt = 900, taken = 300, healingReceived = 50 }
+      if reason ~= nil then
+        record:markUnavailable(ns.core.RecordedSource.COMBAT_LOG, reason)
+      end
+      return record
+    end
+
+    it("reports damage and healing as not recorded, with why, and no figures", function()
+      local damage = CombatBreakdownViewModel.build(recorded("unreadable")).damage
+
+      assert.same({ unavailable = "unreadable" }, damage)
+    end)
+
+    it("keeps every metric the combat log does not feed", function()
+      local off = CombatBreakdownViewModel.build(recorded("absent"))
+      local on = CombatBreakdownViewModel.build(recorded(nil))
+
+      assert.is_true(off.hasData)
+      assert.same(on.health, off.health)
+      assert.same(on.power, off.power)
+      assert.equal(on.deathCount, off.deathCount)
+      assert.same(on.time, off.time)
+      assert.same(on.efficiency, off.efficiency)
+      assert.equal(900, on.damage.dealt)
     end)
   end)
 end)

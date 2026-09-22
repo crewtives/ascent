@@ -1,6 +1,5 @@
--- SessionXpTracker exists for one number: how much experience the character has
--- received since the client itself started, regardless of how many levels that
--- spans. See its own header for why that is not simply a LevelRecord field.
+-- How much experience the character has received since the client started,
+-- however many levels that spans.
 
 describe("SessionXpTracker", function()
   local ns, SessionXpTracker, XpGain, XpSource, EventTopic, bus
@@ -40,9 +39,9 @@ describe("SessionXpTracker", function()
     local tracker = SessionXpTracker.new({ bus = bus })
 
     attribute(100)
-    -- Nothing marks a level boundary for this tracker on purpose: it does not
-    -- know or care what LevelRecord is open, which is exactly what lets one
-    -- running total answer for a session that crossed several.
+    -- No level boundary between the two: the tracker does not know which
+    -- LevelRecord is open, so one running total covers a session that crossed
+    -- several.
     attribute(150)
 
     assert.equal(250, tracker:total())

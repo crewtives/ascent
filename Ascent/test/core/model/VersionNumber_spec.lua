@@ -1,7 +1,5 @@
--- The comparison everything else in the update check rests on. The case that
--- matters most is the last group: text nobody can read must never win, because
--- the failure it produces is not a missed update -- it is telling a player to go
--- and install a version that does not exist.
+-- The comparison the update check rests on. Unreadable text must never win:
+-- that would tell a player to install a version that does not exist.
 
 describe("VersionNumber", function()
   local VersionNumber
@@ -23,9 +21,8 @@ describe("VersionNumber", function()
       assert.same(VersionNumber.parse("0.1.0"), VersionNumber.parse("v0.1.0"))
     end)
 
-    -- A TOC line is read with a trailing newline or a stray carriage return often
-    -- enough that the release script strips them by hand; a version that differs
-    -- by whitespace is the same version.
+    -- A TOC line often comes with a trailing newline or a stray carriage return;
+    -- a version that differs by whitespace is the same version.
     it("tolerates surrounding whitespace", function()
       assert.same(VersionNumber.parse("0.1.0"), VersionNumber.parse("  0.1.0 "))
     end)
@@ -44,12 +41,10 @@ describe("VersionNumber", function()
       assert.is_nil(VersionNumber.parse(42))
     end)
 
-    -- The standard packager's @project-version@ yields this on any untagged commit,
-    -- and it is PERFECTLY VALID semver -- hyphens are allowed inside a pre-release.
-    -- It is also read as a pre-release OF 0.1.0, so a build five commits after
-    -- 0.1.0 orders BEFORE it and its owner would be told to upgrade to the version
-    -- they are already past. Ordering it wrong is worse than refusing it, and is
-    -- the concrete reason this project keeps a clean semver in the TOC.
+    -- The packager's @project-version@ yields this on an untagged commit, and it
+    -- is valid semver: hyphens are allowed inside a pre-release. As a pre-release
+    -- of 0.1.0 it orders before 0.1.0, and its owner would be told to upgrade to
+    -- a version they are past, which is why the TOC keeps a clean semver.
     it("reads the packager's untagged version as older than the tag it came after", function()
       assert.equal("5-gabc1234", VersionNumber.parse("v0.1.0-5-gabc1234").pre)
       assert.equal(-1, VersionNumber.compare("v0.1.0-5-gabc1234", "0.1.0"))
@@ -79,10 +74,9 @@ describe("VersionNumber", function()
     end)
 
     it("orders beta10 BEFORE beta2, which is semver and is why the dot matters", function()
-      -- An identifier containing letters compares as text, in ASCII order: "beta10"
-      -- sorts before "beta2" the way "b10" sorts before "b2" in a file listing.
-      -- Surprising enough to pin down, and the reason this project's tags would
-      -- spell a second beta "0.2.0-beta.2" rather than "0.2.0-beta2".
+      -- An identifier containing letters compares as text, in ASCII order:
+      -- "beta10" sorts before "beta2" as "b10" sorts before "b2" in a file
+      -- listing, so a second beta is spelled "0.2.0-beta.2", not "0.2.0-beta2".
       assert.equal(-1, VersionNumber.compare("0.2.0-beta10", "0.2.0-beta2"))
     end)
 

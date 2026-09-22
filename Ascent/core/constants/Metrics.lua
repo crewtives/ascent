@@ -17,17 +17,13 @@ ns.core.MetricId = Frozen.enum("MetricId", {
   PLACE_TIME     = "place_time",     -- how long the level spent in each place
 })
 
--- The life of one pull, as a closed set. SETTLING is the member that exists for
--- a reason nobody would guess from the outside: in Classic the experience for a
--- kill arrives as a CHAT MESSAGE, correlated with the combat log's UNIT_DIED
--- inside a window of a second and a half, and PLAYER_REGEN_ENABLED can easily
--- beat it. A pull that froze its numbers the instant combat ended would
--- under-report the last kill of almost every fight. So combat ending does not
--- close a pull -- it starts a countdown during which the record still accepts
--- what was already in flight, and which combat resuming simply cancels.
---
--- That second property is what makes a chain of pulls read as one fight instead
--- of four: adds arriving three seconds apart never close anything.
+-- The life of one pull, as a closed set. SETTLING exists because in Classic the
+-- experience for a kill arrives as a chat message, correlated with the combat
+-- log's UNIT_DIED inside a window of a second and a half, and PLAYER_REGEN_ENABLED
+-- can fire before it: freezing the numbers when combat ends would under-report the
+-- last kill of most fights. Combat ending starts a countdown during which the
+-- record still accepts what was in flight, and combat resuming cancels it, so a
+-- chain of pulls with adds arriving seconds apart reads as one fight.
 ns.core.PullPhase = Frozen.enum("PullPhase", {
   IDLE     = "idle",     -- nothing open
   ACTIVE   = "active",   -- in combat, recording

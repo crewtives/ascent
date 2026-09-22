@@ -8,11 +8,16 @@ local _, ns = ...
 ns.adapter = ns.adapter or {}
 
 local PlaceContext = ns.core.PlaceContext
+-- Everything below is read from the client and handed straight to core/, so it
+-- passes the same guard the inbound routers use. A closed read comes back nil,
+-- and what nil means is decided per call below, mostly by the sanitising already
+-- needed for a client that answers "" or 0 while a zone loads.
+local readable = ns.adapter.Readable.value
 
--- The client's own instance vocabulary, translated once. Anything it grows later --
--- "scenario" is the one that already exists on other flavours -- is deliberately
--- absent: an unmapped kind answers nil and the domain files that experience in the
--- reserved entry, which is honest, rather than under a kind chosen by resemblance.
+-- The client's own instance vocabulary, translated once. Any other kind --
+-- "scenario" exists on other flavours -- is deliberately absent: it answers nil
+-- and the domain files that experience in the reserved entry rather than under a
+-- kind chosen by resemblance.
 local CONTEXT_BY_INSTANCE_TYPE = {
   none = PlaceContext.WORLD,
   party = PlaceContext.DUNGEON,
@@ -21,17 +26,20 @@ local CONTEXT_BY_INSTANCE_TYPE = {
   arena = PlaceContext.ARENA,
 }
 
+-- Guarded before the comparison, an operation a closed value raises on. An
+-- unreadable pair answers zero, the same "nothing to show" as a unit with no
+-- maximum.
 local function fraction(current, max)
-  if max <= 0 then
+  current, max = readable(current), readable(max)
+  if type(current) ~= "number" or type(max) ~= "number" or max <= 0 then
     return 0
   end
   return current / max
 end
 
 -- An identifier the model would refuse. The client answers 0 or nil while a zone is
--- still loading, and PlaceKey raises on anything that is not a positive integer --
--- correctly, because there it would be the addon's own bug. Sanitising is this
--- layer's job, the same way `restedXp` turns the client's nil into zero.
+-- still loading, and PlaceKey raises on anything that is not a positive integer,
+-- because there it would be the addon's own bug. Sanitising is this layer's job.
 local function positiveId(value)
   if type(value) ~= "number" or value < 1 or value % 1 ~= 0 then
     return nil
@@ -48,23 +56,20 @@ local function displayName(text)
   return text
 end
 
--- The name of the MAP, and not of whatever the client is calling the zone this
--- instant. They are not the same string: step into an indoor area and `GetZoneText()`
--- answers with the building's own name -- "Duskwither Spire" -- while the map id
--- underneath stays the zone's. One identity then collects two names, and since a
--- place adopts only a name it was MISSING (LevelRecord:placeEntry), whichever
--- arrived first labels the level for good. That is how the 2026-09-21 session closed
--- level 12 with all 9800 of its points filed under a building the character stepped
--- into once, while level 13 -- same map id, opened outdoors -- read "Eversong Woods".
---
--- Asking the map for its own name gives one name per identity by construction. The
--- zone text stays as the fallback, for a client that does not answer this at all.
+-- The name of the map, not of whatever the client calls the zone this instant.
+-- Step into an indoor area and `GetZoneText()` answers with the building's name
+-- ("Duskwither Spire") while the map id stays the zone's ("Eversong Woods"). A
+-- place adopts only a name it is missing (LevelRecord:placeEntry), so whichever
+-- name arrived first would label the whole level. The map's own name is one name
+-- per identity; the zone text is the fallback for a client that lacks this call.
 local function mapName(mapId)
   if mapId == nil or C_Map == nil or C_Map.GetMapInfo == nil then
     return nil
   end
-  local info = C_Map.GetMapInfo(mapId)
-  return info ~= nil and info.name or nil
+  -- Guarded before it is indexed: reading a field off a closed table is one of
+  -- the operations that raises.
+  local info = readable(C_Map.GetMapInfo(mapId))
+  return type(info) == "table" and info.name or nil
 end
 
 local WowPlayerState = {}
@@ -74,8 +79,13 @@ function WowPlayerState.new()
   return ns.core.Port.verify(ns.core.PlayerState, setmetatable({}, WowPlayerState), "WowPlayerState")
 end
 
+-- Level, experience and the level's maximum deliberately have no fallback: a
+-- client that closes them leaves Ascent nothing to measure, and an invented zero
+-- would report a character frozen at the start of a level. They are still
+-- guarded, so what reaches core/ is nil rather than a value that raises three
+-- layers in. Whether any client closes them is not yet known.
 function WowPlayerState:level()
-  return UnitLevel("player")
+  return readable(UnitLevel("player"))
 end
 
 function WowPlayerState:maxLevel()
@@ -83,63 +93,64 @@ function WowPlayerState:maxLevel()
 end
 
 function WowPlayerState:xp()
-  return UnitXP("player")
+  return readable(UnitXP("player"))
 end
 
 function WowPlayerState:xpMax()
-  return UnitXPMax("player")
+  return readable(UnitXPMax("player"))
 end
 
 -- `GetXPExhaustion()` returns nil when there is no rested reserve; the port
--- promises zero, never nil, for "there is none" (D18 covers the client doubling
--- the server's internal figure -- that reading happens above this adapter).
+-- promises zero, never nil, for "there is none". The figure is twice the
+-- server's internal reserve; that is interpreted above this adapter.
 function WowPlayerState:restedXp()
-  return GetXPExhaustion() or 0
+  local rested = readable(GetXPExhaustion())
+  return type(rested) == "number" and rested or 0
 end
 
 function WowPlayerState:isResting()
-  return not not IsResting()
+  return not not readable(IsResting())
 end
 
--- Never compared against `true` or `1`: the client types this as a boolean, but at
--- least one addon in production gets it wrong by comparing against 1 (D17).
+-- Never compared against `true` or `1`: the client types this as a boolean, and
+-- comparing it against 1 is a known mistake in other addons.
 function WowPlayerState:isXpDisabled()
-  return not not IsXPUserDisabled()
+  return not not readable(IsXPUserDisabled())
 end
 
--- Where the character is, by the one rule that works for both cases (D42): inside
--- an instance the instance id is the identity -- the map id there does not exist on
--- one supported client and names the floor on the other -- and outside it the map
--- id is, because the instance id collapses the whole world into a few continents.
+-- Where the character is. Inside an instance the instance id is the identity --
+-- the map id there does not exist on one supported client and names the floor on
+-- the other -- and outside it the map id is, because the instance id collapses the
+-- world into a few continents.
 --
--- Answering nil is a real answer and the reason the reserved entry exists: the
--- client does not always know where the character is, and the instant a portal is
--- crossed is exactly when it does not.
+-- Nil is a real answer, and the reason the reserved entry exists: the client does
+-- not always know where the character is, notably the instant a portal is crossed.
 function WowPlayerState:place()
   local inInstance, instanceType = IsInInstance()
+  -- The type is used as a table key, another operation that raises; a closed one
+  -- falls through to the unmapped case.
+  inInstance, instanceType = readable(inInstance), readable(instanceType)
 
   if inInstance then
     local name, _, _, _, _, _, _, instanceId = GetInstanceInfo()
-    return CONTEXT_BY_INSTANCE_TYPE[instanceType], positiveId(instanceId), displayName(name)
+    return CONTEXT_BY_INSTANCE_TYPE[instanceType],
+      positiveId(readable(instanceId)), displayName(readable(name))
   end
 
   local mapId
   if C_Map ~= nil and C_Map.GetBestMapForUnit ~= nil then
     mapId = C_Map.GetBestMapForUnit("player")
   end
-  local id = positiveId(mapId)
-  return PlaceContext.WORLD, id, displayName(mapName(id)) or displayName(GetZoneText())
+  local id = positiveId(readable(mapId))
+  return PlaceContext.WORLD, id, displayName(mapName(id)) or displayName(readable(GetZoneText()))
 end
 
 -- How many the payment is split between, counting the character. The client's own
--- count is not that number: it answers 0 out of a group, and nobody was ever paid
--- by a group of nobody. Passing that through would make every consumer remember
--- the peculiarity, and a client capability that leaks through its return value is
--- as leaked as one that leaks through its name (D85) -- so the translation
--- happens here, the same way `restedXp` turns the client's nil into zero.
+-- count answers 0 out of a group; it is translated here, as `restedXp` turns the
+-- client's nil into zero, so no consumer has to remember the quirk.
 function WowPlayerState:sharedBy()
-  local members = GetNumGroupMembers()
-  if members < 1 then
+  local members = readable(GetNumGroupMembers())
+  if type(members) ~= "number" or members < 1 then
     return 1
   end
   return members
@@ -154,11 +165,11 @@ function WowPlayerState:powerFraction()
 end
 
 function WowPlayerState:guid()
-  return UnitGUID("player")
+  return readable(UnitGUID("player"))
 end
 
 function WowPlayerState:identity()
-  return UnitName("player"), GetRealmName()
+  return readable(UnitName("player")), readable(GetRealmName())
 end
 
 ns.adapter.WowPlayerState = WowPlayerState

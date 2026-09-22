@@ -138,9 +138,9 @@ describe("LevelRecord", function()
     end)
   end)
 
-  -- 6.7: derived rather than accumulated, so there is nothing for a collector to
-  -- keep in sync -- see CombatTimeCollector's header for why out-of-combat time in
-  -- particular is derived here instead of tracked by a third counter.
+  -- Derived rather than accumulated, so there is nothing for a collector to keep
+  -- in sync; out-of-combat time is derived here rather than tracked by a third
+  -- counter.
   describe("combat efficiency (6.7)", function()
     local record
 
@@ -191,10 +191,8 @@ describe("LevelRecord", function()
   end)
 
   -- Two numbers that look like one. `sumOfPlaces` is ledger arithmetic and counts
-  -- the reserved entry, because that is what keeps the place dimension equal to
-  -- the source dimension. `placedXp` is what a reader means by "placed", and the
-  -- diagnostic that printed the first while labelling it the second could
-  -- contradict itself in the same breath.
+  -- the reserved entry, which keeps the place dimension equal to the source
+  -- dimension; `placedXp` is what a reader means by "placed".
   describe("placed experience versus the ledger's total", function()
     local PlaceKey, PlaceContext
 
@@ -213,8 +211,8 @@ describe("LevelRecord", function()
     end)
 
     -- The experience dimension balances because what cannot be attributed goes
-    -- somewhere explicit. Time had no such somewhere, so a level could measure
-    -- less than it played and say nothing at all about the difference (D78).
+    -- somewhere explicit. This is that somewhere for time: a level that measured
+    -- less than it played says by how much.
     describe("the time it could not place", function()
       local function played(record, seconds)
         record.playedSeconds = seconds
@@ -231,9 +229,7 @@ describe("LevelRecord", function()
         assert.equal(373, record:unaccountedSeconds())
       end)
 
-      -- The invariant the figure exists to make writable. Its counterpart on the
-      -- experience side has been assertable since the beginning; this one could
-      -- not even be stated before.
+      -- The time counterpart of the sources adding up to the level's experience.
       it("adds up: the places plus what they could not account for is the time played", function()
         local record = played(ns.core.LevelRecord.new(5, 0), 9304)
         seed(record, PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), 900, 8000)
@@ -314,9 +310,9 @@ describe("LevelRecord", function()
     end)
   end)
 
-  -- The seed figure survives the file, and the three states stay three. Round trip
-  -- rather than a field check, because the whole point of the field is that it has
-  -- to come back from disk meaning what it meant.
+  -- The seed figure survives the file, and the three states stay three. A round
+  -- trip rather than a field check, because the field has to come back from disk
+  -- meaning what it meant.
   describe("the seeded portion across the file", function()
     local function roundTrip(record)
       return LevelRecord.restore(record:toStored())
@@ -339,10 +335,9 @@ describe("LevelRecord", function()
       assert.is_nil(roundTrip(LevelRecord.new(35, 1700000000)).seededXp)
     end)
 
-    -- A record written before the field existed. It restores nil rather than zero
-    -- because it genuinely cannot say: zero would claim every unclassified point in
-    -- it was watched and left unattributed, which is the opposite of true for a
-    -- level the addon joined halfway.
+    -- A record saved before the field existed cannot say, so it restores nil:
+    -- zero would claim every unclassified point in it was watched and left
+    -- unattributed, the opposite of true for a level the addon joined halfway.
     it("restores nil from a record written before the field existed", function()
       local stored = LevelRecord.new(35, 1700000000):toStored()
       stored.partial = true
@@ -359,6 +354,73 @@ describe("LevelRecord", function()
         stored.seededXp = bad
         assert.is_nil(LevelRecord.restore(stored).seededXp)
       end
+    end)
+  end)
+
+  -- The sources a level was recorded without. Across the file for the same reason
+  -- as the seed above: a level opened later, possibly on a client that has the
+  -- source, has to come back saying what it said.
+  describe("the sources it was recorded without", function()
+    local RecordedSource
+
+    before_each(function()
+      RecordedSource = ns.core.RecordedSource
+    end)
+
+    local function roundTrip(record)
+      return LevelRecord.restore(record:toStored())
+    end
+
+    it("starts with none", function()
+      assert.same({}, LevelRecord.new(35, 1700000000).unavailable)
+    end)
+
+    it("carries each one across the file with its reason", function()
+      local record = LevelRecord.new(35, 1700000000)
+      record:markUnavailable(RecordedSource.COMBAT_LOG, "absent")
+      record:markUnavailable(RecordedSource.XP_CHAT, "unreadable")
+
+      local restored = roundTrip(record)
+      assert.equal("absent", restored:unavailableReason(RecordedSource.COMBAT_LOG))
+      assert.equal("unreadable", restored:unavailableReason(RecordedSource.XP_CHAT))
+    end)
+
+    -- The usual case writes nothing, so the file does not grow a line per level
+    -- to say "nothing".
+    it("writes nothing for a level recorded with every source", function()
+      assert.is_nil(LevelRecord.new(35, 1700000000):toStored().unavailable)
+      assert.same({}, roundTrip(LevelRecord.new(35, 1700000000)).unavailable)
+    end)
+
+    -- Absent from the start is not made "unreadable" by a closed line later, and a
+    -- source that closed mid-level is not reopened by anything after it.
+    it("keeps the first reason it was given", function()
+      local record = LevelRecord.new(35, 1700000000)
+      record:markUnavailable(RecordedSource.COMBAT_LOG, "absent")
+      record:markUnavailable(RecordedSource.COMBAT_LOG, "unreadable")
+
+      assert.equal("absent", record:unavailableReason(RecordedSource.COMBAT_LOG))
+    end)
+
+    it("refuses a source it does not know, and a reason that is not one", function()
+      local record = LevelRecord.new(35, 1700000000)
+
+      assert.has_error(function() record:markUnavailable("quest_log", "absent") end)
+      assert.has_error(function() record:markUnavailable(RecordedSource.XP_CHAT, "") end)
+      assert.has_error(function() record:markUnavailable(RecordedSource.XP_CHAT, "gone") end)
+      assert.has_error(function() record:markUnavailable(RecordedSource.XP_CHAT, nil) end)
+    end)
+
+    -- A newer build that tracks a third source, or a hand-edited file: the level
+    -- keeps everything this build can read and drops only the mark it could not
+    -- show anyway.
+    it("drops a stored mark it cannot read and keeps the level", function()
+      local stored = LevelRecord.new(35, 1700000000):toStored()
+      stored.unavailable = { combat_log = "absent", some_future_source = "absent", xp_chat = "gone" }
+
+      local restored = LevelRecord.restore(stored)
+      assert.equal(35, restored.level)
+      assert.same({ combat_log = "absent" }, restored.unavailable)
     end)
   end)
 end)

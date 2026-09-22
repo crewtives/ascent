@@ -4,22 +4,18 @@
 --
 --   { id, priority, matches(hint), classify(hint) -> XpSource, payload(hint) }
 --
--- The attribution service never learns the new source exists, which is the whole
--- point of the seam.
+-- The attribution service never learns the new source exists.
 --
--- One flag carries what the design calls the most important rule in the parser.
--- `amountOnly` marks a channel that says how much but never says from what: the
+-- `amountOnly` marks a channel that says how much but never from what: the
 -- client's anonymous "You gain %d experience." line, which quests emit, which
 -- discoveries probably emit too, and which at least one published Classic addon
--- reads as a kill. A classifier marked that way may not bring a `classify`
--- function at all -- registering one is an error -- so the rule lives in the shape
--- of the descriptor rather than in a branch somebody has to remember to write.
+-- misreads as a kill. Such a classifier must not bring a `classify` function
+-- (registering one is an error), so the rule lives in the descriptor's shape.
 --
 -- Priority breaks ties between channels that describe the same gain. The quest
--- event carries the quest id and the system echo of the same turn-in does not, so
--- the one with the id has to be offered the delta first; otherwise the gain would
--- be attributed correctly and still lose the identifier the spec requires it to
--- keep.
+-- event carries the quest id and the system echo of the same turn-in does not,
+-- so the one with the id is offered the delta first; otherwise the gain would be
+-- attributed correctly and still lose its quest id.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -86,9 +82,9 @@ function ClassifierRegistry:register(classifier)
   return self
 end
 
--- Highest priority first, ties broken by id. The tie-break is not cosmetic:
--- table.sort is not stable, so without it two classifiers of equal priority could
--- swap places between runs and make a failure impossible to reproduce.
+-- Highest priority first, ties broken by id: table.sort is not stable, so without
+-- the tie-break two classifiers of equal priority could swap places between runs
+-- and make a failure impossible to reproduce.
 local function ordered(self)
   if not self.sorted then
     table.sort(self.classifiers, function(a, b)

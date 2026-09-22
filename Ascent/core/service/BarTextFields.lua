@@ -1,19 +1,12 @@
 -- Ascent - which fields the bar's text is made of.
 --
--- The composed text is a list of tokens, and the list is ordered: it is what the
--- player reads left to right, and it is also the order the bar gives fields up in
--- when it is too narrow for all of them (lowest priority first). One order, two
--- jobs, and TEXT_PRIORITY is where it is declared.
+-- The composed text is an ordered list of tokens: the order the player reads
+-- left to right, and the order the bar gives fields up in when it is too narrow
+-- for all of them (lowest priority first). TEXT_PRIORITY declares it, and the
+-- options panel and the bar both read the rank from here.
 --
--- What lives here is the editing: turning a field on has to put it somewhere, and
--- "at the end" is the wrong answer -- a player who adds the level to a text that
--- already shows a percentage wants it where the level goes, not after everything
--- else. So a field switched on lands at its declared position relative to the
--- fields already chosen, and the ones already there do not move.
---
--- The rank is here rather than in the view because both readers need the same
--- one: the panel to place a field, the bar to decide which to give up first. Two
--- copies of a priority order is two orders the moment somebody edits one.
+-- A field switched on lands at its declared position relative to the fields
+-- already chosen, not at the end, and the ones already there do not move.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -23,8 +16,8 @@ local TEXT_PRIORITY = ns.core.TEXT_PRIORITY
 local BarTextFields = {}
 
 -- Every field the bar can show, in the order they read. Copied rather than handed
--- out: the frozen list IS its backing store, and a caller that sorted it in place
--- would rewrite the priority order for the session.
+-- out: the frozen list is its own backing store, and a caller that sorted it in
+-- place would rewrite the priority order for the session.
 function BarTextFields.all()
   local fields = {}
   for _, token in ipairs(TEXT_PRIORITY) do

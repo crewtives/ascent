@@ -1,6 +1,6 @@
--- Ascent - metric collector: which abilities were used, and how often (6.2).
+-- Ascent - metric collector: which abilities were used, and how often.
 --
--- Auto attacks arrive under AbilityKey's reserved synthetic keys (D9), so this
+-- Auto attacks arrive under AbilityKey's reserved synthetic keys, so this
 -- never has to special-case them: `record.abilities` is keyed the same way for a
 -- spell id and for melee_swing/ranged_auto, and the ranking (a pure read of that
 -- table) already tells them apart via AbilityUsage:isAutoAttack().

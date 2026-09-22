@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#
+# Ascent - check a commit message against the conventions in CONTRIBUTING.md.
+#
+# Installed by ./dev.sh hooks. A tree that has .publishignore is the development
+# repository, and only there may a message point at the plan, through "Refs:"
+# trailers. Everywhere else the message follows the same rules as public text.
+#
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+rules="$root/tools/public-text.patterns"
+types="feat|fix|perf|refactor|test|docs|build|ci|chore|revert|style"
+
+fail() {
+  printf 'commit-msg: %s\n' "$1" >&2
+  shift
+  local line
+  for line in "$@"; do printf '  %s\n' "$line" >&2; done
+  exit 1
+}
+
+# What git keeps: no comment lines, nothing below the scissors line.
+message="$(sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$1")"
+header="$(printf '%s\n' "$message" | head -1)"
+
+# Messages git writes itself.
+case "$header" in
+  'Merge '* | 'Revert "'* | 'fixup! '* | 'squash! '* | 'amend! '*) exit 0 ;;
+esac
+
+workshop=0
+[ -f "$root/.publishignore" ] && workshop=1
+
+shape="^($types)(\(([a-z0-9-]+)\))?!?: (.+)$"
+[[ "$header" =~ $shape ]] ||
+  fail "the header is not <type>(<scope>): <summary>" "types: ${types//|/, }" "got: $header"
+scope="${BASH_REMATCH[3]}"
+summary="${BASH_REMATCH[4]}"
+
+[ "${#header}" -le 72 ] ||
+  fail "the header is ${#header} characters, $(( ${#header} - 72 )) over 72" "$header"
+[[ "$summary" =~ ^[A-Z] ]] && fail "start the summary in lowercase" "$header"
+[[ "$summary" == *. ]] && fail "no period at the end of the summary" "$header"
+
+if [ -n "$scope" ]; then
+  lists=("$root/.githooks/scopes")
+  [ "$workshop" -eq 1 ] && [ -f "$root/.githooks/scopes.workshop" ] && lists+=("$root/.githooks/scopes.workshop")
+  known="$(cat "${lists[@]}" | grep -vE '^[[:space:]]*(#|$)' | awk '{ print $1 }')"
+  printf '%s\n' "$known" | grep -qxF -- "$scope" ||
+    fail "unknown scope \"$scope\"" "known: $(printf '%s\n' "$known" | paste -sd, - | sed 's/,/, /g')" \
+      "a new area adds its scope to .githooks/scopes in the commit that first uses it"
+fi
+
+second="$(printf '%s\n' "$message" | sed -n 2p)"
+[ -z "$second" ] || fail "leave a blank line between the header and the body"
+
+refs="$(printf '%s\n' "$message" | grep -E '^Refs:' || true)"
+if [ -n "$refs" ]; then
+  [ "$workshop" -eq 1 ] || fail "Refs: trailers do not belong in this repository" "$refs"
+  ref_shape='^Refs: [a-z0-9-]+( [0-9]+[a-z]?(\.[0-9]+)?(, [0-9]+[a-z]?(\.[0-9]+)?)*)?$'
+  while IFS= read -r line; do
+    [[ "$line" =~ $ref_shape ]] || fail "a trailer reads Refs: <change> <task>[, <task>]" "got: $line"
+  done <<< "$refs"
+fi
+
+[ -f "$rules" ] || fail "missing tools/public-text.patterns"
+rest="$(printf '%s\n' "$message" | grep -vE '^Refs:' || true)"
+while IFS=$'\t' read -r category regex; do
+  hit="$(printf '%s\n' "$rest" | grep -nE -- "$regex" | head -1 || true)"
+  [ -n "$hit" ] || continue
+  if [ "$workshop" -eq 1 ] && [ "$category" != "assistant" ]; then
+    fail "$category in the message" "line $hit" \
+      "point at the plan from a trailer instead: Refs: <change> <task>[, <task>]"
+  fi
+  fail "$category in the message" "line $hit"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$rules")

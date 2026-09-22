@@ -1,7 +1,6 @@
--- Every constant set is asserted key by key on purpose. These names are the
--- addon's vocabulary: adapters, services and views all speak them, and several
--- are persisted, so a silent rename is a data migration in disguise. If a set
--- changes, this spec should be the thing that tells you.
+-- Every constant set is asserted key by key: adapters, services and views all
+-- speak these names, and several are persisted, so a silent rename is a data
+-- migration in disguise.
 
 describe("the constant vocabulary", function()
   local ns, Frozen
@@ -63,7 +62,7 @@ describe("the constant vocabulary", function()
       expectKeys(ns.core.QuestXpOrigin, { "CLIENT", "LEARNED", "UNKNOWN" })
     end)
 
-    -- A dimension of its own, never a seventh XpSource (D39). These strings are
+    -- A dimension of its own, never a seventh XpSource. These strings are
     -- persisted inside the key of every place entry.
     it("has the kinds of place a level can be spent in", function()
       expectKeys(ns.core.PlaceContext,
@@ -157,9 +156,9 @@ describe("the constant vocabulary", function()
         { "CLOCK", "REMAINING", "STREAK", "SOURCES", "CREATURES", "ABILITIES", "FOOTER" })
     end)
 
-    -- The list above is closed, and what it leaves out is the decision (D90): the
-    -- headline figure and its kill count are why the plate appears, so there is no
-    -- word for turning them off and no way for a hand-edited file to invent one.
+    -- The list is closed: the headline figure and its kill count are why the
+    -- plate appears, so there is no word for turning them off and no way for a
+    -- hand-edited file to invent one.
     it("has no word for the headline or its count, so neither can be switched off", function()
       for _, name in ipairs({ "HEADLINE", "TITLE", "XP", "KILLS" }) do
         assert.is_false(Frozen.has(ns.core.PlateZone, name),
@@ -183,14 +182,10 @@ describe("the constant vocabulary", function()
       end
     end)
 
-    -- The list both of the plate's resets are driven by: the button on its page
-    -- and `/ascent options plate reset`, which is the one a player who dragged
-    -- the plate off the screen has left. A plate key added to the vocabulary and
-    -- forgotten there is a key neither reset returns -- and the only way to
-    -- notice would be a plate that stayed broken after being reset.
-    --
-    -- The persisted prefix is the independent oracle. The list is the decision
-    -- (see Settings.lua); this is what catches it drifting behind the vocabulary.
+    -- Both plate resets use this list, declared in Settings.lua: the button on
+    -- its page, and `/ascent options plate reset` for a player who dragged the
+    -- plate off the screen. The persisted prefix is the independent oracle that
+    -- catches a plate key the list forgot, which neither reset would return.
     it("resets the plate by a list of every plate key and nothing else", function()
       local expected, listed = {}, {}
       for _, persisted in Frozen.each(ns.core.SettingKey) do
@@ -207,10 +202,9 @@ describe("the constant vocabulary", function()
       assert.same(expected, listed)
     end)
 
-    -- Every value here is a string written into AscentDB. Two keys sharing one is
-    -- not a name clash, it is two settings overwriting each other on disk -- and
-    -- since renaming a published key throws away what every player had stored, the
-    -- string is chosen once and never again. The plate added eight in one go.
+    -- Every value is a string written into AscentDB: two keys sharing one are two
+    -- settings overwriting each other on disk, and renaming a published key
+    -- throws away what every player had stored.
     it("gives every setting a persisted string of its own", function()
       local seen = {}
       for name, value in Frozen.each(ns.core.SettingKey) do
@@ -224,16 +218,12 @@ describe("the constant vocabulary", function()
       expectKeys(ns.core.ClientFlavor, { "CLASSIC_ERA", "BURNING_CRUSADE", "FOREVER", "UNKNOWN" })
     end)
 
-    -- Version 4 is the group a creature's kills were paid to; 3 was `seededXp` and
-    -- 2 the per-place breakdown. The number matters because RecordStore archives any
-    -- version it has no chain for: moving it without adding the step would throw
-    -- away every existing character's history. This assertion is what makes that
-    -- move deliberate, and RecordStore_spec's "ships a step for every version below
-    -- the current one" is what makes it safe -- with, for 4, a step that has to
-    -- convert rather than sit empty, which "converts the creature aggregates it was
-    -- raised for" is what makes safe.
+    -- Format 5 adds the sources a level was recorded without, 4 the group a
+    -- creature's kills were paid to, 3 `seededXp` and 2 the per-place breakdown.
+    -- RecordStore archives any version it has no chain for, so moving this without
+    -- adding the step would throw away every existing character's history.
     it("stamps the stored format at the version this build writes", function()
-      assert.equal(4, ns.core.SchemaVersion.CURRENT)
+      assert.equal(5, ns.core.SchemaVersion.CURRENT)
     end)
   end)
 end)

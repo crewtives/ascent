@@ -1,20 +1,17 @@
 -- Ascent - the real Repository, backed by two client-managed globals.
 --
 -- `AscentDB` is account-wide (declared `SavedVariables`); `AscentCharDB` is
--- per-character (declared `SavedVariablesPerCharacter`, so the client itself keeps
--- one file per character and realm -- nothing here has to key by name or realm to
--- get that separation; the file the client loads already is this character's).
+-- per-character (declared `SavedVariablesPerCharacter`: the client keeps one file
+-- per character and realm, so nothing here keys by name or realm).
 --
--- D8 fixes what lives where:
+-- What lives where:
 --   AscentDB      -- options, and the quest name directory. Account-wide, because
---                    what a quest is CALLED is the client's answer, the same on
---                    every alt -- unlike which quests this character has seen.
+--                    a quest's name is the client's answer, the same on every alt.
 --   AscentCharDB  -- schemaVersion, the level in progress, closed levels, learned
---                    quest rewards. All of it this character's, none of it shared.
+--                    quest rewards. All of it this character's.
 --
--- Both globals are created by the client from disk before ADDON_LOADED fires, or
--- left nil on a character that has never saved anything -- this is the file that
--- fills them in either case.
+-- The client creates both globals from disk before ADDON_LOADED fires, or leaves
+-- them nil on a character that has never saved anything; this file fills them in.
 
 local _, ns = ...
 ns.adapter = ns.adapter or {}
@@ -89,11 +86,10 @@ function SavedVariablesRepository:saveQuestNames(names)
   AscentDB.questNames = names
 end
 
--- Keeps what is account-wide untouched -- the options and the quest names live in
--- AscentDB, which this never archives -- and puts everything else in one pocket
--- instead of scattering fields the next version would have to know to look for.
--- The names survive on purpose: they describe the client, not the character's
--- history, so throwing them away would lose something this version can still read.
+-- Leaves AscentDB (options and quest names) untouched and moves everything else
+-- into one pocket, instead of scattering fields a later version would have to
+-- know to look for. The quest names describe the client, not the character's
+-- history, so this version can still read them.
 function SavedVariablesRepository:archiveIncompatible()
   local legacy = AscentCharDB
   AscentCharDB = { legacy = legacy }

@@ -1,26 +1,19 @@
--- Ascent - experience pending from the quest log (group 8, quest-xp-forecast).
+-- Ascent - experience pending from the quest log.
 --
--- Three ideas from design.md's D15 that shape everything below:
+-- The stored reward is always nominal. The reduction for outlevelling a quest is
+-- applied only when reporting (`report()`); a stored reduced figure would be
+-- reduced again at the next level-up.
 --
---   THE STORED VALUE IS ALWAYS NOMINAL. The reduction for outlevelling a quest
---   is applied only when reporting (`report()`), never when storing. Persist a
---   reduced number once and the next level-up reduces it again, and the
---   forecast drifts downward with nothing to show for it (the exact bug the
---   quest-xp-forecast spec's "no se reduce dos veces" scenario exists to rule
---   out).
---   PROVENANCE IS A CHAIN, AND THE ADAPTER DECIDES ITS FIRST LINK. QuestLogReader
---   (adapter/outbound) already refuses to claim CLIENT origin when
---   `issecurevariable("GetQuestLogRewardXP")` says the function has been
---   replaced -- that check needs the client API, so it cannot live here. What
---   arrives at this service is already either CLIENT (trustworthy) or UNKNOWN;
---   this service's own job is only the SECOND link -- falling an UNKNOWN entry
---   back to a reward it learned earlier (LEARNED), never inventing a number of
---   its own.
---   ABANDONING A QUEST FORGETS IT. There is no dedicated "quest abandoned"
---   event to listen for (QUEST_ACCEPTED/QUEST_REMOVED/QUEST_LOG_UPDATE all
---   collapse into one generic "something changed, rescan" signal) -- but every
---   rescan hands over the complete, current quest log, so any learned reward
---   whose quest is simply no longer in that list has its own answer: gone.
+-- Provenance is a chain. QuestLogReader (adapter/outbound) refuses to claim
+-- CLIENT origin when `issecurevariable("GetQuestLogRewardXP")` says the function
+-- was replaced, since that check needs the client. What arrives here is CLIENT
+-- or UNKNOWN; this service only falls an UNKNOWN entry back to a reward learned
+-- earlier (LEARNED), never inventing a number.
+--
+-- Abandoning a quest forgets it. There is no "quest abandoned" event
+-- (QUEST_ACCEPTED, QUEST_REMOVED and QUEST_LOG_UPDATE all become one "rescan"
+-- signal), but every rescan hands over the whole quest log, so a learned reward
+-- whose quest is no longer in it is dropped.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -33,8 +26,8 @@ local QuestForecastService = {}
 QuestForecastService.__index = QuestForecastService
 
 -- ---------------------------------------------------------------------------
--- The reduction ladder (8.2), and its inverse for calibration (8.6). Verified
--- against the emulator code of both eras (design.md D15): up to five levels
+-- The reduction ladder, and its inverse for calibration. As the server emulators
+-- implement it for Classic Era and Burning Crusade Classic: up to five levels
 -- above the quest, full reward; then 80/60/40/20/10 percent per level past
 -- that, floored at ten.
 -- ---------------------------------------------------------------------------
@@ -52,18 +45,15 @@ local function reduced(nominal, levelDifference)
   return math.floor(nominal * reductionFactor(levelDifference) + 0.5)
 end
 
--- The inverse of `reduced`. The factor is never zero, so this always has an
--- answer; it is lossy the same way any inverse of a floor() is, which is the
--- rounding noise the spec's own calibration exists to absorb, not to erase.
+-- The inverse of `reduced`. The factor is never zero, so this always answers;
+-- like any inverse of a rounding it is off by rounding noise.
 local function nominalFrom(received, levelDifference)
   return math.floor(received / reductionFactor(levelDifference) + 0.5)
 end
 
--- Shared by report() (which sums this) and entries() (which shows it
--- per-quest): nil for an unknown reward -- never a fabricated number -- and
--- unreduced when the quest's own level is not known (isReducible() false),
--- the same "no level to reduce by" honesty QuestForecast:isReducible()
--- documents.
+-- Shared by report() (which sums it) and entries() (which shows it per quest):
+-- nil for an unknown reward, never a made-up number, and unreduced when the
+-- quest's level is unknown (QuestForecast:isReducible() false).
 local function adjustedRewardFor(characterLevel, forecast)
   if not forecast:isKnown() then
     return nil
@@ -76,13 +66,10 @@ end
 -- Construction
 -- ---------------------------------------------------------------------------
 
--- options: playerState, repository (both ports), and `scan` -- a plain
--- function, not a port, returning the array of QuestForecast entries the
--- current quest log holds (adapter/outbound/QuestLogReader.lua's own shape).
--- A function rather than the reader itself for the same reason LevelTracker's
--- `xpForLevel` is a function and not a port: this needs one call signature and
--- nothing about the reader's own construction, so a closure is enough and
--- keeps this file from ever having to know the adapter type exists.
+-- options: playerState, repository (both ports), and `scan`, a plain function
+-- returning the array of QuestForecast entries in the current quest log
+-- (adapter/outbound/QuestLogReader.lua's shape). A closure, like LevelTracker's
+-- `xpForLevel`, so this file never knows the adapter type.
 -- `logger` is optional (diagnostics only, as in WowEventRouter/CombatLogRouter).
 function QuestForecastService.new(options)
   options = options or {}
@@ -100,17 +87,15 @@ function QuestForecastService.new(options)
     scan = options.scan,
     logger = options.logger,
 
-    -- Persisted across reloads (8.4): questId -> nominal reward, learned from
-    -- the quest dialogue. `current` is the opposite -- rebuilt fresh on every
-    -- scan, never itself persisted, because questLevel/complete belong to the
-    -- live quest log, not to anything worth remembering between sessions.
+    -- Persisted across reloads: questId -> nominal reward, learned from the
+    -- quest dialogue. `current` is rebuilt on every scan and never persisted:
+    -- questLevel and complete belong to the live quest log.
     learned = options.repository:questRewards(),
     current = {},
     previous = {},
 
-    -- 8.3's cadence: dirty until the first scan, then only after markDirty();
-    -- scanning guards against a scan somehow triggering another one before the
-    -- first has returned.
+    -- Dirty until the first scan, then only after markDirty(). `scanning`
+    -- guards against a scan triggering another before it returns.
     dirty = true,
     scanning = false,
   }, QuestForecastService)
@@ -123,18 +108,15 @@ function QuestForecastService:markDirty()
 end
 
 -- ---------------------------------------------------------------------------
--- Reconciling a fresh sweep (8.5's provenance chain, and the abandon-forgets
+-- Reconciling a fresh sweep (the provenance chain, and the abandon-forgets
 -- rule above)
 -- ---------------------------------------------------------------------------
 
 function QuestForecastService:reconcile(freshList)
   local rebuilt = {}
-  -- Whatever was learned for a quest no longer in the fresh sweep is gone:
-  -- the quest log no longer knows it, so neither does this cache. Built up
-  -- fresh here rather than deleting from `self.learned` in place, so a quest
-  -- simply missing from this particular sweep (should not happen -- the
-  -- reader walks the whole log -- but nothing proves it never will) forgets
-  -- it rather than the cache silently keeping stale entries forever.
+  -- A learned reward for a quest not in this sweep is dropped. Built fresh
+  -- rather than deleting from `self.learned` in place, so the cache can never
+  -- keep stale entries.
   local stillLearned = {}
 
   for _, fresh in ipairs(freshList) do
@@ -160,10 +142,9 @@ function QuestForecastService:reconcile(freshList)
   self.learned = stillLearned
   self.repository:saveQuestRewards(self.learned)
 
-  -- Kept for exactly one reader: calibrate, when a rescan lands between a turn-in
-  -- and the reward arriving. The scan runs off a throttled ticker and the two
-  -- events have been measured arriving milliseconds apart, so without this the
-  -- forecast that was on screen is simply gone by the time anyone asks what it was.
+  -- Kept for calibrate alone, for when a rescan lands between a turn-in and its
+  -- reward: the two events can arrive milliseconds apart, and the forecast that
+  -- was on screen would otherwise be gone.
   self.previous = self.current
   self.current = rebuilt
 
@@ -177,12 +158,10 @@ function QuestForecastService:reconcile(freshList)
   end
 end
 
--- 8.3: at most one scan-and-reconcile per call, and only when something
--- actually changed since the last one. The reentrancy guard is not
--- theoretical -- `QuestLogReader:scan()` drives `SelectQuestLogEntry` across
--- the whole log, and nothing in this addon has verified that doing so cannot
--- itself fire a quest-log event synchronously; if it ever does, this refuses
--- to scan again from inside its own scan rather than trusting that it can't.
+-- At most one scan-and-reconcile per call, and only when something changed.
+-- The reentrancy guard exists because `QuestLogReader:scan()` drives
+-- `SelectQuestLogEntry` across the whole log, which is not known never to fire
+-- a quest-log event synchronously.
 function QuestForecastService:tick()
   if self.scanning or not self.dirty then
     return false
@@ -200,13 +179,12 @@ function QuestForecastService:tick()
 end
 
 -- ---------------------------------------------------------------------------
--- Learning a reward from the quest dialogue (8.4), and calibrating one
--- against the real payout of a turn-in (8.6)
+-- Learning a reward from the quest dialogue, and calibrating one against the
+-- real payout of a turn-in
 -- ---------------------------------------------------------------------------
 
--- Called by whatever future adapter code reads GetRewardXP() while a quest's
--- dialogue is open (design.md D15's "level 2" of the provenance chain) -- this
--- service only owns the cache and its persistence, not how a reward gets read.
+-- Called with the reward GetRewardXP() reads while a quest's dialogue is open.
+-- This service owns the cache and its persistence, not how a reward is read.
 function QuestForecastService:learn(questId, reward)
   self.learned[questId] = reward
   self.repository:saveQuestRewards(self.learned)
@@ -215,10 +193,8 @@ function QuestForecastService:learn(questId, reward)
     self.logger:debug(("learn: questId=%s reward=%s"):format(tostring(questId), tostring(reward)))
   end
 
-  -- Visible immediately rather than waiting for the next scheduler tick: a
-  -- reward the player just saw in a quest dialogue should not wait up to a
-  -- redraw cycle to show up as pending, and CLIENT origin (if this service
-  -- already had one) always outranks what was just learned.
+  -- Visible immediately rather than at the next scan. A CLIENT origin, if
+  -- present, always outranks what was just learned.
   local existing = self.current[questId]
   if existing == nil or existing.origin ~= QuestXpOrigin.CLIENT then
     self.current[questId] = QuestForecast.new({
@@ -230,30 +206,23 @@ function QuestForecastService:learn(questId, reward)
   end
 end
 
--- Called when QUEST_COMPLETED carries a real xpReward (WowEventRouter already
--- guards against a missing/invalid one before publishing). Reconstructs the
--- nominal reward from what was actually paid and the level it was paid at,
--- and persists THAT -- never the received (possibly already-reduced) figure --
--- which is what keeps a calibrated quest from being reduced twice.
--- Returns the calibration record: what the panel was SHOWING for this quest, where
--- that figure came from, and what the client actually paid. Task 8.7 asks for
--- twenty of these from a real session, and until now there was nothing to collect.
+-- Called when QUEST_COMPLETED carries a real xpReward (WowEventRouter drops a
+-- missing or invalid one). Reconstructs the nominal reward from what was paid
+-- and the level it was paid at, and persists that, never the received (possibly
+-- reduced) figure, so a calibrated quest is not reduced twice.
 --
--- The old logging here answered a different question. It was gated on the quest
--- already being in `learned`, so it compared the value the dialogue itself had just
--- taught the addon against the payout -- a quest whose reward came from the CLIENT
--- and was never learned produced nothing at all, and that is precisely the
--- provenance spike 0.5 exists to check. It compares the SHOWN figure now.
+-- Returns the calibration record: what the panel was showing for this quest,
+-- where that figure came from, and what the client paid, for any origin.
 --
--- Built before `learn`, and that ordering is the whole of its honesty: `learn`
--- overwrites `self.current[questId]` with a forecast derived from the payout, so a
--- record built afterwards would be comparing the payout with itself.
+-- The record is built before `learn`, which overwrites `self.current[questId]`
+-- with a forecast derived from the payout; built after, it would compare the
+-- payout with itself.
 function QuestForecastService:calibrate(questId, receivedReward)
   local forecast = self.current[questId] or self.previous[questId]
-  -- A forecast lost to a rescan between the turn-in and this call is not the same
-  -- as one that was never there, and it must not read as a perfect prediction: with
-  -- no forecast, questLevel falls back to the character's own level, diff becomes
-  -- zero and nominal equals received. Flagged so the session can discount it.
+  -- A forecast found only in `previous` was lost to a rescan between the turn-in
+  -- and this call. It is flagged `stale` so it can be discounted. With no
+  -- forecast at all, questLevel falls back to the character's level, so diff is
+  -- zero and nominal equals received.
   local stale = self.current[questId] == nil and forecast ~= nil
   local questLevel = forecast and forecast.questLevel or self.playerState:level()
   local characterLevel = self.playerState:level()
@@ -270,10 +239,8 @@ function QuestForecastService:calibrate(questId, receivedReward)
     nominal = nominal,
     questLevel = forecast ~= nil and forecast.questLevel or nil,
     characterLevel = characterLevel,
-    -- Derived the way the panel derives it, through the forecast's own
-    -- reducibility, rather than from the fallback `diff` above: otherwise a quest
-    -- with no known level records a factor that came from a different branch than
-    -- the number the player was shown.
+    -- From the forecast's reducibility, as the panel derives it, not from the
+    -- fallback `diff` above, so it matches the number the player was shown.
     reducible = forecast ~= nil and forecast:isReducible() or false,
     stale = stale,
   }
@@ -289,15 +256,13 @@ function QuestForecastService:calibrate(questId, receivedReward)
 end
 
 -- ---------------------------------------------------------------------------
--- Reporting (8.1, 8.2)
+-- Reporting
 -- ---------------------------------------------------------------------------
 
--- { total, readyTotal, unknownCount }. total/readyTotal are always the
--- nominal reward run through the reduction ladder at the CURRENT character
--- level -- recomputed on every call, never cached, which is what makes a
--- level-up change the answer without this service having to notice the level
--- changed (the quest-xp-forecast spec's own "El personaje sube de nivel"
--- scenario).
+-- { total, readyTotal, unknownCount }. total and readyTotal are the nominal
+-- rewards run through the ladder at the current character level, recomputed on
+-- every call and never cached, so a level-up changes the answer without this
+-- service noticing.
 function QuestForecastService:report()
   local unknownCount = 0
   for _, forecast in pairs(self.current) do
@@ -326,12 +291,10 @@ function QuestForecastService:report()
   return { total = total, readyTotal = readyTotal, unknownCount = unknownCount }
 end
 
--- Per-quest detail for the pending-xp tab (11.5): unlike report()'s total, this
--- stays honest about what is known even at the cap or with xp disabled -- it
--- always runs the ladder, it just does not hide behind report()'s own
--- zero-everything special case. Sorted descending by adjustedReward, unknown
--- rewards last, ties (including two unknowns) broken by questId ascending: a
--- deterministic array a UI can render directly, never the internal map.
+-- Per-quest detail for the pending-xp tab. Unlike report(), it always runs the
+-- ladder, even at the level cap or with experience disabled. Sorted by
+-- adjustedReward descending, unknown rewards last, ties (including two
+-- unknowns) by questId ascending: a deterministic array, never the internal map.
 function QuestForecastService:entries()
   local characterLevel = self.playerState:level()
   local result = {}

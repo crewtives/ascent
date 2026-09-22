@@ -6,8 +6,8 @@ describe("CombatSummary", function()
     CombatSummary = ns.core.CombatSummary
   end)
 
-  -- Nothing to average is not the same as averaging to nothing. A level spent in a
-  -- city has no combat samples, and reporting 0% health there would be a lie.
+  -- A level spent in a city has no combat samples, and reporting 0% health
+  -- there would be wrong: nothing to average is not an average of nothing.
   describe("with no samples", function()
     it("answers nil rather than zero", function()
       local summary = CombatSummary.new()

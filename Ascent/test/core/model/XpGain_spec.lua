@@ -60,19 +60,19 @@ describe("XpGain", function()
       assert.equal(0, gain({ amount = 0 }).amount)
     end)
 
-    -- 0 is what the client answers out of a group and the adapter is what turns it
-    -- into the one person who was there. If it ever reaches the model the
-    -- translation broke, and every average measured afterwards would belong to a
-    -- group size nobody plays at -- so it raises here instead of dividing by it.
+    -- The client answers 0 out of a group, and the adapter turns that into the
+    -- one person who was there. A 0 reaching the model means that translation
+    -- broke, and every later average would belong to a group size nobody plays
+    -- at, so it raises instead of dividing by it.
     it("refuses a group that nobody is in", function()
       assert.has_error(function() return gain({ amount = 10, sharedBy = 0 }) end)
       assert.has_error(function() return gain({ amount = 10, sharedBy = -2 }) end)
       assert.has_error(function() return gain({ amount = 10, sharedBy = 1.5 }) end)
     end)
 
-    -- Absent is a real answer and the commonest one: every gain recorded before
-    -- this existed has no size, and so does every gain the addon posts for
-    -- experience it never watched being earned.
+    -- Absent is the commonest answer: gains saved by older versions have no size,
+    -- and neither does experience the addon posts without having watched it
+    -- earned.
     it("accepts a gain nobody counted the group for", function()
       assert.is_nil(gain({ amount = 10 }).sharedBy)
     end)
@@ -133,8 +133,8 @@ describe("XpGain", function()
       assert.equal(tail.amount, tail:baseAmount() + tail.restedBonus)
     end)
 
-    -- Not just the rested portion: a kill in a group carries a group bonus, and a
-    -- kill that dings is exactly when that would have gone missing.
+    -- Every modifier, not just the rested portion: a group kill that dings
+    -- carries a group bonus as well.
     it("divides every modifier without losing any of it", function()
       local g = gain({ amount = 1000, restedBonus = 400, groupBonus = 150, raidPenalty = 70 })
 
@@ -160,11 +160,10 @@ describe("XpGain", function()
       end
     end)
 
-    -- The group is not a quantity: one kill was paid by one server decision, and
-    -- both sides of a level boundary were part of it. Dividing it the way the
-    -- modifiers are divided would put half of a party of five on each level and
-    -- describe two groups that never existed; dropping it from the tail would file
-    -- the second half of a dinging kill under "nobody counted".
+    -- The group is not a quantity: one server decision paid the kill, on both
+    -- sides of the level boundary. Dividing it like the modifiers would put half
+    -- a party of five on each level; dropping it from the tail would file the
+    -- second half of a dinging kill under "nobody counted".
     it("carries the whole group onto both halves rather than dividing it", function()
       local g = gain({ amount = 1000, sharedBy = 5 })
 

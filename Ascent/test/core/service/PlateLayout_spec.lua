@@ -1,8 +1,6 @@
--- What this file is for: ui/ has no unit test, so every claim about where the
--- plate's pieces end up that can be made in numbers is made here instead. The
--- header offsets are the ones that matter -- they were literals until the text
--- size became the player's, and six literals derived from a font size nobody can
--- change are a different thing from six literals derived from one they can.
+-- Every claim about where the plate's pieces end up that can be made in numbers
+-- is made here, since ui/ has no unit test. The header offsets matter most: they
+-- derive from a text size the player can change.
 
 describe("PlateLayout", function()
   local ns, PlateLayout, PlateZone, Frozen
@@ -52,9 +50,8 @@ describe("PlateLayout", function()
       assert.is_true(draws[PlateZone.SOURCES])
     end)
 
-    -- A list nobody has ever written -- every accessory zone off -- is a choice
-    -- (D90), and the difference between it and "no list at all" is the whole
-    -- reason the setting is a list rather than seven flags.
+    -- An empty list, every accessory zone off, is a choice; telling it apart
+    -- from no list at all is why the setting is a list rather than seven flags.
     it("draws nothing accessory for an empty list, and everything for no list", function()
       local order, draws = PlateLayout.zones({})
       assert.equal(0, #order)
@@ -80,9 +77,8 @@ describe("PlateLayout", function()
   end)
 
   describe("the header's six offsets", function()
-    -- The numbers ui/PullPlateView.lua carried as ROW_TITLE..ROW_BODY. Pinned to
-    -- the pixel because an install that updates and never opens the new page has
-    -- to get the plate it had: these six ARE that promise.
+    -- Pinned to the pixel: an install that updates and never opens the options
+    -- page has to get the plate it had.
     it("lands on the view's own literals at the default text size", function()
       local layout = PlateLayout.lay({ zones = allZones() })
 
@@ -90,10 +86,9 @@ describe("PlateLayout", function()
         layout.header)
     end)
 
-    -- The defect of add-ascent-pull-recap 5.2, stated as arithmetic: whatever the
-    -- text size, nothing may start before the thing above it has finished. The
-    -- source bar is the one that broke, and it is the one that has to clear both
-    -- columns -- the to-level line on the left and the chain on the right.
+    -- Whatever the text size, nothing may start before the thing above it has
+    -- finished. The source bar has to clear both columns: the to-level line on
+    -- the left and the chain on the right.
     for _, size in ipairs({ 8, 20 }) do
       it("keeps every row below the one above it at text size " .. size, function()
         local layout = PlateLayout.lay({ zones = allZones(), textSize = size })
@@ -158,8 +153,8 @@ describe("PlateLayout", function()
       return PlateLayout.lay(options).height
     end
 
-    -- Not "is hidden": shorter. The spec's own wording, and the difference a
-    -- player sees when they turn one off with the plate in front of them.
+    -- Not "is hidden": shorter, which is what a player sees when they turn a zone
+    -- off with the plate in front of them.
     it("shrinks when a zone is switched off", function()
       local all = height({})
 
@@ -195,9 +190,8 @@ describe("PlateLayout", function()
       assert.equal(PlateLayout.lay({}).rowHeight, four - three)
     end)
 
-    -- Its smallest is the header and the padding under it -- the floor the view
-    -- used to carry as MIN_HEIGHT, now a consequence of the arithmetic rather
-    -- than a number asserted on top of it.
+    -- Its smallest is the header and the padding under it: a floor that follows
+    -- from the arithmetic rather than a minimum asserted on top of it.
     it("is the header plus its padding with nothing in the body", function()
       local layout = PlateLayout.lay({ zones = {}, creatures = 0, abilities = 0 })
 

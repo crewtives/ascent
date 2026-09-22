@@ -1,16 +1,15 @@
 -- Ascent - the base language table.
 --
--- enUS is the base (D13): every other language falls back to it key by key, so this
--- table is the only one that has to be complete. LocaleSource_spec asserts exactly
--- that -- every TextKey the source uses has an entry here.
+-- enUS is the base: every other language falls back to it key by key, so this is
+-- the only table that has to be complete. LocaleSource_spec asserts that every
+-- TextKey the source uses has an entry here.
 --
--- Keys are TextKey values, never bare strings: a typo then fails when this file
--- loads rather than showing the player a blank label.
+-- Keys are TextKey values, never bare strings, so a typo fails when this file
+-- loads instead of showing the player a blank label.
 --
--- Command *keywords* are deliberately absent. "show", "lock", "confirm" and the rest
--- are what the player types, and the dispatcher matches them literally; putting them
--- in a translation table would let a translated help line document a command that no
--- longer answers.
+-- Command keywords ("show", "lock", "confirm", ...) are absent: the dispatcher
+-- matches what the player types literally, so a translated keyword would let a
+-- help line document a command that does not answer.
 
 local _, ns = ...
 ns.locale = ns.locale or {}
@@ -52,13 +51,20 @@ ns.locale.tables.enUS = {
   [TextKey.BAR_TOOLTIP_QUEST]      = "   %s",
   [TextKey.BAR_TOOLTIP_MORE]       = "   and %d more",
   [TextKey.BAR_PENDING]            = "Pending (projected)",
-  -- Indented like BAR_TOOLTIP_PLACE, and for the same reason: these two belong to
-  -- the unclassified line above them. Separate keys from PANEL_PARTIAL on purpose
-  -- -- the panel's sentence is a paragraph and a tooltip line is not, and sharing a
-  -- key across two surfaces is the mistake 11.5 had to undo.
+  -- Indented like BAR_TOOLTIP_PLACE: these two belong to the unclassified line
+  -- above them. Kept apart from PANEL_PARTIAL because the panel's sentence is a
+  -- paragraph and a tooltip line is not; one key cannot serve both surfaces.
   [TextKey.BAR_NOT_OBSERVED]       = "   not observed",
   [TextKey.BAR_UNEXPLAINED]        = "   unattributed",
   [TextKey.BAR_PARTIAL]            = "|cffffcc00Level joined in progress|r",
+  [TextKey.UNAVAILABLE_COMBAT_LOG_ABSENT] =
+    "Not recorded: the client this level was played on gives addons no combat log.",
+  [TextKey.UNAVAILABLE_COMBAT_LOG_CLOSED] =
+    "Not recorded: the client closed its combat log to addons part-way through this level.",
+  [TextKey.UNAVAILABLE_KILLS_ABSENT] =
+    "Creature experience is under Unclassified: the client this level was played on does not name who paid it.",
+  [TextKey.UNAVAILABLE_KILLS_CLOSED] =
+    "Creature experience is under Unclassified from the point the client stopped naming who paid it.",
 
   [TextKey.PANEL_TITLE]            = "Ascent - Level Report",
   [TextKey.PANEL_TITLE_LEVEL]      = "Ascent - Level %d",
@@ -132,12 +138,12 @@ ns.locale.tables.enUS = {
   -- The same figure, marked: it was priced with the level's average per kill
   -- rather than with this creature's, and those differ by a lot.
   [TextKey.PANEL_OBJ_ROUGH]        = "~%d xp*",
-  -- Marked too, and differently, because it is a different kind of wrong: this
-  -- one IS this creature's own average, but over kills taken before anyone
-  -- counted how many people split the pay, so it describes a population nobody
-  -- can name (D83). A plus rather than a second asterisk -- the two marks are not
-  -- degrees of one another -- and ASCII, like every string in this file, because
-  -- the client's font is promised nothing else.
+  -- Marked differently because it is a different kind of estimate: this
+  -- creature's own average, but over kills recorded before the group size was
+  -- counted, so it mixes populations that cannot be told apart. A plus rather
+  -- than a second asterisk, since the two marks are not degrees of one another;
+  -- ASCII, like every string here, because the client's font guarantees nothing
+  -- else.
   [TextKey.PANEL_OBJ_MIXED]        = "~%d xp+",
   [TextKey.PANEL_OBJ_NO_RATE]      = "no rate yet",
   [TextKey.PANEL_OBJ_FOOTNOTE]     = "|cffffcc00* priced with this level's average per kill, not this creature's.|r",
@@ -226,14 +232,13 @@ ns.locale.tables.enUS = {
   -- The two numbers differ only when the client words a kill objective in a way
   -- the template does not match, which is the one failure a suite cannot see.
   [TextKey.CMD_QUESTS_OBJECTIVES]  = "kill objectives: %d read of %d seen",
-  -- Says where the figure comes from, because the addon cannot check a server:
-  -- this is other players' clients talking, and the player should know that.
+  -- Names its source because an addon cannot query a server: the newer version
+  -- is what other players' clients announced.
   [TextKey.UPDATE_AVAILABLE]       = "version %s is out there - you are running %s. "
                                   .. "(Seen from other players nearby; an addon cannot check for itself.)",
   [TextKey.UPDATE_INSTALLED]       = "updated to %s. /ascent changelog for what it brings",
-  -- The one line in this addon that explains something which already happened
-  -- and was never reported: a history written by a newer build is archived on
-  -- load, not migrated backwards (D73).
+  -- Explains something that already happened on load: history written by a
+  -- newer build is archived, not migrated backwards.
   [TextKey.UPDATE_DOWNGRADED]      = "this is %s, older than the %s you were running. "
                                   .. "Level history written by the newer build has been set aside, "
                                   .. "not deleted: install %s again to read it",
@@ -252,8 +257,8 @@ ns.locale.tables.enUS = {
   [TextKey.OPT_SLOT_OFF]           = "free on screen",
   [TextKey.OPT_SLOT_INSET]         = "in the client's bar",
   [TextKey.OPT_SLOT_REPLACE]       = "in the client's bar, frame hidden",
-  -- Suspended, and why. Without the reason the player reads two dead sliders as
-  -- a broken options panel rather than as a consequence of what they just chose.
+  -- Suspended, and why: without the reason, two disabled sliders read as a
+  -- broken options panel rather than as a consequence of the chosen slot.
   [TextKey.OPT_SLOT_SUSPENDED]     =
     "Position and size come from the client's bar while it lives there, and the bar shows no text -- "
     .. "the strip is too thin to read one, and outside it is the client's own interface. "
@@ -262,9 +267,8 @@ ns.locale.tables.enUS = {
   [TextKey.CMD_STATUS_SLOT]        = "slot: %s",
   [TextKey.CMD_SLOTS]              = "slots: %s",
   [TextKey.CMD_BAD_SLOT]           = "'%s' is not a slot",
-  -- Said when the setting is on but cannot take effect. Two different states --
-  -- the player turned it off, and the client has no bar to take over -- and a
-  -- player who cannot tell them apart will go looking for a bug in the setting.
+  -- Said when the setting is on but cannot take effect. It must read differently
+  -- from the setting being off, or the player looks for a bug in the setting.
   [TextKey.CMD_SLOT_NO_CLIENT_BAR] =
     "this client has no experience bar to take over, so the bar stays where you put it",
   [TextKey.ERR_UI_FAILED]          =
@@ -274,18 +278,17 @@ ns.locale.tables.enUS = {
   [TextKey.OPT_COLOR_RESTED]       = "Rested",
   [TextKey.CMD_APPEARANCE_RESET]   = "appearance reset to defaults, bar back in the middle of the screen",
 
-  -- What `/ascent options plate` answers, indented under its first line the way
-  -- the summary rows are. It exists for a player who cannot see the plate, so it
-  -- leads with the three things that hide one -- switched off, transparent, or
-  -- dropped somewhere off the screen -- and prints where it is before what it
-  -- draws. The lock is on the first line because it is what stops them moving it
-  -- once they find it.
+  -- The answer to /ascent options plate, indented under its first line like the
+  -- summary rows. It is for a player who cannot see the plate, so it leads with
+  -- what hides one (switched off, transparent, off screen) and says where it is
+  -- before what it draws. The lock is on the first line because it is what stops
+  -- the player moving the plate once found.
   [TextKey.CMD_PLATE_STATUS]       = "plate: %s (locked: %s)",
   [TextKey.CMD_PLATE_FRAME]        = "  scale %s, width %s, opacity %s, hold %ss, rows %s",
   [TextKey.CMD_PLATE_AT]           = "  at %s %s, %s",
   [TextKey.CMD_PLATE_ZONES]        = "  zones: %s",
-  -- Every accessory zone off is a choice the panel offers (D90), so this says
-  -- what the plate still draws rather than reading as an empty line.
+  -- Every accessory zone off is a choice the panel offers, so this says what the
+  -- plate still draws rather than reading as an empty line.
   [TextKey.CMD_PLATE_NO_ZONES]     = "  zones: none, the headline only",
   [TextKey.CMD_PLATE_RESET]        =
     "plate reset to defaults, back in the middle of the screen; the bar was left alone",
@@ -323,9 +326,8 @@ ns.locale.tables.enUS = {
   [TextKey.OPT_BACKGROUND_ALPHA]      = "Background opacity",
   [TextKey.OPT_SECTION_FIELDS]        = "What the bar says",
   [TextKey.OPT_PAGE_MAIN]             = "Ascent",
-  -- One line under each page's title, the way every other addon in this list
-  -- does it: it says what the page is for before the player has to guess from
-  -- the controls.
+  -- One line under each page's title, as other addons in the client's AddOns
+  -- list do: it says what the page is for before the controls have to.
   [TextKey.OPT_PAGE_MAIN_DESC]        =
     "Per-level leveling analytics. This page is where the bar lives; the rest is how it looks.",
   [TextKey.OPT_PAGE_SKIN_DESC]        =
@@ -350,9 +352,9 @@ ns.locale.tables.enUS = {
   [TextKey.OPT_FIELD_TIME_ON_LEVEL]   = "Time on this level",
   [TextKey.OPT_FIELD_SESSION_TIME]    = "Time this session",
   [TextKey.OPT_FIELD_QUEST_PENDING]   = "Experience waiting in quests",
-  -- A bar with no text is a legitimate choice, so this is a note and not a
-  -- warning: it says what the player will see, and does not argue with them.
   [TextKey.OPT_TEXT_ON_HOVER]         = "Only show this text when the cursor is on the bar",
+  -- A bar with no text is a legitimate choice, so this is a note rather than a
+  -- warning: it says what the player will see.
   [TextKey.OPT_FIELDS_NONE]           = "With none of these on, the bar shows no text.",
   [TextKey.OPT_TEXT_STYLE]            = "Text style",
   [TextKey.OPT_TEXT_ANCHOR]           = "Text position",
@@ -395,8 +397,8 @@ ns.locale.tables.enUS = {
     "The frame that counts a fight while it happens and stays as a plaque when it ends.",
   [TextKey.OPT_SECTION_PLATE_FRAME]   = "The frame",
   [TextKey.OPT_SECTION_PLATE_CONTENT] = "What it shows",
-  -- "Its own", not "Appearance": the plate wears the bar's skin and its palette
-  -- (D87), and what this section holds is only what it changes on top of them.
+  -- "Its own", not "Appearance": the plate wears the bar's skin and palette, and
+  -- this section holds only what it changes on top of them.
   [TextKey.OPT_SECTION_PLATE_LOOK]    = "Its own look",
   [TextKey.OPT_PLATE_ENABLED]         = "Show the pull plate",
   [TextKey.OPT_PLATE_LOCKED]          = "Lock the plate where it is",
@@ -412,9 +414,8 @@ ns.locale.tables.enUS = {
   [TextKey.OPT_PLATE_ZONE_CREATURES]  = "Creatures",
   [TextKey.OPT_PLATE_ZONE_ABILITIES]  = "Abilities",
   [TextKey.OPT_PLATE_ZONE_FOOTER]     = "Damage per second and experience per hour",
-  -- Every accessory zone off is a choice and not a mistake (D90), so this says
-  -- what is left rather than arguing -- the same note, for the same reason, that
-  -- a bar with no text gets.
+  -- Every accessory zone off is a legitimate choice, so this says what is left,
+  -- like the note a bar with no text gets.
   [TextKey.OPT_PLATE_ZONES_NONE]      =
     "With none of these on, the plate shows the experience and the kill count and nothing else.",
   [TextKey.OPT_PLATE_DEMO]            = "Show me a pull",
@@ -427,9 +428,8 @@ ns.locale.tables.enUS = {
   [TextKey.PLATE_KILLS]               = "%d",
   [TextKey.PLATE_KILLS_OF]            = "%d/%d",
   [TextKey.PLATE_REMAINING]           = "%s to level",
-  -- Wraps the headline while it is still a forecast. The tilde is the whole of
-  -- the claim: an estimate from what these creatures have actually paid at this
-  -- level. It comes off the moment the experience lands.
+  -- Wraps the headline while it is still a forecast: an estimate from what these
+  -- creatures have paid at this level. It comes off when the experience lands.
   [TextKey.PLATE_PROJECTION]          = "~%s",
   -- A row still being fought: how many are down out of how many were pulled.
   [TextKey.PLATE_ALIVE]               = "%d/%d",

@@ -1,13 +1,9 @@
--- The client has no require(). It loads an addon's files in the order the TOC
--- declares them, into one shared table, and every module here binds what it needs to
--- a local as it loads. A file placed before the one that defines its dependency
--- therefore binds nil, and the failure surfaces much later -- in the client, on
--- somebody else's machine, as a nil index in the middle of a fight.
---
--- dev.sh already checks that the TOC lists every file and that every listed file
--- exists. This checks the half it cannot: that the order it lists them in works.
--- The namespace is made strict for the duration, so reading a name that has not been
--- defined yet fails at the file that read it rather than somewhere downstream.
+-- The client has no require(): it loads an addon's files in TOC order into one
+-- shared table, and every module binds what it needs to a local as it loads. A file
+-- placed before its dependency binds nil and fails much later, in the client, as a
+-- nil index in the middle of a fight. dev.sh checks that the TOC and the files
+-- match; this checks that the order works, with a strict namespace so an early read
+-- fails at the file that made it.
 
 describe("the addon's load order", function()
   local function strictNamespace()
@@ -21,10 +17,9 @@ describe("the addon's load order", function()
         rawset(_, key, value)
       end,
     })
-    -- `adapter` is strict for the same reason `core` is, and it was not until a
-    -- reader bound `ns.adapter.GlobalStringPattern` three files before anything
-    -- defined it. Nothing failed here; it failed in the client, at the first
-    -- quest log sweep, which is the exact failure this file exists to prevent.
+    -- `adapter` is strict for the same reason `core` is: as a plain table, an
+    -- adapter bound before another defines it would read nil here and fail only
+    -- in the client, e.g. at the first quest log sweep.
     local adapter = setmetatable({}, {
       __index = function(_, key)
         error(("ns.adapter.%s is read before any file has defined it"):format(tostring(key)), 2)
@@ -56,10 +51,6 @@ describe("the addon's load order", function()
       ("%d core files registered only %d names"):format(#paths, count))
   end)
 
-  -- The half this file did not check until an adapter bound another adapter's
-  -- name three files before anything defined it. Nothing failed: `ns.adapter` was
-  -- a plain table, so the read answered nil and the addon broke in the client, at
-  -- the first quest log sweep, with the pattern compiler missing.
   it("loads every adapter file in the order the TOC declares, on top of core", function()
     local ns = strictNamespace()
 

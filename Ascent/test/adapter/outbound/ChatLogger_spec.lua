@@ -63,11 +63,10 @@ describe("ChatLogger", function()
     assert.equal(2, #messages)
   end)
 
-  -- Chat scrollback is not enough to reconstruct an ordering question after the
-  -- fact -- it is shared with every other addon's output -- so debug lines are
-  -- also kept in AscentCharDB.debugLog, the one thing a WoW addon can actually
-  -- write to disk with (flushed by the client at logout/reload, read back from
-  -- there rather than tailed live).
+  -- Chat scrollback is shared with every other addon's output, so debug lines are
+  -- also kept in AscentCharDB.debugLog: saved variables are the only thing a WoW
+  -- addon can write to disk, and the client flushes them at logout or /reload, so
+  -- the log is read back from there rather than tailed live.
   describe("the persisted debug log", function()
     it("appends every debug line while debug mode is on", function()
       local logger = load(true)

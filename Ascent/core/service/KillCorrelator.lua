@@ -10,8 +10,7 @@
 -- so the only join available is the name and the instant. This keeps a bounded
 -- buffer of recent deaths and matches a named hint against it.
 --
--- Two rules keep it honest, and they are the reason this is a separate object
--- rather than a branch inside the attribution service:
+-- Two rules:
 --
 --   * The join enriches; it never decides whether experience is recorded. A hint
 --     with no candidate still resolves -- to a key that says the type and the level
@@ -22,14 +21,13 @@
 --     lands on attribution by creature type and never on the totals.
 --
 -- The window is bidirectional because the order between UNIT_DIED and the
--- experience message is not verified for 1.15.x or 2.5.x -- spike 0.1 measures it,
--- and if it turns out the death always comes first this collapses to a queue.
+-- experience message is not verified on Classic Era (1.15.x) or Burning Crusade
+-- Classic (2.5.x).
 --
--- One caveat for whoever wires this up: it treats every death it is given as one
--- the player killed, because that is what the unproductive-kill count means. The
--- early combat-log filter deliberately lets bystander deaths through (the correlator
--- needs UNIT_DIED), so narrowing them to the player's own kills belongs in the
--- combat log router, not here.
+-- Every death it is given counts as one the player killed, because that is what
+-- the unproductive-kill count means. The early combat-log filter lets bystander
+-- deaths through (the correlator needs UNIT_DIED), so narrowing them to the
+-- player's own kills belongs in the combat log router, not here.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -60,9 +58,8 @@ function KillCorrelator.new(options)
     -- A death has to outlive the window it can be matched in, by a wide margin. The
     -- hint that claims it may arrive a whole window late, the experience paying for
     -- that hint a window after, and the attribution of that experience settles two
-    -- windows after that. Evicting a death at the matching window is what makes a
-    -- paid kill look unpaid, and an unpaid kill is a number the panel shows the
-    -- player.
+    -- windows after that. Evicting a death at the matching window would make a paid
+    -- kill look unpaid, and unpaid kills are a number the panel shows the player.
     retention = options.retention or window * 4,
     capacity = options.capacity or DEFAULT_CAPACITY,
     -- Diagnostic only (see Logger port): optional, nil by default, and every path
@@ -191,9 +188,8 @@ function KillCorrelator:prune(now)
     elseif not death.matched then
       self.counters.expiredDeaths = self.counters.expiredDeaths + 1
       expired[#expired + 1] = death
-      -- Worth seeing per-creature, not only in the final expiredDeaths count: this
-      -- is the unproductive-kill signal, and a player handing over a debug log
-      -- should be able to tell which creature it was.
+      -- Logged per creature, not only counted in expiredDeaths: this is the
+      -- unproductive-kill signal, and a debug log should say which creature it was.
       if self.logger ~= nil then
         self.logger:debug(("death expired unclaimed at %.3f: name=%q"):format(death.at, death.name))
       end

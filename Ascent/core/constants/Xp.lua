@@ -37,7 +37,7 @@ ns.core.QuestXpOrigin = Frozen.enum("QuestXpOrigin", {
 -- Which channel a hint arrived on. The client announces experience through several
 -- channels that carry very different amounts of information -- two of them carry
 -- nothing but a number -- and the channel is the only thing that tells them apart.
--- The classifiers of D5 dispatch on this and on nothing else.
+-- The attribution classifiers dispatch on this and on nothing else.
 ns.core.XpHintKind = Frozen.enum("XpHintKind", {
   KILL_MESSAGE      = "kill_message",      -- "%s dies, you gain %d experience."
   ANONYMOUS_MESSAGE = "anonymous_message", -- "You gain %d experience." -- quests, maybe discoveries
@@ -46,11 +46,10 @@ ns.core.XpHintKind = Frozen.enum("XpHintKind", {
   ZONE_DISCOVERED   = "zone_discovered",   -- ERR_ZONE_EXPLORED_XP
 })
 
--- How to read the number in the parenthetical of a rested kill message. With a full
--- reserve both readings produce the same figure, which is why no static source can
--- settle it and why spike 0.4 exists. The identity base + bonus = amount received
--- holds either way; all that changes is which half the parenthetical names. The
--- domain therefore carries both readings instead of guessing one.
+-- How to read the number in the parenthetical of a rested kill message. Which half
+-- it names is not documented, and with a full reserve both readings produce the
+-- same figure. The identity base + bonus = amount received holds either way, so the
+-- domain carries both readings instead of guessing one.
 ns.core.RestedReading = Frozen.enum("RestedReading", {
   BONUS = "bonus",
   BASE  = "base",

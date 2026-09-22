@@ -110,6 +110,7 @@ describe("RecordStore", function()
           [1] = function() end,
           [2] = function() end,
           [3] = function() end,
+          [4] = function() end,
         },
       }):load()
 
@@ -136,12 +137,10 @@ describe("RecordStore", function()
       assert.equal(3, repository:schemaVersion())
     end)
 
-    -- The guard the chain never had. RecordStore.MIGRATIONS is the table production
-    -- uses, and nothing above touches it: every test here injects its own. A version
-    -- below the current one with no step does NOT mean "no conversion needed" --
-    -- migrate() returns false and load() archives the character's whole history on
-    -- first login. Raising SchemaVersion.CURRENT and forgetting the step is
-    -- therefore silent data loss that passes test, lint and smoke alike.
+    -- RecordStore.MIGRATIONS is the table production uses; every other test here
+    -- injects its own. A version below the current one with no step is not "no
+    -- conversion needed": migrate() returns false and load() archives the
+    -- character's whole history on first login.
     it("ships a step for every version below the current one", function()
       for version = 1, ns.core.SchemaVersion.CURRENT - 1 do
         assert.equal("function", type(ns.core.RecordStore.MIGRATIONS[version]),
@@ -162,16 +161,10 @@ describe("RecordStore", function()
       assert.equal(24, loaded:current().level)
     end)
 
-    -- The guard above only asks for a function, and `function() end` answers it. The
-    -- 3 -> 4 step is the first one that cannot be that: the group a creature's kills
-    -- were paid to is written AHEAD of the creature's key, because the key is the
-    -- line's variable-length tail, so every stored creature line shifts by a field.
-    -- Left empty, the step would pass every test the chain has and hand the reader
-    -- the npc id where the group belongs.
-    --
-    -- The version is spelled out rather than derived from CURRENT because this
-    -- conversion belongs to that step for good; keeping a later bump honest is the
-    -- job of the test above.
+    -- The 3 -> 4 step cannot be `function() end`: the group a creature's kills were
+    -- paid to is written ahead of the creature's key, the line's variable-length
+    -- tail, so every stored creature line shifts by a field. Pinned at 3 rather
+    -- than derived from CURRENT, because this conversion belongs to that step.
     it("converts the creature aggregates its step was raised for", function()
       local step = ns.core.RecordStore.MIGRATIONS[3]
       assert.equal("function", type(step))
@@ -190,12 +183,11 @@ describe("RecordStore", function()
         repository:currentRecord().creatures)
     end)
 
-    -- And the same thing as a character sees it. "carries a character forward"
-    -- above stores a record with no creature aggregates at all, so it stays green
-    -- with the conversion broken; this hands the store a file in the shape version
-    -- 3 wrote and reads it back through the model.
-    it("reads a file from the previous version with its creatures intact and uncounted", function()
-      repository:setSchemaVersion(ns.core.SchemaVersion.CURRENT - 1)
+    -- A file in the shape version 3 wrote, read back through the model: the
+    -- end-to-end test above stores no creature aggregates at all. Pinned at 3, not
+    -- derived from CURRENT, so a later bump walks it through every later step too.
+    it("reads a file from version 3 with its creatures intact and uncounted", function()
+      repository:setSchemaVersion(3)
       repository:saveCurrentRecord({
         level = 24, xpTotal = 128, killsWithXp = 3,
         xpBySource = { mob_kill = 128 },
@@ -218,7 +210,7 @@ describe("RecordStore", function()
       assert.equal(84, lynx.xpTotal)
 
       -- Unknown, and deliberately not solo: most of these kills probably were solo,
-      -- which is exactly what would make claiming it undetectable (D84).
+      -- which is exactly what would make claiming it undetectable.
       assert.is_nil(lynx.sharedBy)
       assert.is_nil(current.creatures["15343:6@1"])
 
@@ -226,10 +218,23 @@ describe("RecordStore", function()
       -- repository, and the history is the larger part of what is in it.
       assert.equal(44, loaded:completed(23).creatures["5644:6@?"].xpTotal)
 
-      -- The level's own sums live outside the packed text: this change separates a
+      -- The level's own sums live outside the packed text: the step separates a
       -- breakdown, it does not restate a total.
       assert.equal(128, current:xpFrom(ns.core.XpSource.MOB_KILL))
       assert.equal(3, current.killsWithXp)
+    end)
+
+    -- 4 -> 5 converts nothing: every level written at 4 was recorded by a Classic
+    -- client, which had both sources, so it comes back unmarked, neither marked
+    -- nor refused.
+    it("reads a level written at 4 as one recorded with every source", function()
+      repository:setSchemaVersion(4)
+      repository:saveCurrentRecord({ level = 24, xpTotal = 100, xpBySource = { mob_kill = 100 } })
+
+      local loaded = newStore():load()
+
+      assert.is_false(loaded.archived)
+      assert.same({}, loaded:current().unavailable)
     end)
   end)
 
@@ -274,7 +279,7 @@ describe("RecordStore", function()
       assertArchived(newStore():load())
     end)
 
-    -- Options are account-wide and were never the thing that could not be read.
+    -- Options are account-wide and are not what could not be read.
     it("keeps the player's options through an archive", function()
       repository:saveSettings({ bar_scale = 1.5 })
       repository:setSchemaVersion(99)

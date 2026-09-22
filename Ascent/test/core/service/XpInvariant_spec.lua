@@ -1,13 +1,9 @@
--- The one guarantee the addon exists to make: whatever happened, the experience
--- attributed to all the sources of a level adds up to exactly the experience that
--- level held. Every other test here pins down a mechanism; this one drives the
--- whole chain -- classifiers, window, correlator, ledger -- with a random sequence
--- of the awkward cases and asserts only that.
---
--- Since the level also records WHERE it was earned, the same run asserts the second
--- dimension against the first: the places add up to the same number as the sources,
--- through the same level-ups, duplicate announcements and mid-run data loss. Two
--- dimensions over one set of gains are only worth having if they can never disagree.
+-- The guarantee the addon exists to make: the experience attributed to all the
+-- sources of a level adds up to exactly the experience that level held. This
+-- drives the whole chain (classifiers, window, correlator, ledger) with a random
+-- sequence of the awkward cases and asserts only that, and that the places add
+-- up to the same number as the sources through the same level-ups, duplicate
+-- announcements and mid-run data loss.
 --
 -- The generator is a Park-Miller LCG rather than math.random, seeded by a constant
 -- printed with every failure, so a run that breaks can be replayed exactly.
@@ -103,7 +99,7 @@ describe("the hundred percent invariant", function()
     end
 
     -- Half the time the announcement precedes the experience and half the time it
-    -- follows, because which order the client uses is exactly what nobody knows.
+    -- follows, because the order the client uses is not known.
     local function announce(amount, hints)
       if random(2) == 1 then
         hints()
@@ -232,12 +228,9 @@ describe("the hundred percent invariant", function()
         :format(current.level, current:sumOfPlaces(), current:sumOfSources(), context))
   end)
 
-  -- Task 1.4's own words are "hasta los modificadores del registro del nivel", and
-  -- the suite had no test that went that far on ANY channel: every modifier test
-  -- stopped at the gain, and the ledger's own spec posts a gain built by hand. So
-  -- this drives the same chain the invariant above does, and follows one group kill
-  -- all the way into xpByModifier -- announced only on the anonymous line, which is
-  -- the channel that used to lose it.
+  -- Drives the same chain as the invariant above and follows one group kill all
+  -- the way into xpByModifier, announced only on the anonymous line; the other
+  -- modifier tests stop at the gain.
   it("carries a group bonus announced without a creature name into the level record", function()
     local ns = AscentTest.loadWith("core/model/",
       "core/port/Port.lua", "core/port/PlayerState.lua", "core/port/EventBus.lua",
@@ -274,7 +267,7 @@ describe("the hundred percent invariant", function()
     assert.equal(120, record.xpTotal)
     assert.equal(18, record:xpFromModifier(XpModifier.GROUP_BONUS),
       "the group bonus never reached the level record")
-    -- D41: a modifier annotates a gain, it is never added to it.
+    -- A modifier annotates a gain, it is never added to it.
     assert.is_true(record:sourcesAddUp())
   end)
 end)

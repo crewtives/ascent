@@ -1,8 +1,6 @@
--- The central guarantee under test here is the one the whole addon exists to keep,
--- restated for the bar: what the segments add up to has to be exactly what the
--- level's own percentage says, and what is only a projection -- the rested reserve,
--- the pending quest experience -- has to stay visibly apart from that sum rather
--- than quietly padding it.
+-- The segments add up to exactly the level's own percentage, and what is only a
+-- projection (the rested reserve, the pending quest experience) stays visibly
+-- apart from that sum rather than padding it.
 
 describe("XpBarViewModel", function()
   local ns, XpBarViewModel, XpLedger, LevelRecord, XpGain, XpSource
@@ -85,10 +83,10 @@ describe("XpBarViewModel", function()
     end)
   end)
 
-  -- D21: what the client has confirmed but XpAttribution has not yet settled into
-  -- a source. The bar folds it into UNKNOWN as provisional so the total and the
+  -- What the client has confirmed but XpAttribution has not yet settled into a
+  -- source. The bar folds it into UNKNOWN as provisional so the total and the
   -- percent move immediately instead of lagging behind the settling window.
-  describe("unattributedXp (D21)", function()
+  describe("unattributedXp, the experience still waiting for its source", function()
     it("is folded into the UNKNOWN segment and into the completed percent", function()
       local record = level(10, 1000)
       XpLedger.post(record, gain(300, XpSource.MOB_KILL))
@@ -228,9 +226,8 @@ describe("XpBarViewModel", function()
       assert.is_nil(viewModel.pending)
     end)
   end)
-  -- The crossed reading (task 4.3). Two things are under test and the second one
-  -- matters more: that the popup can answer "which part of this source came from
-  -- where", and that asking it changes nothing at all about the bar.
+  -- The crossed reading: the popup can answer "which part of this source came
+  -- from where", and asking it changes nothing at all about the bar.
   describe("where each source was earned", function()
     local PlaceKey, PlaceContext
 
@@ -273,8 +270,8 @@ describe("XpBarViewModel", function()
       assert.equal(100, kills[2].amount)
     end)
 
-    -- The popup's own block (pending-detail 1.2): the places of the LEVEL, not of a
-    -- source, which is what stops one zone printing once per source.
+    -- The popup's own block lists the places of the level, not of a source, so
+    -- one zone does not print once per source.
     it("lists the level's places once each, whatever mix of sources paid for them", function()
       local places = XpBarViewModel.placesOf(levelEarnedInTwoPlaces())
 
@@ -334,13 +331,10 @@ describe("XpBarViewModel", function()
       assert.same({ "world:3", "world:1", "world:2" }, ids)
     end)
 
-    -- THE test of this group. The spec forbids the bar gaining a segment, changing
-    -- its geometry, or breaking the correspondence between occupied width and the
-    -- level's percentage -- so the same record with and without its places has to
-    -- produce the same bar, figure for figure.
-    -- The reading is asked for, not carried: building it on the redraw tick meant
-    -- allocating four lists and running four sorts up to five times a second for
-    -- a popup nobody was hovering over.
+    -- The places must not give the bar a segment, change its geometry or break
+    -- the match between occupied width and the level's percentage. The reading is
+    -- asked for, not carried: building it on the redraw tick would allocate four
+    -- lists and run four sorts up to five times a second for a popup nobody hovers.
     it("is not on the segment at all, so no redraw pays for it", function()
       local viewModel = XpBarViewModel.build(levelEarnedInTwoPlaces())
 
@@ -417,9 +411,9 @@ describe("XpBarViewModel", function()
     end)
   end)
 
-  -- The bar's half of "say what you did not see". The numbers are the 2026-09-17
-  -- session's: a level joined at 8632 that went on to earn 13111 more, of which 184
-  -- never got a source.
+  -- The bar's half of "say what you did not see". The numbers are from a real
+  -- level: joined at 8632, it went on to earn 13111 more, of which 184 never got a
+  -- source.
   describe("what the record can say about its own completeness", function()
     local function partialLevel()
       local record = level(35, 54017)
@@ -446,8 +440,8 @@ describe("XpBarViewModel", function()
       assert.equal(184, observation.unexplainedXp)
     end)
 
-    -- A record written before the addon kept the figure. It can say the accounting
-    -- is incomplete and nothing more; claiming a split here would invent it.
+    -- A record saved before the addon kept the figure can say the accounting is
+    -- incomplete and nothing more; claiming a split here would invent it.
     it("declines to split when the record never recorded the seed", function()
       local record = partialLevel()
       record.seededXp = nil
@@ -459,11 +453,9 @@ describe("XpBarViewModel", function()
       assert.is_nil(observation.unexplainedXp)
     end)
 
-    -- The split has to add up to the LINE it sits under, and that line is the bucket
-    -- plus whatever D21 has not settled. Computing it from the bucket alone left
-    -- those points unexplained on screen -- in the three lines that exist to explain
-    -- exactly that. Every other test here passes no params, which is why the whole
-    -- suite stayed green with this wrong.
+    -- The split adds up to the line it sits under: the bucket plus what the
+    -- settling window has not settled. The other tests here pass no params, so
+    -- only this one tells the two apart.
     it("adds up to the unclassified segment, settling window included", function()
       local built = XpBarViewModel.build(partialLevel(), { unattributedXp = 250 })
 
@@ -484,7 +476,6 @@ describe("XpBarViewModel", function()
       assert.equal(0, XpBarViewModel.build(record).observation.unexplainedXp)
     end)
 
-    -- The requirement is explicit that saying this changes no figure.
     it("leaves every segment exactly as it was", function()
       local record = partialLevel()
       local withMark = XpBarViewModel.build(record)
@@ -498,6 +489,24 @@ describe("XpBarViewModel", function()
         assert.equal(segment.fraction, withMark.segments[index].fraction)
       end
       assert.equal(without.xpTotal, withMark.xpTotal)
+    end)
+  end)
+
+  -- The third thing a record can say about its own completeness: that the kill
+  -- line was not there to name creatures.
+  describe("a level recorded without the kill line", function()
+    it("carries why, and leaves the segments the bar paints alone", function()
+      local record = ns.core.LevelRecord.new(10, 0)
+      record.xpRequired = 1000
+      ns.core.XpLedger.post(record, ns.core.XpGain.new({ amount = 400, source = ns.core.XpSource.UNKNOWN, at = 1 }))
+      local before = ns.core.XpBarViewModel.build(record)
+      record:markUnavailable(ns.core.RecordedSource.XP_CHAT, "unreadable")
+
+      local viewModel = ns.core.XpBarViewModel.build(record)
+
+      assert.equal("unreadable", viewModel.sourcesUnavailable)
+      assert.same(before.segments, viewModel.segments)
+      assert.is_nil(before.sourcesUnavailable)
     end)
   end)
 end)

@@ -1,0 +1,114 @@
+# Ascent - messages the commit-msg hook must accept or reject.
+#
+# A case starts with "=== <accept|reject> <workshop|public|both> <name>" and its
+# message runs until the next case. Workshop cases run only in a tree that has
+# .publishignore; public cases run in a stand-in repository without it.
+
+=== accept both a header with a scope
+fix(plate): keep the summary up while a creature hits a shield
+
+=== accept both a header without a scope
+docs: explain how the options pages are laid out
+
+=== accept both a breaking change with its footer
+feat(history)!: stop reading saved history older than version 2
+
+BREAKING CHANGE: history saved by 0.1.x is discarded on load.
+
+=== accept both a body and a human co-author
+fix(bar): hide the text on a bar too thin to read it
+
+The text is drawn only when the bar is tall enough for the font.
+
+Co-Authored-By: A Person <person@example.com>
+
+=== accept both a header of exactly 72 characters
+fix(plate): keep the summary on screen while a creature hits a shieldxxx
+
+=== accept both a merge git wrote
+Merge branch 'topic'
+
+=== accept both a revert git wrote
+Revert "fix(plate): keep the summary up while a creature hits a shield"
+
+=== accept both a fixup git wrote
+fixup! fix(plate): keep the summary up while a creature hits a shield
+
+=== accept both comment lines and the scissors are ignored
+fix(bar): hide the text on a bar too thin to read it
+# Please enter the commit message for your changes. D12 here is a comment.
+# ------------------------ >8 ------------------------
+diff --git a/x b/x with D13 below the scissors
+
+=== reject both a prose header
+Charge a rested kill once
+
+=== reject both an unknown type
+feature(plate): keep the summary up while a creature hits a shield
+
+=== reject both an unknown scope
+fix(nonsense): keep the summary up while a creature hits a shield
+
+=== reject both a header of 73 characters
+fix(plate): keep the summary on screen while a creature hits a shieldxxxx
+
+=== reject both a summary in uppercase
+fix(plate): Keep the summary up while a creature hits a shield
+
+=== reject both a summary with a final period
+fix(plate): keep the summary up while a creature hits a shield.
+
+=== reject both no blank line after the header
+fix(plate): keep the summary up while a creature hits a shield
+The summary hid while nothing had died yet.
+
+=== reject both an assistant co-author
+fix(plate): keep the summary up while a creature hits a shield
+
+Co-Authored-By: Claude Opus <noreply@anthropic.com>
+
+=== reject both an assistant session link
+fix(plate): keep the summary up while a creature hits a shield
+
+https://claude.ai/code/session_example
+
+=== reject workshop a decision id in the body
+fix(plate): keep the summary up while a creature hits a shield
+
+The sweep that D89 switched off is back on.
+
+=== reject workshop a task number in the header
+fix(plate): finish task 5.2 of the plate
+
+=== accept workshop a Refs trailer
+fix(plate): keep the summary up while a creature hits a shield
+
+The sweep that decides whether a pull is quiet runs again.
+
+Refs: add-ascent-example-change 5.2, 5.3
+
+=== accept workshop a Refs trailer without tasks
+docs(plan): plan the example change
+
+Refs: add-ascent-example-change
+
+=== accept workshop a workshop scope
+docs(plan): mark the desk half of the example change done
+
+=== reject workshop a Refs trailer out of shape
+fix(plate): keep the summary up while a creature hits a shield
+
+Refs: see the plan
+
+=== reject public a Refs trailer
+fix(plate): keep the summary up while a creature hits a shield
+
+Refs: add-ascent-example-change 5.2
+
+=== reject public a workshop scope
+docs(plan): mark the desk half of the example change done
+
+=== reject public a decision id in the body
+fix(plate): keep the summary up while a creature hits a shield
+
+The sweep that D89 switched off is back on.

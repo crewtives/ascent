@@ -1,32 +1,21 @@
 -- Ascent - the client event router: WowEvent -> EventTopic.
 --
 -- Nothing here decides anything about experience; it only translates. Combat log
--- reading is deliberately not here -- that is CombatLogRouter's job (9.6-9.9) -- so
--- this file never touches COMBAT_LOG_EVENT_UNFILTERED, and creature deaths are
--- entirely out of scope. ADDON_LOADED is not handled here either: gating
--- construction on the addon's own name is the composition root's job (12.1), not
--- the router's -- by the time something calls :start(), the addon is already loaded.
+-- reading is CombatLogRouter's job, so this file never touches
+-- COMBAT_LOG_EVENT_UNFILTERED, and creature deaths are out of scope. ADDON_LOADED
+-- is not handled here either: gating construction on the addon's own name is the
+-- composition root's job -- by the time something calls :start(), the addon is
+-- already loaded.
 --
--- THE WHOLE EXPERIENCE FAMILY IS MATCHED HERE, in order of specificity, and the
--- header used to say the opposite. What it claimed -- that a kill announced with a
--- group bonus was not recognised and landed in XpSource.UNKNOWN -- was FALSE, and
--- believing it kept the work parked for months.
+-- The whole experience family is matched here, anchored and most specific first
+-- (see GlobalStringPattern). Both rules are needed: the plain kill template is a
+-- strict prefix of every other one, so unanchored it matches a group kill as an
+-- ordinary kill and silently loses the modifier, and two collisions survive
+-- anchoring, one of which would record a raid penalty as a fatigue penalty.
 --
--- What actually happened: patterns were not anchored, and the plain kill template
--- is a strict prefix of every other one in the family. So a group kill DID match,
--- as an ordinary kill, and its amount was recorded correctly. What was lost, in
--- silence, was the modifier: the player who levelled twenty levels in a group
--- never saw once what going along had contributed.
---
--- The fix is two rules that only work together (design D40): anchor, so the longer
--- templates become reachable at all, and try them most-specific-first, because two
--- collisions survive anchoring -- one of which would record a raid penalty as a
--- fatigue penalty, a different thing entirely.
---
--- The rested bonus does NOT wait on that gap. D18's reserve-diff cross-check
--- (`XpAttribution.restedFromReserve`) only needs restedXp() sampled before and
--- after a kill line, which is a client-API read (9.2), not a chat-text question --
--- so both named and anonymous kills carry restedBefore/restedAfter here already.
+-- Named and anonymous kills also carry restedBefore/restedAfter, restedXp()
+-- sampled around the line, for the reserve cross-check
+-- (`XpAttribution.restedFromReserve`); that is a client-API read, not chat text.
 
 local _, ns = ...
 ns.adapter = ns.adapter or {}
@@ -37,15 +26,20 @@ local EventTopic = ns.core.EventTopic
 local XpHintKind = ns.core.XpHintKind
 local PlaceKey = ns.core.PlaceKey
 local GlobalStringPattern = ns.adapter.GlobalStringPattern
+-- What an event carries is a client read like any other, and on the 12.0 engine
+-- the experience line is the one most in question: a closed one is a string that
+-- raises on the match below. Admitted before anything uses it.
+local readable = ns.adapter.Readable.value
+local Reason = ns.adapter.Capabilities.Reason
 
 -- ---------------------------------------------------------------------------
--- GlobalString patterns, compiled once at construction (D5)
+-- GlobalString patterns, compiled once at construction
 -- ---------------------------------------------------------------------------
 
 -- A missing GlobalString degrades to "this channel matches nothing" rather than
--- erroring the addon off the load screen -- the same capacity-absent tolerance
--- 9.1's Capabilities registry exists for, applied at the one spot that reads raw
--- client strings instead of calling a function.
+-- erroring the addon off the load screen: the tolerance of an absent capability
+-- the Capabilities registry exists for, at the one spot that reads raw client
+-- strings instead of calling a function.
 local function compileIfPresent(template)
   if type(template) ~= "string" then
     return nil
@@ -81,20 +75,20 @@ local function xpTemplateText()
     COMBATLOG_XPGAIN_EXHAUSTION5_RAID = COMBATLOG_XPGAIN_EXHAUSTION5_RAID,
   }
   return function(name)
-    return texts[name]
+    return readable(texts[name])
   end
 end
 
 local function compiledPatterns()
   return {
     xpFamily           = GlobalStringPattern.compileXpFamily(xpTemplateText()),
-    zoneExplored       = compileIfPresent(ERR_ZONE_EXPLORED_XP),
-    questRewardEcho    = compileIfPresent(ERR_QUEST_REWARD_EXP_I),
+    zoneExplored       = compileIfPresent(readable(ERR_ZONE_EXPLORED_XP)),
+    questRewardEcho    = compileIfPresent(readable(ERR_QUEST_REWARD_EXP_I)),
   }
 end
 
--- Fields keyed by ORIGINAL placeholder number, the way 9.4 designed it to be read;
--- nil when the compiled pattern is absent or the line does not match it.
+-- Fields keyed by original placeholder number; nil when the compiled pattern is
+-- absent or the line does not match it.
 local function fieldsOf(compiled, line)
   if compiled == nil then
     return nil
@@ -147,17 +141,16 @@ local function publishXpDelta(self)
     if self.logger ~= nil then
       self.logger:debug(("delta observed at %.3f: amount=%d"):format(at, amount))
     end
-    -- Where the character is RIGHT NOW, read here and nowhere else (D43). This is
-    -- the instant the experience is known to have been granted; the announcement
-    -- that explains it can arrive a second and a half either side, by which time
-    -- the character may be through a portal.
+    -- Where the character is right now, read here and nowhere else. This is the
+    -- instant the experience is known to have been granted; the announcement that
+    -- explains it can arrive a second and a half either side, by which time the
+    -- character may be through a portal.
     --
-    -- How many shared the payment is read on the same instant and for the same
-    -- reason (D81). It is the server's own decision about this delta: the party
-    -- can be left, or joined, between the line that announces a kill and the
-    -- experience arriving, and the domain settles a delta two windows after it --
-    -- so asking any later would file the kill under whatever group the character
-    -- happens to be in a second and a half afterwards.
+    -- How many shared the payment is read on the same instant for the same reason.
+    -- It is the server's own decision about this delta: the party can be left, or
+    -- joined, between the kill line and the experience arriving, and the domain
+    -- settles a delta two windows after it, so asking later would file the kill
+    -- under whatever group the character is in a second and a half afterwards.
     self.bus:publish(EventTopic.XP_DELTA_OBSERVED, {
       amount = amount, at = at, place = PlaceKey.new(self.playerState:place()),
       sharedBy = self.playerState:sharedBy(),
@@ -166,18 +159,16 @@ local function publishXpDelta(self)
   refreshXpSnapshot(self)
 end
 
--- Sampled once per kill line rather than off UPDATE_EXHAUSTION, and the session of
--- 2026-09-17 showed what that costs: the client does NOT apply the gain before it
--- prints the line, so both readings here are taken a kill too early and the window
--- they bound belongs to the PREVIOUS kill. Over 81 kills the reserve diff matched
--- the previous line's parenthetical 37 times and the current line's never once.
+-- Sampled once per kill line rather than off UPDATE_EXHAUSTION, which has a cost:
+-- the client does not apply the gain before it prints the line, so both readings
+-- are taken a kill too early and the window they bound belongs to the previous
+-- kill. The reserve diff can match the previous line's parenthetical, never the
+-- current one's; the window is internally consistent and shifted by one kill.
 --
--- Internal consistency was the assumption written here, and it is exactly what does
--- not save it: the window is internally consistent AND shifted by one whole kill.
--- So this is no longer the source of the rested bonus -- the parenthetical is, read
--- off the template (restedRaw below) -- and what these two fields feed is the
--- reserve cross-check, which cannot be believed until it is re-anchored on
--- PLAYER_XP_UPDATE, where the evidence shows the reserve has already settled.
+-- So this is not the source of the rested bonus -- the parenthetical is, read off
+-- the template (restedRaw below) -- and these two fields feed only the reserve
+-- cross-check, which cannot be trusted until it is re-anchored on
+-- PLAYER_XP_UPDATE, where the reserve has already settled.
 local function killRestedWindow(self)
   local before = self.lastRestedXp
   local after = self.playerState:restedXp()
@@ -234,21 +225,20 @@ local function onPlayerRevived(self)
   self.bus:publish(EventTopic.PLAYER_REVIVED, {})
 end
 
--- QUEST_TURNED_IN(questID, xpReward, moneyReward). No parsing at all (D5): the
--- event itself is the authoritative source, and it needs no help from the chat
--- echo COMBATLOG_XPGAIN_QUEST would otherwise carry.
+-- QUEST_TURNED_IN(questID, xpReward, moneyReward). No parsing at all: the event
+-- itself is the authoritative source, and it needs no help from the chat echo
+-- COMBATLOG_XPGAIN_QUEST would otherwise carry.
 local function onQuestTurnedIn(self, questId, xpReward)
-  -- Guarded once, used twice: the hint below always needed a valid number, and
-  -- group 8's calibration (quest-xp-forecast) needs the same one on
-  -- QUEST_COMPLETED to compare against what it had forecast for this quest.
+  -- Guarded once, used twice: the hint below needs a valid number, and the quest
+  -- forecast's calibration needs the same one on QUEST_COMPLETED to compare
+  -- against what it had forecast for this quest.
   local validReward = (type(xpReward) == "number" and xpReward >= 0) and xpReward or nil
 
   self.bus:publish(EventTopic.QUEST_COMPLETED, { questId = questId, xpReward = validReward })
 
   if validReward ~= nil then
-    -- Timestamped like the kill-message hint: spike 0.2 needs this to determine
-    -- the order between the quest hint and its XP delta, the same open question
-    -- already partly answered for kills.
+    -- Timestamped like the kill-message hint, so the log shows the order between
+    -- the quest hint and its XP delta.
     if self.logger ~= nil then
       self.logger:debug(("hint (quest turn-in) at %.3f: questId=%s amount=%s")
         :format(self.clock:now(), tostring(questId), tostring(validReward)))
@@ -261,23 +251,22 @@ local function onQuestLogChanged(self)
   self.bus:publish(EventTopic.QUEST_LOG_CHANGED, {})
 end
 
--- D15's level 2: a reward learned from the open quest dialogue (QUEST_DETAIL,
--- shown before accepting, and QUEST_COMPLETE, shown before turning in), cached
--- by questID so quest-xp-forecast can fall back to it when the quest log's own
--- GetQuestLogRewardXP is not trustworthy or comes back empty. Unlike that
--- function -- which design.md's own appendix tracks as verified present in
--- both Era and TBC -- neither GetQuestID nor GetRewardXP has been checked
--- against a real client anywhere in this codebase; this is a first, cautious
--- read of both; the same reason a bad shape here degrades to nothing published
--- rather than a fabricated event.
+-- A reward learned from the open quest dialogue (QUEST_DETAIL, shown before
+-- accepting, and QUEST_COMPLETE, shown before turning in), cached by questID so
+-- the quest forecast can fall back to it when the quest log's own
+-- GetQuestLogRewardXP is untrusted or comes back empty. Unlike that function,
+-- verified present on both Classic Era and Burning Crusade Classic, GetQuestID
+-- and GetRewardXP are unverified on a live client, so a bad shape here degrades
+-- to nothing published rather than a fabricated event.
+--
 -- `GetTitleText` is the quest dialogue's own title, and the only place either
 -- supported client names a quest it is not carrying in the log -- the turn-in
 -- event carries no text, and Era cannot name a quest by id at all. Shape checked
 -- like every other client read here, and absent rather than wrong when the client
--- has nothing to say. Published, not remembered: the directory that keeps names
--- is the thing that remembers, and it is fed at the composition root.
+-- has nothing to say. Published, not remembered: the name directory remembers,
+-- fed at the composition root.
 local function readQuestTitle()
-  local title = type(GetTitleText) == "function" and GetTitleText() or nil
+  local title = type(GetTitleText) == "function" and readable(GetTitleText()) or nil
   if type(title) ~= "string" or title == "" then
     return nil
   end
@@ -289,14 +278,14 @@ local function onQuestRewardSeen(self)
     return
   end
 
-  local questId = GetQuestID()
+  local questId = readable(GetQuestID())
   if type(questId) ~= "number" or questId == 0 then
     return
   end
 
   local title = readQuestTitle()
 
-  local reward = GetRewardXP()
+  local reward = readable(GetRewardXP())
   if type(reward) ~= "number" or reward < 0 or reward % 1 ~= 0 then
     return
   end
@@ -320,11 +309,9 @@ local function onChatCombatXpGain(self, message)
     -- know. Worth seeing verbatim rather than guessing, and worth sampling the
     -- reserve too in case the real template diverges from the very first word.
     local before, after = killRestedWindow(self)
-    -- Published, not merely logged. The debug print goes to the chat frame and to a
-    -- ring nobody reads afterwards, while THIS is the line that would tell us what a
-    -- client prints for the cases the family does not cover yet. The recorder exists
-    -- to keep exactly that -- the client's own sentence, verbatim -- and it was
-    -- keeping it for every line except the ones still under question.
+    -- Published, not merely logged: the debug print goes to the chat frame and a
+    -- ring, while the recorder keeps the client's own sentence verbatim, which is
+    -- what shows what a client prints for the cases the family does not cover.
     self.bus:publish(EventTopic.XP_LINE_UNMATCHED, {
       raw = message,
       at = self.clock:now(),
@@ -338,22 +325,20 @@ local function onChatCombatXpGain(self, message)
     return
   end
 
-  -- Hits per template (design D45). This is what turns the one thing the
-  -- research could not settle -- whether the parenthetical is already inside the
-  -- total -- into something a real levelling session answers: the amount parsed
-  -- sits on the same line as the delta the client reports, so the two can simply
-  -- be compared.
+  -- Hits per template. The amount parsed sits on the same line as the delta the
+  -- client reports, so a levelling session can compare the two and show whether
+  -- the parenthetical is already inside the total.
   self.hitsByTemplate[matched.template] = (self.hitsByTemplate[matched.template] or 0) + 1
 
   local before, after = killRestedWindow(self)
 
   -- A template with a creature in it is a kill announcement; one without is the
-  -- anonymous line, which is what quests and discoveries arrive on. The KIND
+  -- anonymous line, which is what quests and discoveries arrive on. The kind
   -- comes from the template's own shape rather than from a second guess about
   -- the text.
   local kind = matched.creature ~= nil and XpHintKind.KILL_MESSAGE or XpHintKind.ANONYMOUS_MESSAGE
 
-  -- Annotations, never addends (design D41). The big number is the experience
+  -- Annotations, never addends. The big number is the experience
   -- actually credited: the group figure is a portion already inside it and the
   -- raid figure is what was taken off before crediting. Neither is added to nor
   -- subtracted from what gets recorded -- exactly the rule the rested bonus
@@ -374,21 +359,19 @@ local function onChatCombatXpGain(self, message)
       tostring(matched.restedAmount), tostring(before), tostring(after), message))
   end
 
-  -- `template` and `raw` ride along for the flight recorder, and they are two
-  -- different facts on purpose: `raw` is the sentence the client actually
-  -- printed, `template` is which pattern this addon believed it was. Recording
-  -- only the parse would record the conclusion under question -- the first
-  -- session came back unable to say whether a group line had a parenthetical at
-  -- all, because everything downstream of the parser agreed with the parser.
+  -- `template` and `raw` ride along for the flight recorder as two different
+  -- facts: `raw` is the sentence the client printed, `template` is which pattern
+  -- this addon believed it was. Recording only the parse would record the
+  -- conclusion under question, since everything downstream agrees with the parser.
   -- Both are plain references to strings that already exist; neither allocates.
   publishHint(self, kind, {
     amount = matched.amount,
     creatureName = matched.creature,
     -- The figure the client printed, which is the only reading of the rested bonus
-    -- that is anchored to THIS kill. nil whenever the template names no magnitude
+    -- that is anchored to this kill. nil whenever the template names no magnitude
     -- (a fatigue line, a client whose parenthetical is a percentage).
     restedRaw = matched.restedAmount,
-    -- Whether the sentence announced a rested state AT ALL, which is a different
+    -- Whether the sentence announced a rested state at all, which is a different
     -- fact from the magnitude and the one that says what a missing magnitude means:
     -- a line that mentions no reserve is a kill that paid no bonus, and a line that
     -- mentions one without naming a figure is the case the reserve reading exists
@@ -413,11 +396,9 @@ local function onChatSystem(self, message)
   if discovery ~= nil then
     local amount = tonumber(discovery[2])
     if amount ~= nil then
-      -- Timestamped like the kill-message hint (see that debug line, above): a
-      -- player reported exploration XP landing half in EXPLORATION and half in
-      -- UNKNOWN, and this channel had no diagnostics at all to tell whether the
-      -- hint is missing its delta's matching window (D4/D5's Open Question 1,
-      -- unverified for this channel) or something else entirely.
+      -- Timestamped like the kill-message hint (see that debug line, above), so
+      -- when exploration experience lands partly in UNKNOWN the log shows whether
+      -- the hint missed its delta's matching window or something else happened.
       if self.logger ~= nil then
         self.logger:debug(("hint (zone discovery) at %.3f: zone=%q amount=%s")
           :format(self.clock:now(), tostring(discovery[1]), tostring(amount)))
@@ -432,8 +413,8 @@ local function onChatSystem(self, message)
     local amount = tonumber(questEcho[1])
     if amount ~= nil then
       -- Timestamped like the quest turn-in hint above: this is its system-channel
-      -- echo, and D5's precedence rule already assumes it arrives close to the
-      -- turn-in event -- spike 0.2/0.3 is what actually checks that.
+      -- echo, and the precedence rule assumes it arrives close to the turn-in
+      -- event, which the timestamps check.
       if self.logger ~= nil then
         self.logger:debug(("hint (quest echo) at %.3f: amount=%s"):format(self.clock:now(), tostring(amount)))
       end
@@ -481,6 +462,28 @@ local DISPATCH = {
 local WowEventRouter = {}
 WowEventRouter.__index = WowEventRouter
 
+-- Whether the channel that names where a gain came from can be read here, and
+-- when it cannot, why. Without it the experience still arrives --
+-- PLAYER_XP_UPDATE is another source -- but nothing can say what paid it: the
+-- level still adds up, and every point the channel would have named is
+-- unclassified, not guessed at.
+--
+-- The kill template is asked because every other line in the family extends it.
+-- It cannot say whether the lines arrive readable: a template can be an ordinary
+-- string on a client that closes the sentence it prints, which only a real kill
+-- shows.
+function WowEventRouter.isXpChatSupported()
+  local template = COMBATLOG_XPGAIN_FIRSTPERSON
+  -- By type, never by comparison: the value has not been admitted yet.
+  if type(template) == "nil" then
+    return false
+  end
+  if readable(template) == nil then
+    return false, Reason.UNREADABLE
+  end
+  return type(template) == "string"
+end
+
 function WowEventRouter.new(options)
   options = options or {}
   for _, required in ipairs({ "bus", "clock", "playerState" }) do
@@ -496,19 +499,19 @@ function WowEventRouter.new(options)
 
   -- One counter per template that actually matched something. Read by the
   -- diagnostic command; costs one table and one increment per experience line,
-  -- which is not a hot path (design D45).
+  -- which is not a hot path.
   local templateHits = {}
 
   -- Diagnostic only: `logger` is optional and everything works the same without
   -- one. Which templates this client actually has is the first thing worth
-  -- knowing when a kill line is not being recognised -- the family is thirteen
-  -- templates and a given client may not carry them all.
+  -- knowing when a kill line is not being recognised: a given client may not
+  -- carry every template in the family.
   if options.logger ~= nil then
     for _, entry in ipairs(patterns.xpFamily) do
       options.logger:debug(("pattern '%s': compiled"):format(entry.name))
     end
     options.logger:debug(("xp family: %d template(s) compiled"):format(#patterns.xpFamily))
-    -- The ones that did NOT make it, and why it is worth saying: a template can
+    -- The ones that did not make it, and why it is worth saying: a template can
     -- be absent because this client does not have it, or because its text is
     -- identical to one already compiled -- which several of them are, by design.
     -- Both are normal; a template missing that should be there is not.
@@ -535,6 +538,9 @@ function WowEventRouter.new(options)
     logger = options.logger,
     patterns = patterns,
     hitsByTemplate = templateHits,
+    -- Told once, on the first experience line that arrives closed.
+    onUnreadable = options.onUnreadable,
+    xpLineClosed = false,
 
     lastLevel = nil, lastXp = nil, lastXpMax = nil, lastRestedXp = nil,
     frame = nil,
@@ -542,9 +548,9 @@ function WowEventRouter.new(options)
 end
 
 -- How many experience lines matched each template, for the diagnostic command.
--- A template that never appears is as informative as one that does: the research
--- holds that the fatigue family is dead code in both supported clients, and this
--- is what would show otherwise.
+-- A template that never appears is as informative as one that does: the fatigue
+-- family is believed to be dead code in both supported clients, and this is what
+-- would show otherwise.
 -- Named apart from the field it returns on purpose: a field and a method of the
 -- same name cannot coexist on one table in Lua -- the field wins and the method
 -- becomes uncallable, silently.
@@ -557,11 +563,30 @@ function WowEventRouter:templateHits()
 end
 
 -- The one method the tests drive directly: everything above is reachable without a
--- WoW frame, which is what "verify with adapter tests" means for a router.
-function WowEventRouter:dispatch(event, ...)
+-- WoW frame.
+--
+-- Also the one funnel every event's arguments pass through, so it is where they
+-- are admitted: no handler above sees a value this addon may not read. Three,
+-- because that is the most any handler here takes (QUEST_TURNED_IN's id, reward
+-- and money); a handler that needs a fourth has to be given it here, guarded.
+--
+-- The experience line is the one argument whose readability is a capability: the
+-- line is the channel that names a gain's source, so the first one that arrives
+-- closed is reported. Routing goes on regardless -- the
+-- experience itself arrives on PLAYER_XP_UPDATE, and a line that is readable
+-- again later is still a hint worth having.
+function WowEventRouter:dispatch(event, a1, a2, a3)
   local handler = DISPATCH[event]
   if handler then
-    handler(self, ...)
+    local first = readable(a1)
+    if first == nil and event == WowEvent.CHAT_MSG_COMBAT_XP_GAIN and type(a1) ~= "nil"
+      and not self.xpLineClosed then
+      self.xpLineClosed = true
+      if self.onUnreadable ~= nil then
+        self.onUnreadable()
+      end
+    end
+    handler(self, first, readable(a2), readable(a3))
   end
 end
 

@@ -1,12 +1,9 @@
--- The one part of Ascent that talks to other clients, driven against a stand-in
--- one. Three properties matter more than the happy path, and each has its own
--- case below: it never answers an announcement with an announcement (in a
--- forty-player raid that is sixteen hundred messages), it never spends more than
--- its own budget however hard it is shaken, and a client that answers strangely
--- costs the announcement rather than the addon.
---
--- Spikes 0.1 and 0.2 are still open, so nothing here asserts what the client
--- RETURNS from SendAddonMessage -- only what the addon does with the call.
+-- The one part of Ascent that talks to other clients. It never answers an
+-- announcement with an announcement (in a forty-player raid that is sixteen
+-- hundred messages), never spends more than its own budget however hard it is
+-- shaken, and a client that answers strangely costs the announcement rather
+-- than the addon. What SendAddonMessage returns is unverified, so nothing
+-- here asserts it.
 
 describe("VersionChannel", function()
   local ns, WowEvent, channel, watch
@@ -40,7 +37,7 @@ describe("VersionChannel", function()
   before_each(function()
     ns = AscentTest.loadWith("core/port/", "core/model/VersionNumber.lua",
       "core/service/SendBudget.lua", "core/service/UpdateWatch.lua",
-      "adapter/inbound/VersionChannel.lua", "test/fakes/FakeClock.lua")
+      "adapter/compat/Readable.lua", "adapter/inbound/VersionChannel.lua", "test/fakes/FakeClock.lua")
     WowEvent = ns.core.WowEvent
 
     sent, warned = {}, {}
@@ -200,6 +197,47 @@ describe("VersionChannel", function()
         hear("Gamma", "V:nonsense")
         hear("Delta", nil)
         hear(nil, "V:0.9.0")
+      end)
+
+      assert.equal(0, #warned)
+    end)
+  end)
+
+  -- Another player's message is a client read too. A closed sender would be a
+  -- table key in the watch's tally, which the client refuses outright; the
+  -- stand-in secret, being a table, is accepted as a new name every time, so
+  -- the verdict is asserted rather than the raise.
+  describe("on a client that closes what the channel carries", function()
+    local function buildClosed()
+      AscentTest.withSecretRegime(function()
+        ns = AscentTest.loadWith("core/port/", "core/model/VersionNumber.lua",
+          "core/service/SendBudget.lua", "core/service/UpdateWatch.lua",
+          "adapter/compat/Readable.lua", "adapter/inbound/VersionChannel.lua", "test/fakes/FakeClock.lua")
+      end)
+      WowEvent = ns.core.WowEvent
+      clock = ns.fakes.FakeClock.new(0)
+      return build()
+    end
+
+    it("counts no sender it cannot read towards the warning", function()
+      buildClosed()
+      AscentTest.withClientTypes(function()
+        for _ = 1, 4 do
+          fire(WowEvent.CHAT_MSG_ADDON, "Ascent", "V:0.9.0", "GUILD", AscentTest.secret("Somebody"))
+        end
+      end)
+
+      assert.equal(0, #warned)
+    end)
+
+    it("reads nothing into a message it cannot read", function()
+      buildClosed()
+      AscentTest.withClientTypes(function()
+        assert.has_no.errors(function()
+          for _, name in ipairs({ "Alpha", "Beta", "Gamma", "Delta" }) do
+            fire(WowEvent.CHAT_MSG_ADDON, "Ascent", AscentTest.secret("V:0.9.0"), "GUILD", name)
+          end
+        end)
       end)
 
       assert.equal(0, #warned)

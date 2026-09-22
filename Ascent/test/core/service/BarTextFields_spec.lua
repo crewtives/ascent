@@ -1,6 +1,6 @@
--- Switching a field on has to put it somewhere, and the answer is not "at the
--- end": the composed text is read left to right, and the same order decides what
--- the bar gives up when it is too narrow.
+-- A field switched on is placed by rank, not appended: the composed text is
+-- read left to right, and the same order decides what the bar gives up when it
+-- is too narrow.
 
 describe("BarTextFields", function()
   local ns, BarTextFields, TextToken

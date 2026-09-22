@@ -44,8 +44,6 @@ describe("SavedVariablesRepository", function()
       assert.same({ level = 12, xp = 400 }, _G.AscentCharDB.current)
     end)
 
-    -- What task 9.3 asks to confirm in the client: a fresh construction against the
-    -- same globals -- the shape of what /reload leaves behind -- still sees it.
     it("survives a second construction against the same globals, as /reload would leave them", function()
       load():saveCurrentRecord({ level = 12, xp = 400 })
 

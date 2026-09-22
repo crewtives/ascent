@@ -93,8 +93,8 @@ describe("WowPlayerState", function()
     assert.equal(0.6, state:powerFraction())
   end)
 
-  -- D42: the identifier that means something depends on where the character is,
-  -- and getting the rule backwards collapses the whole open world into a few
+  -- The identifier that means something depends on where the character is, and
+  -- getting the rule backwards collapses the whole open world into a few
   -- continents or leaves every dungeon without an identity at all.
   describe("where the character is", function()
     it("is the map id and the zone name out in the world", function()
@@ -107,9 +107,10 @@ describe("WowPlayerState", function()
       assert.equal("Elwynn Forest", name)
     end)
 
-    -- One map id, two zone names: an indoor area answers with its own name while the
-    -- id underneath stays the zone's. Taking the name from the id is what keeps a
-    -- level spent across Eversong Woods from being filed under a building in it.
+    -- One map id, two zone names: GetZoneText answers with an indoor area's own
+    -- name while the id underneath stays the zone's. Taking the name from the id
+    -- (C_Map.GetMapInfo) keeps a level spent across Eversong Woods from being
+    -- filed under a building in it.
     it("names the map rather than the indoor area the client calls the zone", function()
       load({ inInstance = false, mapId = 1941, mapName = "Eversong Woods",
              zone = "Duskwither Spire" })
@@ -149,8 +150,8 @@ describe("WowPlayerState", function()
       assert.equal("arena", (state:place()))
     end)
 
-    -- What the reserved entry is for. Crossing a portal is the case the design
-    -- calls out, and it looks like this: the client answers with no usable number.
+    -- Crossing a portal looks like this: the client answers with no usable number,
+    -- and the domain files that under the reserved entry.
     it("says nothing rather than guessing when the client has no identifier yet", function()
       load({ inInstance = false, mapId = nil, zone = "" })
 
@@ -182,7 +183,7 @@ describe("WowPlayerState", function()
     end)
   end)
 
-  -- D85: the port asks how many people share the payment, not what
+  -- The port asks how many people share the payment, not what
   -- `GetNumGroupMembers()` returns. The client counts a party and a raid through
   -- that one call, so both sizes arrive the same way -- and out of a group it
   -- answers 0, which is the one answer that is not a number of people.

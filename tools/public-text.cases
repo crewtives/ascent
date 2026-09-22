@@ -1,0 +1,43 @@
+# Ascent - cases the public-text rules must get right, one per line.
+#
+# Format: <expected category or "clean"><TAB><text>. A category case must be
+# caught by a rule of that category; a clean case must be caught by none.
+
+decision id	a guard for the layer rule (D93)
+decision id	the explicit list D5 asks for
+decision id	design D27, D104
+task ref	as arithmetic (tasks 2.1, 2.2, 2.3)
+task ref	already wired by group 4
+task ref	the risk spike 0.3 measures
+task ref	Spike 0.6 asks whether
+task ref	a test that task 8.7 wants
+task ref	noted against `11.4`
+task ref	the `2b.1` recorder
+change name	see add-ascent-example-change
+change name	the fix-ascent-example work
+planning path	Method and figures: openspec/changes/example
+planning path	openspec/specs/level-history
+planning path	design.md's own appendix
+planning path	not tagged (proposal.md)
+planning path	written in tasks.md
+planning path	no spec delta yet
+assistant	Co-Authored-By: Claude Opus <noreply@anthropic.com>
+assistant	https://claude.ai/code/session_example
+assistant	written with Claude
+clean	killed alone and in a group of five
+clean	what changed since the last session this addon ran in
+clean	Classic Era (1.15.x)
+clean	Burning Crusade Classic (2.5.x)
+clean	## Version: 0.3.0
+clean	a pre-release of 0.1.0
+clean	    - CLAUDE.md
+clean	    - openspec
+clean	  "openspec/**",
+clean	the task list of a quest
+clean	grouped kills and 5 deaths
+clean	|cffffd100 gold|r
+clean	DAMAGE_TAKEN D is not a number
+clean	a 3D model
+clean	the design of the bar
+clean	design.mdx
+clean	Co-Authored-By: A Person <person@example.com>

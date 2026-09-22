@@ -1,24 +1,23 @@
 -- Ascent - frozen tables.
 --
 -- Every symbol in this addon (sources, topics, settings, colors) lives in a table
--- built here. The point is not tidiness: it is that a typo has to fail loudly.
+-- built here, so that a typo fails loudly:
 --
 --   XpSource.QEUST  -->  error "'QEUST' is not a key of XpSource"
 --
--- A plain Lua table would have returned nil and the bug would have surfaced hours
--- later as a missing segment on a bar. This is the cheapest place to catch it.
+-- A plain Lua table would return nil and the bug would surface later as, say, a
+-- missing segment on a bar.
 --
 -- Two shapes, because Lua 5.1 forces the distinction:
 --   * map-like tables become strict proxies (unknown reads error, writes error).
 --   * array-like tables are copied and left plain, because `ipairs` and `#` use raw
 --     access in 5.1 and ignore `__index`, so proxying an array silently yields an
---     empty sequence. A proxy there would be worse than no protection at all.
+--     empty sequence.
 --
--- One consequence worth knowing before you trip on it: the array you read back IS
--- the backing store, not a copy. Writing into it corrupts the frozen table for the
--- rest of the session, with no error. Copy it before mutating. Returning a fresh
--- copy on every read would be safer and would also allocate on every bar redraw,
--- which is the one thing the hot path budget does not allow.
+-- Consequence: the array read back is the backing store, not a copy. Writing into
+-- it corrupts the frozen table for the rest of the session, with no error, so copy
+-- it before mutating. A fresh copy on every read would allocate on every bar
+-- redraw, which the hot path cannot afford.
 
 local ADDON_NAME, ns = ...
 
@@ -35,8 +34,8 @@ local stores = setmetatable({}, { __mode = "k" })
 local freeze, copyArray, copyOrFreeze
 
 -- An empty table counts as an empty list. Proxying it would turn `t[1]` into an
--- error for a caller that legitimately expects nil -- and a strict proxy over no
--- keys protects nothing anyway, since every read of it would error regardless.
+-- error for a caller that legitimately expects nil, and a strict proxy over no
+-- keys protects nothing.
 local function isArrayLike(value)
   return next(value) == nil or #value > 0
 end
@@ -55,7 +54,7 @@ function copyOrFreeze(name, value)
   end
   if isArrayLike(value) then
     -- A table that is both a list and a map has no single correct reading, and
-    -- guessing one silently is how half a constant goes missing. Say so instead.
+    -- guessing one would silently drop half of it.
     if hasMapKeys(value) then
       error(("%s: %s mixes array and map keys; that shape is not supported")
         :format(ADDON_NAME, name), 0)
@@ -101,14 +100,9 @@ end
 -- Build a frozen symbol table. `name` is what shows up in the error message, so it
 -- should be the name the reader will be looking for in the source.
 --
--- Goes through copyOrFreeze rather than straight to freeze, and that is not a
--- detail: a LIST handed to this function used to come back as a proxy, and a
--- proxy is an empty table with an __index. So `#` returned zero, `next` returned
--- nil and `ipairs` walked nothing, while Frozen.keys happily listed 1..n -- the
--- data was there, behind an interface that raw access cannot see. Nested lists
--- were already handled correctly (see the header); only the top level was not,
--- which meant the bug only appeared for a constant declared as a list, and then
--- appeared as "this table is empty" rather than as an error.
+-- Goes through copyOrFreeze rather than straight to freeze, so a top-level list
+-- comes back as a plain list: a proxy is an empty table with an __index, and `#`,
+-- `next` and `ipairs` would see it as empty.
 function Frozen.enum(name, values)
   if type(name) ~= "string" or name == "" then
     error(ADDON_NAME .. ": a frozen table needs a name", 2)
@@ -133,12 +127,10 @@ function Frozen.has(frozen, key)
   return storeOf(frozen)[key] ~= nil
 end
 
--- Whether `value` is one of this module's frozen proxies. Worth having because a
--- proxy is indistinguishable from an empty table from the outside -- `next` and
--- `#` both see the empty carrier, not the store behind it -- so code that walks a
--- table of constants cannot tell a frozen MAP from a plain empty one by looking.
--- Arrays are copied plain rather than proxied (see the header), so this answers
--- "is this a frozen map", which is exactly the question a caller has.
+-- Whether `value` is one of this module's frozen proxies. From the outside a proxy
+-- is indistinguishable from an empty table -- `next` and `#` both see the empty
+-- carrier, not the store behind it. Arrays are copied plain rather than proxied
+-- (see the header), so this answers "is this a frozen map".
 function Frozen.isFrozen(value)
   return type(value) == "table" and stores[value] ~= nil
 end
@@ -170,20 +162,17 @@ function Frozen.each(frozen)
   end
 end
 
--- A plain, writable deep copy of a value that may be frozen. The two shapes both
--- need one and for different reasons: a map comes back as a proxy, which `pairs`
--- cannot walk and which raises on a key it does not have, and an array comes back
--- as the backing store itself (see the header), so whoever keeps one has the
--- addon's own constants one write away from whatever they kept it in.
+-- A plain, writable deep copy of a value that may be frozen. Both shapes need one:
+-- a map comes back as a proxy, which `pairs` cannot walk and which raises on a
+-- missing key, and an array comes back as the backing store itself (see the
+-- header), one write away from corrupting the addon's own constants.
 --
--- Saved variables are the case that makes this more than tidiness. A proxy is an
--- empty carrier with a metatable, so writing one to disk stores an EMPTY table:
--- a setting reset to its default would come back from the next session having
--- lost itself, in silence, with nothing to read.
+-- Saved variables depend on it: a proxy is an empty carrier with a metatable, so
+-- writing one to disk stores an empty table, and a setting reset to its default
+-- would silently come back empty in the next session.
 --
--- Not Stored.plainCopy, which is the other direction: that one walks a RECORD on
--- its way to disk and raises on a metatable, because a proxy in a record is a bug
--- rather than a table to copy. This one exists to get rid of exactly that proxy.
+-- Not Stored.plainCopy, which walks a record on its way to disk and raises on a
+-- metatable, because a proxy in a record is a bug. This one removes that proxy.
 function Frozen.plain(value)
   if Frozen.isFrozen(value) then
     local copy = {}

@@ -1,26 +1,20 @@
 -- Ascent - the report a player can actually hand over.
 --
--- A WoW addon cannot make a network request, so there is no telemetry here and
--- there never will be: the only thing that can ever reach the author is what a
--- player decides to send. Chat is not that thing. Its text cannot be selected,
--- it is shared with every other addon's output, and it is gone once it scrolls
--- past -- so the same lines the diagnostics print are composed here into one
--- block and handed to an EditBox the player can select and copy.
+-- A WoW addon cannot make a network request, so the only thing that can reach
+-- the author is what a player decides to send. Chat text cannot be selected, is
+-- shared with every other addon's output and is gone once it scrolls past, so the
+-- lines the diagnostics print are composed here into one block and handed to an
+-- EditBox the player can select and copy. What the report says is decided here,
+-- not in the dialog that shows it.
 --
--- Two decisions live in this file rather than in the dialog that shows it,
--- because both are about what the report SAYS and not about how it is drawn.
+-- Escapes are stripped: |cff20ff20Elwynn Forest|r is a colour in the chat frame
+-- and noise in a forum post, an issue or a text file.
 --
--- ESCAPES ARE STRIPPED. A line reading |cff20ff20Elwynn Forest|r is a colour in
--- the chat frame and is noise everywhere the player is going to paste it -- a
--- forum post, an issue, a text file. What they paste should be what they read.
---
--- THE REPORT IS BOUNDED, AND SAYS SO WHEN IT IS CUT. `debug strings` can dump
--- every experience template the client holds; an EditBox handed hundreds of
--- kilobytes is a stutter in exchange for a page nobody reads to the end. It is
--- cut at a stated size, at a line boundary, with a line saying it was cut: a
--- report that silently ends early is worse than a short one, because the reader
--- cannot tell the difference between "nothing more happened" and "the rest is
--- missing".
+-- The report is bounded and says so when it is cut. `debug strings` can dump
+-- every experience template the client holds, and an EditBox handed hundreds of
+-- kilobytes stutters. The cut falls at a stated size and a line boundary, with a
+-- line saying so, because a report that silently ends early cannot be told apart
+-- from one where nothing more happened.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -60,6 +54,20 @@ local function cutToLimit(text, limit)
     kept = kept:sub(1, lastBreak - 1)
   end
   return kept .. "\n" .. CUT_NOTICE:format(limit)
+end
+
+-- The capability roster as the diagnostic prints it, to chat and into this
+-- report alike, so the two cannot say different things. One line per capability,
+-- with the reason for its state rather than yes or no: absent and unreadable are
+-- the same "no" to the addon, but to whoever reads the report they are a client
+-- without the feature and a client that took it away. `roster` is
+-- Capabilities:all(), plain data by the time it gets here.
+function CopyReport.capabilityLines(roster)
+  local lines = {}
+  for _, entry in ipairs(roster or {}) do
+    lines[#lines + 1] = ("  capability %s: %s"):format(tostring(entry.name), tostring(entry.reason))
+  end
+  return lines
 end
 
 -- `header` is a list of { label, value } pairs -- a list and not a table, because

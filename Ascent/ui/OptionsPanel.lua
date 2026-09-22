@@ -1,31 +1,22 @@
--- Ascent - the appearance panel (12.7, and group 7's 7.2 through 7.5).
+-- Ascent - the appearance panel.
 --
--- Everything the player can change about how Ascent looks lives here, in the
--- client's own AddOns settings, where they will look for it. The chat commands
--- are a shortcut and a way back when the interface itself cannot be used; they
--- are not the place to pick a skin.
+-- Everything about how Ascent looks is set here, in the client's AddOns
+-- settings; the chat commands are a shortcut and a way back when the interface
+-- cannot be used.
 --
--- THREE THINGS MAKE THIS DIFFERENT FROM THE USUAL ADDON OPTIONS PAGE:
+-- The skin gallery draws each skin: a swatch is a BarRenderer painting a
+-- sample level, with no position, drag or hiding of its own. A live preview at
+-- the top reflects every change and replays the animation on demand.
+-- Enumerated settings cycle through a button rather than a dropdown:
+-- UIDropDownMenu needs five globals unverified on Burning Crusade Classic, and
+-- with three to five choices a button is fewer clicks.
 --
---   * The skin gallery shows each skin DRAWN, not named. A swatch is a real
---     BarRenderer painting a real sample level, which is only possible because
---     the renderer was split from the compositor (design D34) -- a swatch has no
---     saved position, no drag and no ability to hide the real bar.
---   * A live preview sits at the top and reflects every change as it is made,
---     and replays the animation on demand. No addon in this ecosystem does this;
---     the usual flow is to change a dropdown and go outside to see what happened.
---   * Enumerated settings cycle through a button rather than opening a dropdown.
---     UIDropDownMenu would need five globals that cannot be verified against BC
---     Classic, and with three to five choices per axis a cycling button is fewer
---     clicks anyway.
+-- Sliders preview on OnValueChanged and persist on OnMouseUp: persisting copies
+-- the stored table, writes the repository and re-resolves every setting, so it
+-- happens once per release, not per pixel of a drag.
 --
--- WHY SLIDERS SPLIT OnValueChanged FROM OnMouseUp. Persisting means copying the
--- stored table, writing the repository and re-resolving and re-freezing every
--- setting. Right once, on release; wrong for every pixel of a drag. The preview
--- updates continuously; the write happens once.
---
--- Nothing here talks to SavedVariables, and nothing here draws the real bar: it
--- changes a setting and the bar reapplies itself.
+-- Nothing here talks to SavedVariables or draws the real bar: it changes a
+-- setting and the bar reapplies itself.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
@@ -71,9 +62,7 @@ local COLOR_ROWS = {
   { key = "PENDING", labelKey = TextKey.BAR_PENDING },
 }
 
--- Each cycling axis: where it lives in the appearance table, the values it can
--- take in order, and the label for each. Data, so adding an axis is a row.
--- What the bar can say, in the order it reads. The order itself is the domain's
+-- What the bar can say, in the order it reads. The order is the domain's
 -- (TEXT_PRIORITY, via BarTextFields); this only pairs each field with its label.
 local FIELDS = {
   { TextToken.LEVEL, TextKey.OPT_FIELD_LEVEL },
@@ -89,6 +78,8 @@ local FIELDS = {
   { TextToken.SESSION_TIME, TextKey.OPT_FIELD_SESSION_TIME },
 }
 
+-- Each cycling axis: where it lives in the appearance table, the values it can
+-- take in order, and the label for each. Data, so adding an axis is a row.
 local CYCLES = {
   {
     labelKey = TextKey.OPT_BORDER_KIND, path = { "border", "kind" },
@@ -129,12 +120,10 @@ local CYCLES = {
   },
 }
 
--- The plate's accessory zones, each with the words the player reads next to its
--- box. The ORDER is not this table's: it is the layout service's, and a test
--- holds that one to covering the vocabulary exactly (D90). What is this table's
--- is the pairing, so a zone added to the vocabulary and forgotten here is a zone
--- nobody can switch off -- which is why the harness counts these against the
--- vocabulary rather than against seven.
+-- The plate's accessory zones, each with the label beside its box. The order
+-- is the layout service's, tested to cover the vocabulary exactly; this table
+-- only pairs zone and label. A zone missing here could not be switched off, so
+-- the smoke harness counts these rows against the vocabulary.
 local PLATE_ZONE_ROWS = {
   { PlateZone.CLOCK, TextKey.OPT_PLATE_ZONE_CLOCK },
   { PlateZone.REMAINING, TextKey.OPT_PLATE_ZONE_REMAINING },
@@ -145,15 +134,12 @@ local PLATE_ZONE_ROWS = {
   { PlateZone.FOOTER, TextKey.OPT_PLATE_ZONE_FOOTER },
 }
 
--- The three axes of the plate's OWN appearance map that this page offers. The
--- map admits more and the resolver type-checks all of them (D94): what is
--- decided here is which ones are worth a control, not which ones exist.
+-- The axes of the plate's own appearance map that get a control here. The map
+-- admits more, all type-checked by the resolver.
 --
--- `own` marks the axis the plate reads off its own map and nowhere else. The
--- plate has never read the skin's text size -- it ignores size, style and anchor
--- -- so an untouched text size falls back to the layout service's base rather
--- than to whatever the bar resolved, which would move every plate that exists on
--- the first login after updating.
+-- `own` marks an axis the plate reads from its own map only. The plate ignores
+-- the skin's text size, style and anchor, so an untouched text size falls back
+-- to the layout service's base, not to what the bar resolved.
 local PLATE_AXES = {
   { labelKey = TextKey.OPT_BACKGROUND_ALPHA, path = { "background", "a" }, bounds = ALPHA },
   { labelKey = TextKey.OPT_BORDER_THICKNESS, path = { "border", "thickness" }, bounds = THICKNESS },
@@ -198,19 +184,10 @@ local OptionsPanel = {}
 -- Widgets
 -- ---------------------------------------------------------------------------
 
--- How far below `root` a widget's top edge ends up, following the same chain of
--- anchors the controls were built with.
---
--- This exists because the scroll child used to be 1400 tall because somebody
--- guessed, and the panel outgrew the guess: everything from the appearance axes
--- down -- the per-axis sliders, size, motion, behaviour -- sat past the child's
--- bottom edge, outside it, where no amount of scrolling reaches. In the client
--- the panel simply ended after the colour swatches, with no error and no gap to
--- suggest anything was missing.
---
--- Walked rather than tallied by hand: the offsets live at the call sites, and a
--- tally kept here would be a second copy of the layout that goes wrong the first
--- time somebody inserts a control.
+-- How far below `root` a widget's top edge ends up, following the chain of
+-- anchors the controls were built with. It sizes the scroll child: controls
+-- past the child's bottom edge cannot be scrolled to, and the client shows no
+-- error. Walked rather than tallied, since the offsets live at the call sites.
 local function depthBelow(widget, root)
   local total, hops = 0, 0
   local current = widget
@@ -220,7 +197,7 @@ local function depthBelow(widget, root)
       break
     end
     -- Anchored TOPLEFT to the previous control's BOTTOMLEFT: this one's top is
-    -- the parent's top, plus the parent's own height, plus a negative offset.
+    -- the parent's top, plus the parent's height, plus a negative offset.
     total = total - (y or 0)
     if parent ~= root then
       total = total + (parent:GetHeight() or 0)
@@ -231,12 +208,10 @@ local function depthBelow(widget, root)
   return total
 end
 
--- How far right a widget sits from `root`, by the same walk depthBelow does
--- vertically. Sections hang off whatever control came last, and a control laid
--- out in the third column of a gallery carries that column's offset: inherited,
--- it pushed the colour swatches for exploration and pending clean off the right
--- edge of the panel, where the code that built them was perfectly correct and
--- nobody could click them.
+-- How far right a widget sits from `root`, by the walk depthBelow does
+-- vertically. Sections hang off whatever control came last, and a control in a
+-- gallery's third column carries that column's offset, which a section would
+-- otherwise inherit and push off the panel's right edge.
 local function indentFrom(widget, root)
   local total, hops = 0, 0
   while widget ~= nil and widget ~= root and hops < 64 do
@@ -250,9 +225,8 @@ local function indentFrom(widget, root)
   return total
 end
 
--- Every section starts at the panel's left edge. The heading is what each one
--- hangs off, so pinning the heading pins the section -- and cancelling the
--- inherited indent here means no section has to know what came before it.
+-- Every section starts at the panel's left edge: its heading cancels the
+-- inherited indent, so no section needs to know what came before it.
 local function heading(panel, key, anchor, gap, locale)
   local text = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
   text:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -indentFrom(anchor, panel), -(gap or 16))
@@ -260,16 +234,16 @@ local function heading(panel, key, anchor, gap, locale)
   return text
 end
 
--- `place` is optional and only the field grid passes it: everything else stacks
--- one control under the last, which is what the default says.
 -- Whether this client has the dropdown family. Five globals, all or nothing:
--- a client with three of them would build a control that opens onto nothing.
+-- with only some, a control would open onto nothing.
 local HAS_DROPDOWN = UIDropDownMenu_Initialize ~= nil and UIDropDownMenu_CreateInfo ~= nil
   and UIDropDownMenu_AddButton ~= nil and UIDropDownMenu_SetWidth ~= nil
   and UIDropDownMenu_SetText ~= nil
 
 ns.ui.HAS_DROPDOWN = HAS_DROPDOWN
 
+-- `place` is optional and only the field grid passes it; by default each
+-- control stacks under the last.
 local function createCheckbox(panel, name, labelKey, anchor, locale, onChange, place)
   local check = CreateFrame("CheckButton", "AscentOptions" .. name .. "CheckButton", panel,
     "InterfaceOptionsCheckButtonTemplate")
@@ -282,18 +256,15 @@ local function createCheckbox(panel, name, labelKey, anchor, locale, onChange, p
   return check
 end
 
--- Set while the panel is writing its controls from the settings. Without it,
--- refreshing is indistinguishable from the player dragging: SetValue fires
--- OnValueChanged, OnValueChanged previews, and previewing resizes the real bar.
--- Merely OPENING the options page would resize the player's bar to whatever the
--- slider's own bounds allowed -- a silent edit nobody asked for.
+-- Set while the panel writes its controls from the settings. Otherwise a
+-- refresh looks like a drag: SetValue fires OnValueChanged, which previews, and
+-- previewing resizes the real bar, so opening the page would edit the bar.
 local refreshing = false
 
 local function createSlider(panel, name, labelKey, anchor, locale, bounds, preview, commit)
   local slider = CreateFrame("Slider", "AscentOptions" .. name .. "Slider", panel, "OptionsSliderTemplate")
-  -- No horizontal offset. Sliders hang off one another, so an indent here is not
-  -- an indent -- it is an indent per slider, and five of them in a row walked the
-  -- last one forty pixels right of the first.
+  -- No horizontal offset: sliders hang off one another, so an indent here
+  -- would accumulate per slider.
   slider:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -26)
   slider:SetWidth(220)
   slider:SetMinMaxValues(bounds.min, bounds.max)
@@ -301,10 +272,9 @@ local function createSlider(panel, name, labelKey, anchor, locale, bounds, previ
   if slider.SetObeyStepOnDrag then
     slider:SetObeyStepOnDrag(true)
   end
-  -- The template centres its label over the slider, which is fine for "0.5" and
-  -- wrong for "Motion intensity (0 turns animation off)": a label wider than its
-  -- slider overflows BOTH ends, and the left end went off the page. Left-aligned
-  -- above it instead, like every other label on these pages.
+  -- The template centres its label over the slider, so a label wider than the
+  -- slider overflows both ends, off the page on the left. Left-aligned above it
+  -- instead, like every other label here.
   local label = _G[slider:GetName() .. "Text"]
   label:SetText(locale:get(labelKey))
   label:ClearAllPoints()
@@ -322,12 +292,9 @@ local function createSlider(panel, name, labelKey, anchor, locale, bounds, previ
   return slider
 end
 
--- A one-axis reset (7.4). It does two jobs with one control, and the second is
--- the reason it is a button rather than a menu entry: it is ON SCREEN only
--- while the player actually holds an override on that axis, so what is left
--- showing after a skin change is exactly the list of their own settings still
--- being applied over the new skin -- which is the other thing the appearance
--- surface has to say and had no way of saying.
+-- A one-axis reset. A button rather than a menu entry because it is shown only
+-- while the player holds an override on that axis: after a skin change, the
+-- visible buttons list exactly the player's settings still applied over it.
 local function createAxisReset(panel, name, anchor, locale, onClick)
   local button = CreateFrame("Button", "AscentOptions" .. name .. "Reset", panel, "UIPanelButtonTemplate")
   button:SetSize(66, 20)
@@ -345,21 +312,16 @@ local function createAxisReset(panel, name, anchor, locale, onClick)
 end
 
 -- The client's colour picker, driven through whichever interface this flavour
--- has. The modern one takes a table of callbacks; the older one takes fields on
--- the frame itself.
+-- has: the modern one takes a table of callbacks, the older one fields on the
+-- frame itself.
 --
--- WHY THIS IS A STATE MACHINE AND NOT A CALLBACK. Every colour the player drags
--- through fires `swatchFunc`, and this panel's rule for a continuous setting is
--- the slider's rule (design D35): preview continuously, persist once. So a
--- trial colour only ever reaches the preview, and the repository is written --
--- at most once -- when the pick ends. Cancelling writes nothing at all, which
--- is what makes "no colour you tried is kept" true rather than approximately
--- true.
+-- A state machine, not a callback: every colour dragged through fires
+-- `swatchFunc`, and like a slider a pick previews continuously and persists at
+-- most once, when it ends. Cancelling writes nothing.
 --
--- Neither flavour announces "the player pressed Okay": Okay just hides the
--- frame, and only Cancel has a callback. So confirmation is INFERRED -- cancel
--- empties the slot below, and a pick still in it when the frame hides was
--- confirmed.
+-- Neither flavour reports Okay: it just hides the frame, and only Cancel has a
+-- callback. So cancel empties the slot below, and a pick still in it when the
+-- frame hides was confirmed.
 
 -- The pick in progress, or nil. One slot is enough: the picker is a single
 -- shared frame, so there is never a second pick to hold.
@@ -375,12 +337,11 @@ end
 
 -- Ends the pick in progress. `confirmed` is false only from cancelFunc.
 --
--- A confirmed pick that never moved off the colour it opened on writes NOTHING,
--- and that is deliberate rather than an optimisation. The picker opens on the
--- colour the bar is PAINTING, which for a source the player never touched is
--- the palette colour as the current skin tinted it. Writing that back would pin
--- the source to today's skin and stop it following the palette -- the opposite
--- of what BAR_COLORS means (core/constants/Settings.lua).
+-- A confirmed pick that never moved off its opening colour writes nothing. The
+-- picker opens on the colour the bar paints, which for an untouched source is
+-- the palette colour as tinted by the current skin; writing it back would pin
+-- the source to this skin instead of following the palette (BAR_COLORS in
+-- core/constants/Settings.lua).
 local function closePick(confirmed)
   local active = pick
   if active == nil then
@@ -395,8 +356,8 @@ local function closePick(confirmed)
 end
 
 -- Hooked once, never per click: ColorPickerFrame is shared and HookScript
--- stacks handlers, so hooking on every swatch click would replay the whole
--- session's picks on one Okay.
+-- stacks handlers, so per-click hooks would replay every pick of the session on
+-- one Okay.
 local function hookPicker()
   if hookedPicker then
     return
@@ -405,10 +366,9 @@ local function hookPicker()
   ColorPickerFrame:HookScript("OnHide", function() closePick(true) end)
 end
 
--- `current` is the colour the bar paints for this source right now, which is
--- where the picker opens. `handlers` are `preview` (show it, persist nothing),
--- `commit` (persist, once) and `restore` (put back what was already stored --
--- there is nothing to undo, because nothing was written).
+-- `current` is the colour the bar paints for this source now, where the picker
+-- opens. `handlers` are `preview` (show it, persist nothing), `commit` (persist,
+-- once) and `restore` (repaint what is stored; nothing was written).
 local function openColorPicker(current, handlers)
   local r, g, b = current.r, current.g, current.b
 
@@ -451,15 +411,13 @@ local function openColorPicker(current, handlers)
   ColorPickerFrame.hasOpacity = false
   ColorPickerFrame.previousValues = { r = r, g = g, b = b }
   ColorPickerFrame.cancelFunc = onCancel
-  -- `swatchFunc`, not `func`: this client's picker reads swatchFunc and never
-  -- looks at func, so the older spelling would open a picker that changes
-  -- nothing.
+  -- `swatchFunc`, not `func`: this picker reads swatchFunc and ignores func, so
+  -- the older spelling would open a picker that changes nothing.
   ColorPickerFrame.swatchFunc = onSwatch
   ColorPickerFrame:SetColorRGB(r, g, b)
-  -- Hidden, then armed, then shown. The Hide is what re-runs the picker's own
-  -- setup on a frame that may already be open, and it fires the OnHide hook --
-  -- so the slot is filled after it, never before, or opening a picker would
-  -- read as confirming it.
+  -- Hidden, then armed, then shown. The Hide re-runs the picker's setup on a
+  -- frame that may already be open and fires the OnHide hook, so the slot is
+  -- filled after it, or opening a picker would read as confirming it.
   ColorPickerFrame:Hide()
   startPick()
   ColorPickerFrame:Show()
@@ -473,28 +431,20 @@ function OptionsPanel.new(context)
   local bar = context.bar
   local saveSetting = context.saveSetting
   local locale = context.locale
-  -- A question, not the adapter: the panel needs to know whether the client has a
-  -- bar to take over, and nothing else about it. Optional, because a context
-  -- built by an older path (or a test) has every right not to offer it.
+  -- A question, not the adapter: the panel only needs to know whether the
+  -- client has a bar to take over. Optional, since a context (or a test) may
+  -- not offer it.
   local clientBarPresent = context.clientBarPresent
 
-  -- The level every preview on this page draws, built once and shared: they only
-  -- ever read it. It comes from the composition root, which takes it from the
-  -- demo driver (7.3), so there is one synthetic level in the addon and not one
-  -- per surface that wants to show a bar.
+  -- The level every preview here draws, built once and shared read-only. It
+  -- comes from the demo driver through the composition root, so the addon has
+  -- one synthetic level, not one per surface.
   local sample = context.demoSample()
 
-  -- ONE PAGE PER SECTION, each its own entry under Ascent in the AddOns list --
-  -- the shape every other addon in this client uses, and the answer to three
-  -- defects that were all the same defect. A single canvas two thousand pixels
-  -- tall meant: controls laid out past the bottom of their own scroll child,
-  -- where scrolling cannot reach them; a section inheriting two columns of
-  -- indent from the gallery above it, which pushed two colour swatches off the
-  -- right edge; and no way to see any of it, because the page that was wrong was
-  -- also the page nobody could see the bottom of.
-  --
-  -- A page that holds one section is short enough to have neither problem, and
-  -- the player gets a list instead of a scroll bar.
+  -- One page per section, each its own entry under Ascent in the AddOns list,
+  -- as other addons do. A single tall canvas risks controls past the bottom of
+  -- the scroll child and sections inheriting a gallery's indent; a one-section
+  -- page is short enough for neither.
   local pages = {}
 
   local function newPage(key, titleKey, descriptionKey)
@@ -522,13 +472,11 @@ function OptionsPanel.new(context)
     pageContent:SetSize(520, 100)
     scroll:SetScrollChild(pageContent)
 
-    -- A point of no size at the top left, so the first control of a section
-    -- hangs off the page itself rather than off whatever the last page ended
-    -- with. It is what makes indentFrom answer zero at the start of every page.
+    -- A point of no size at the top left, so a section's first control hangs
+    -- off the page itself and indentFrom answers zero at the start of a page.
     local top = CreateFrame("Frame", nil, pageContent)
-    -- Spelled out against the content rather than relying on the implicit
-    -- parent: the chain of anchors is what measures a page, and a link that does
-    -- not name what it hangs off cannot be walked.
+    -- Anchored to the content explicitly, not by implicit parent: depthBelow
+    -- measures a page by walking named anchors.
     top:SetPoint("TOPLEFT", pageContent, "TOPLEFT", 0, 0)
     top:SetSize(1, 1)
 
@@ -543,11 +491,8 @@ function OptionsPanel.new(context)
   local pageFields = newPage("Fields", TextKey.OPT_SECTION_FIELDS, TextKey.OPT_PAGE_FIELDS_DESC)
   local pageSize = newPage("Size", TextKey.OPT_SECTION_SIZE, TextKey.OPT_PAGE_SIZE_DESC)
   local pageBehaviour = newPage("Behaviour", TextKey.OPT_SECTION_BEHAVIOUR, TextKey.OPT_PAGE_BEHAVIOUR_DESC)
-  -- The other surface this addon draws, and the only one whose settings used to
-  -- be reachable by chat command alone. ONE page carrying its name (D92): the bar
-  -- needed six because it had six unrelated subjects, and the plate's lock filed
-  -- under Behaviour with its width under Size would be a player hunting three
-  -- pages for one surface.
+  -- The pull plate gets one page of its own rather than its settings spread
+  -- across the bar's pages, so one surface is set in one place.
   local pagePlate = newPage("Plate", TextKey.OPT_PAGE_PLATE, TextKey.OPT_PAGE_PLATE_DESC)
 
   local content = pageMain.content
@@ -569,19 +514,18 @@ function OptionsPanel.new(context)
     })
   end
 
-  -- Shows a change in the preview WITHOUT persisting it, which is what makes a
-  -- slider feel immediate without writing the repository per pixel.
+  -- Shows a change in the preview without persisting it, so a slider feels
+  -- immediate without writing the repository per pixel.
   local function previewOverrides(overrides)
     view.preview:apply(appearanceFor(overrides), currentSettings()[SettingKey.MOTION_SCALE])
   end
 
-  -- Which override map, then the axis inside it. The key is a parameter rather
-  -- than BAR_APPEARANCE spelled in, because the plate's own map (D87) is the same
-  -- shape read the same way, and the pruning below is subtle enough that a second
-  -- copy of it would be a second thing to get right.
+  -- Which override map, then the axis inside it. The key is a parameter because
+  -- the plate's own map has the same shape as BAR_APPEARANCE and shares this
+  -- code, pruning included.
   --
-  -- Frozen.plain, always: what comes back out of the settings is FROZEN, and a proxy
-  -- saved back reaches Frozen again as an array-like table -- emptied, in silence.
+  -- Frozen.plain, always: settings come back frozen, and a proxy saved back
+  -- reaches Frozen as an array-like table and is silently emptied.
   local function overridesWith(key, path, value)
     local overrides = Frozen.plain(currentSettings()[key])
     local node = overrides
@@ -598,19 +542,15 @@ function OptionsPanel.new(context)
     view.refresh()
   end
 
-  -- Whether this axis is the PLAYER's rather than the skin's. Read off the
-  -- override table and not off the resolved appearance, because the resolved
-  -- one always has a value for every axis -- that is what resolving means -- and
-  -- so cannot tell the two apart.
+  -- Whether this axis is the player's rather than the skin's. Read from the
+  -- override table: the resolved appearance has a value for every axis.
   local function hasOverride(key, path)
     return readPath(currentSettings()[key], path) ~= nil
   end
 
-  -- The overrides with one axis taken out, and every other one untouched. Empty
-  -- parents are pruned on the way back up: an override table still carrying
-  -- `border = {}` reads as "the player touched the border" to hasOverride, so
-  -- leaving one behind would keep the reset button on screen for a setting that
-  -- is no longer overridden.
+  -- The overrides with one axis taken out and the rest untouched. Empty parents
+  -- are pruned: a leftover `border = {}` would read as an override to
+  -- hasOverride and keep its reset button on screen.
   local function overridesWithout(key, path)
     local overrides = Frozen.plain(currentSettings()[key])
     local chain = { overrides }
@@ -639,10 +579,9 @@ function OptionsPanel.new(context)
     end
   end
 
-  -- The size and motion axes are settings of their own rather than entries in
-  -- the appearance table, so "back to default" is writing the default and
-  -- "the player changed it" is differing from it. saveSetting hot-applies each
-  -- of them through the bar (app/Bootstrap.lua), the same as any other write.
+  -- The size and motion axes are settings of their own, not appearance entries:
+  -- reset writes the default, and "changed" means differing from it.
+  -- saveSetting hot-applies each through the bar (app/Bootstrap.lua).
   local function resetSetting(key)
     return function()
       saveSetting(key, ns.core.Defaults[key])
@@ -676,21 +615,19 @@ function OptionsPanel.new(context)
     view.preview:replay(currentSettings()[SettingKey.MOTION_SCALE])
   end)
 
-  -- The preview animates, so it needs a frame to drive it. One OnUpdate for the
-  -- whole panel, and only while the panel is actually on screen.
+  -- One OnUpdate drives the preview's animation, running only while the page
+  -- is shown.
   content:SetScript("OnUpdate", function(_, elapsed)
     view.preview:tick(elapsed)
   end)
 
   -- --- skin gallery --------------------------------------------------------
 
-  -- FIRST, above the skins. Where the bar lives decides whether its position and
-  -- its size are even the player's to set, so it belongs before the settings it
-  -- governs rather than eleven controls below them.
+  -- First, above the skins: where the bar lives decides whether its position
+  -- and size are the player's to set.
   --
-  -- Cycled rather than dropped down, like every other enumerated setting here.
-  -- Declared in an order the player can follow -- free, then the two degrees of
-  -- taking over -- rather than sorted, which would put inset before off.
+  -- Declared in an order the player can follow (free, then the two degrees of
+  -- taking over) rather than sorted, which would put inset before off.
   local SLOT_CYCLE = {
     { BarSlot.OFF, TextKey.OPT_SLOT_OFF },
     { BarSlot.INSET, TextKey.OPT_SLOT_INSET },
@@ -706,9 +643,8 @@ function OptionsPanel.new(context)
     return tostring(slot)
   end
 
-  -- The label is its own line, because the control below shows the VALUE. A
-  -- button that had to carry both ran off its own edge the moment the value was
-  -- "in the client's bar, frame hidden".
+  -- The label is its own line and the control shows the value: the values are
+  -- long enough that one button carrying both would overflow.
   local slotLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
   slotLabel:SetPoint("TOPLEFT", replay, "BOTTOMLEFT", 4, -12)
   slotLabel:SetText(locale:get(TextKey.OPT_BAR_SLOT))
@@ -718,20 +654,14 @@ function OptionsPanel.new(context)
     view.refresh()
   end
 
-  -- A real dropdown when the client has one, and the cycling button when it does
-  -- not. The panel's header explains why everything else here cycles: the five
-  -- globals a dropdown needs could not be verified against the supported clients
-  -- when that was written. They can be probed, though, which is what this does --
-  -- and `/ascent debug` reports the answer, so the next client that is odd about
-  -- it says so instead of being guessed at.
-  --
-  -- Three choices is the edge where the two are worth the same, and the slot is
-  -- the one control here whose values are sentences rather than words: a dropdown
-  -- shows them without the button having to be as wide as the longest one.
+  -- A dropdown when the client has the five globals it needs (probed, and
+  -- reported by `/ascent debug`), the cycling button otherwise. The slot is the
+  -- one control whose values are sentences, which a dropdown shows without a
+  -- button as wide as the longest one.
   if HAS_DROPDOWN then
     view.slotDropdown = CreateFrame("Frame", "AscentOptionsSlotDropdown", content, "UIDropDownMenuTemplate")
-    -- The template draws its own left-hand padding outside the frame, so the
-    -- control reads as aligned with the labels only when it is pulled back.
+    -- The template draws its left padding outside the frame, so it is pulled
+    -- back to align with the labels.
     view.slotDropdown:SetPoint("TOPLEFT", slotLabel, "BOTTOMLEFT", -16, -4)
     UIDropDownMenu_SetWidth(view.slotDropdown, 240)
     UIDropDownMenu_Initialize(view.slotDropdown, function()
@@ -762,8 +692,7 @@ function OptionsPanel.new(context)
 
   view.slotControl = view.slotDropdown or view.slotButton
 
-  -- Why the two sliders below are dead. Shown only while they are, so it never
-  -- becomes a line the player learns to read past.
+  -- Why the width and height sliders are disabled, shown only while they are.
   view.slotNote = content:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
   view.slotNote:SetPoint("TOPLEFT", view.slotControl, "BOTTOMLEFT", view.slotDropdown and 20 or 0, -4)
   view.slotNote:SetWidth(320)
@@ -777,12 +706,9 @@ function OptionsPanel.new(context)
 
   view.swatches = {}
   local skinIds = Frozen.keys(SkinCatalog)
-  -- The swatch that STARTS the last row, not the last swatch. Everything after
-  -- the gallery hangs off this, and the difference is two columns of indent:
-  -- anchored to the last swatch, every section below the skins -- the colours,
-  -- the fields, the size, the behaviour -- started under whichever column the
-  -- gallery happened to end in, and their own right-hand columns fell off the
-  -- edge of the panel. Two colours could not be edited because of it.
+  -- The swatch that starts the last row, not the last swatch: what follows the
+  -- gallery hangs off it, and the last swatch may sit in a later column, whose
+  -- indent would push the next section off the panel's right edge.
   local lastRowStart = skinHeading
   for index, id in ipairs(skinIds) do
     local holder = CreateFrame("Button", "AscentOptionsSkin" .. id .. "Swatch", content)
@@ -798,8 +724,8 @@ function OptionsPanel.new(context)
     selected:SetColorTexture(1, 0.82, 0.3, 0.35)
     selected:Hide()
 
-    -- A real renderer painting a real sample: the swatch cannot look like
-    -- something the bar would not.
+    -- The bar's own renderer painting the sample, so a swatch looks exactly as
+    -- the bar would.
     local swatch = BarPreview.new({
       parent = holder, width = SWATCH_WIDTH, height = 18, animated = false, sample = sample,
     })
@@ -819,10 +745,9 @@ function OptionsPanel.new(context)
     end)
 
     view.swatches[id] = { holder = holder, selected = selected, swatch = swatch }
-    -- Every time a row starts, not only on the last swatch: the last swatch is in
-    -- the third column and nested inside that test this never ran at all, so
-    -- everything below the gallery anchored to the heading and was drawn over the
-    -- swatches.
+    -- On every row start, not only at the last swatch, which is not in the
+    -- first column; otherwise what follows would anchor to the heading and draw
+    -- over the swatches.
     if column == 0 then
       lastRowStart = holder
     end
@@ -833,8 +758,7 @@ function OptionsPanel.new(context)
       saveSetting(SettingKey.HIGH_CONTRAST, checked)
       view.refresh()
     end,
-    -- Clear of the swatch's NAME, which hangs below the swatch itself. Anchored
-    -- to the swatch's bottom edge the checkbox landed on top of the label.
+    -- Clear of the swatch's name, which hangs below the swatch itself.
     { relativePoint = "BOTTOMLEFT", x = 0, y = -26 })
 
   -- --- colours -------------------------------------------------------------
@@ -845,16 +769,13 @@ function OptionsPanel.new(context)
   view.colorButtons = {}
   local lastColorRow = colorHeading
   for index, row in ipairs(COLOR_ROWS) do
-    -- Named like the sliders and checkboxes: a swatch is the one control here
-    -- whose behaviour cannot be read off the frame it lives on, so being able
-    -- to name it -- from /framestack, or from the smoke harness -- is worth the
+    -- Named like the sliders and checkboxes: a swatch's behaviour cannot be read
+    -- off its frame, so a name for /framestack and the smoke harness is worth the
     -- global.
     local button = CreateFrame("Button", "AscentOptionsColor" .. row.key .. "Button", content)
     button:SetSize(20, 20)
-    -- Two columns, not three. A page is narrower than the canvas this grid was
-    -- laid out for, and the third column's label ran past its right edge -- which
-    -- is how two colours ended up unreachable. Two columns of six fit with room
-    -- for the longest label.
+    -- Two columns: on a page this narrow a third column's labels would run
+    -- past the right edge. Two columns fit the longest label.
     local column = (index - 1) % 2
     local rowIndex = math.floor((index - 1) / 2)
     button:SetPoint("TOPLEFT", colorHeading, "BOTTOMLEFT",
@@ -872,16 +793,14 @@ function OptionsPanel.new(context)
     label:SetText(locale:get(row.labelKey))
 
     button:SetScript("OnClick", function()
-      -- The stored overrides as they were BEFORE the picker opened. Every
-      -- handler below builds off this snapshot rather than re-reading the
-      -- settings, because the whole point is that the settings do not move
-      -- while the player is trying colours out.
+      -- The stored overrides as they were before the picker opened. Every
+      -- handler builds off this snapshot: the settings do not change while
+      -- colours are being tried.
       local stored = Frozen.plain(currentSettings()[SettingKey.BAR_COLORS])
 
       openColorPicker(appearanceFor().colors[row.key], {
-        -- Preview: the demo bar and this swatch, and nothing else. No call
-        -- reaches the repository, so a colour tried and abandoned leaves
-        -- nothing behind to undo.
+        -- Preview: the demo bar and this swatch only. Nothing reaches the
+        -- repository, so an abandoned colour leaves nothing to undo.
         preview = function(chosen)
           local trial = Frozen.plain(stored)
           trial[row.key] = chosen
@@ -893,8 +812,8 @@ function OptionsPanel.new(context)
           saveSetting(SettingKey.BAR_COLORS, stored)
           view.refresh()
         end,
-        -- Nothing was written, so there is nothing to roll back: repainting
-        -- from the settings is what puts the previewed colour away.
+        -- Nothing was written: repainting from the settings removes the
+        -- previewed colour.
         restore = function() view.refresh() end,
       })
     end)
@@ -962,10 +881,9 @@ function OptionsPanel.new(context)
 
   -- --- what the bar says ---------------------------------------------------
 
-  -- Two columns, because eleven checkboxes in one would be taller than the
-  -- window and the order they read in would be lost in the scrolling. Column
-  -- major: the fields keep their declared order down the left, then down the
-  -- right, so the list still reads as an order rather than a grid.
+  -- Two columns, since eleven checkboxes in one would be taller than the
+  -- window. Column major: the declared order runs down the left, then down the
+  -- right, so it still reads as an order.
   content = pageFields.content
   local fieldsHeading = heading(content, TextKey.OPT_SECTION_FIELDS, pageFields.top, 4, locale)
 
@@ -985,8 +903,7 @@ function OptionsPanel.new(context)
         view.refresh()
       end,
       -- The second column hangs off the heading at an offset, not off the
-      -- checkbox to its left: label widths differ, and anchoring to one would
-      -- make the column's left edge follow the longest label above it.
+      -- checkbox to its left, whose label width varies.
       first and { relativePoint = "BOTTOMLEFT", x = column == 1 and 4 or 268, y = -8 }
         or { relativePoint = "BOTTOMLEFT", x = 0, y = -4 })
     view.fieldChecks[index] = { check = check, token = token }
@@ -998,8 +915,7 @@ function OptionsPanel.new(context)
       saveSetting(SettingKey.BAR_TEXT_ON_HOVER, checked)
     end, { relativePoint = "BOTTOMLEFT", x = -4, y = -14 })
 
-  -- Says what an empty selection means. A bar with no text is a legitimate
-  -- choice, so this appears rather than argues.
+  -- Says what an empty selection means; a bar with no text is a valid choice.
   view.fieldsNote = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   view.fieldsNote:SetPoint("TOPLEFT", view.hoverCheck, "BOTTOMLEFT", 4, -8)
   view.fieldsNote:SetWidth(520)
@@ -1030,8 +946,7 @@ function OptionsPanel.new(context)
       view.preview:replay(value)
     end)
 
-  -- The same per-axis reset as the appearance axes above, for the four settings
-  -- that live outside the appearance table.
+  -- The per-axis reset, for the four settings outside the appearance table.
   view.settingResets = {
     { key = SettingKey.BAR_WIDTH,
       reset = createAxisReset(content, "Width", view.widthSlider, locale, resetSetting(SettingKey.BAR_WIDTH)) },
@@ -1057,10 +972,9 @@ function OptionsPanel.new(context)
     locale, function(checked) saveSetting(SettingKey.COLLECT_DAMAGE, checked) end)
   view.debugCheck = createCheckbox(content, "Debug", TextKey.OPTIONS_DEBUG, view.damageCheck, locale,
     function(checked) saveSetting(SettingKey.DEBUG, checked) end)
-  -- Switching this off silences BOTH halves -- the announcing and the warning
-  -- (design D74) -- which is why the context is asked to apply it rather than
-  -- only saving it: a setting that needed a reload to take effect would leave the
-  -- addon talking to the channel after the player told it to stop.
+  -- Switching this off silences both the announcing and the warning, so the
+  -- context applies it at once rather than only saving it: otherwise the addon
+  -- would keep talking to the channel until a reload.
   view.updateCheck = createCheckbox(content, "UpdateCheck", TextKey.OPTIONS_UPDATE_CHECK, view.debugCheck,
     locale, function(checked)
       saveSetting(SettingKey.UPDATE_CHECK, checked)
@@ -1069,12 +983,9 @@ function OptionsPanel.new(context)
       end
     end)
 
-  -- THE ONLY CHANNEL BACK, where a player actually looks for it.
-  --
-  -- No addon can make a network request, so everything the author will ever
-  -- learn about a fault on someone else's machine is what that player pastes.
-  -- `/ascent copy` does it, but somebody about to report something opens the
-  -- options -- not a list of slash commands -- so the door is here too.
+  -- The report, from the options too: no addon can make a network request, so
+  -- a pasted report is the only way a fault reaches the author, and a player
+  -- about to report opens the options rather than `/ascent copy`.
   local copyReport = CreateFrame("Button", "AscentOptionsCopyReport", content, "UIPanelButtonTemplate")
   copyReport:SetSize(240, 22)
   copyReport:SetPoint("TOPLEFT", view.debugCheck, "BOTTOMLEFT", 0, -16)
@@ -1086,8 +997,8 @@ function OptionsPanel.new(context)
   end)
   copyReport:SetScript("OnLeave", function() GameTooltip:Hide() end)
   if context.copyReport == nil then
-    -- A context that offers no report -- an older composition root, or a test --
-    -- gets a button that says it cannot rather than one that does nothing.
+    -- A context that offers no report (a test, say) gets a disabled button
+    -- rather than one that does nothing.
     copyReport:Disable()
   else
     copyReport:SetScript("OnClick", function() context.copyReport() end)
@@ -1109,24 +1020,19 @@ function OptionsPanel.new(context)
 
   -- --- the pull plate ------------------------------------------------------
 
-  -- THERE IS NO PREVIEW ON THIS PAGE, and that is the decision rather than the
-  -- omission (D92). The bar's preview exists because a BarRenderer was split from
-  -- the compositor and a sample level is published on the context; the plate has
-  -- neither, and building them would mean a fictional PullRecord published for
-  -- one page. The demo already drives the REAL plate through a whole pull, so the
-  -- button at the bottom launches that instead. It is the better preview: it is
-  -- the thing itself, at the settings just chosen.
+  -- No preview on this page: the plate has no separate renderer and no sample
+  -- pull, and one would mean a fictional PullRecord. The button at the bottom
+  -- runs the demo instead, which drives the real plate through a whole pull at
+  -- the chosen settings.
 
-  -- The plate is optional here in a way the bar is not: all three views are built
-  -- inside one pcall, so a client that failed at the plate leaves the bar -- and
-  -- this panel -- standing without it. The settings stay the player's to change;
-  -- only the live half is missing, which is why every use of this is guarded.
+  -- The plate may be missing: the three views are built in one pcall, so a
+  -- client that failed at the plate still has the bar and this panel. Its
+  -- settings stay editable, and every use of it is guarded.
   local plate = context.plate
 
-  -- The appearance the PLATE resolves: the bar's, with the plate's own map laid
-  -- over it (D87). Its own function rather than a flag on appearanceFor, because
-  -- that one feeds the bar's preview and an `own` layer leaking into it would
-  -- show the bar wearing the plate's tweaks.
+  -- The appearance the plate resolves: the bar's, with the plate's own map laid
+  -- over it. A function of its own, not a flag on appearanceFor, which feeds the
+  -- bar's preview and must never show the plate's tweaks.
   local function plateAppearance()
     local settings = currentSettings()
     return SkinResolver.resolve({
@@ -1139,10 +1045,9 @@ function OptionsPanel.new(context)
     })
   end
 
-  -- What one axis of the plate's own look is worth right now: the player's own
-  -- value when they have set one, and otherwise what the plate actually draws
-  -- with -- which for the text size is the layout service's base rather than
-  -- anything the skin says (see PLATE_AXES).
+  -- One axis of the plate's look now: the player's value when set, otherwise
+  -- what the plate draws with, which for the text size is the layout service's
+  -- base, not the skin's (see PLATE_AXES).
   local function plateAxisValue(spec)
     local stored = readPath(currentSettings()[SettingKey.PLATE_APPEARANCE], spec.path)
     if stored ~= nil then
@@ -1154,9 +1059,9 @@ function OptionsPanel.new(context)
     return readPath(plateAppearance(), spec.path) or spec.bounds.min
   end
 
-  -- The stored list with one zone added or taken out, rebuilt in the canonical
-  -- order rather than in the order the boxes were ticked: the order IS the
-  -- reading (D90), and what is stored is a set of choices, not a sequence.
+  -- The stored list with one zone added or removed, rebuilt in the canonical
+  -- order rather than the order the boxes were ticked: the layout owns the
+  -- order, and what is stored is a set of choices.
   local function zonesToggled(zone, checked)
     local chosen = {}
     for _, current in ipairs(currentSettings()[SettingKey.PLATE_ZONES]) do
@@ -1167,41 +1072,36 @@ function OptionsPanel.new(context)
     if checked then
       chosen[#chosen + 1] = zone
     end
-    -- The first return value only: `zones` also answers with a lookup, and
-    -- storing that would put a map where the setting declares a list.
+    -- The first return value only: `zones` also returns a lookup, and the
+    -- setting declares a list.
     return (PlateLayout.zones(chosen))
   end
 
   content = pagePlate.content
   local plateFrameHeading = heading(content, TextKey.OPT_SECTION_PLATE_FRAME, pagePlate.top, 4, locale)
 
-  -- FIRST, because it decides whether anything below it matters -- the same
-  -- reason the bar's slot heads its own page. Absorbs add-ascent-pull-recap 7.3,
-  -- which asked for this one checkbox and nothing else.
+  -- First, because it decides whether anything below it matters, as the bar's
+  -- slot heads its page.
   view.plateEnabledCheck = createCheckbox(content, "PlateEnabled", TextKey.OPT_PLATE_ENABLED,
     plateFrameHeading, locale, function(checked)
       saveSetting(SettingKey.PLATE_ENABLED, checked)
     end)
 
-  -- Its own lock, never the bar's (D88). The two surfaces have opposite
-  -- ergonomics -- the bar is placed once, the plate moves whenever the fighting
-  -- does -- and sharing one meant the bar's slot, which disables the bar's lock,
-  -- silently decided whether the plate could be dragged.
+  -- Its own lock, never the bar's: the bar is placed once, the plate moves with
+  -- the fighting, and the bar's slot disables the bar's lock.
   view.plateLockedCheck = createCheckbox(content, "PlateLocked", TextKey.OPT_PLATE_LOCKED,
     view.plateEnabledCheck, locale, function(checked)
       saveSetting(SettingKey.PLATE_LOCKED, checked)
     end)
 
-  -- The panel's half of each range, read from core rather than written here as a
-  -- literal. Two halves exist on purpose: the setting admits what a hand-edited
-  -- file may hold, and this is what makes sense to drag. Declaring the narrow one
-  -- in core/ is what lets a test hold it inside the wide one -- the bar's own
-  -- slider bounds, four literals at the top of this file, have no such test.
+  -- The slider ranges come from core (SettingPanelRange), not literals: the
+  -- setting admits what a hand-edited file may hold, the panel range what makes
+  -- sense to drag, and a test keeps the second inside the first. The bar's
+  -- slider bounds at the top of this file have no such test.
   --
-  -- The preview writes to the FRAME and never through the view's own applyFrame,
-  -- place or currentAlpha: those are internal, and applySettings is the single
-  -- hot-apply door. What a preview owes is immediacy, and three frame calls give
-  -- exactly that without a second path into the plate's layout.
+  -- The preview writes to the frame, never through the view's applyFrame, place
+  -- or currentAlpha: applySettings is the one hot-apply path, and three frame
+  -- calls give the preview its immediacy.
   local function previewPlate(apply)
     if plate ~= nil and plate.frame ~= nil then
       apply(plate.frame)
@@ -1218,18 +1118,16 @@ function OptionsPanel.new(context)
     function(value) previewPlate(function(frame) frame:SetWidth(value) end) end,
     function(value) saveSetting(SettingKey.PLATE_WIDTH, value) end)
 
-  -- Previewed by writing the frame's alpha, which is the one place this page
-  -- touches the channel D91 reserves for the fade. It is safe only because it is
-  -- a preview: the very next thing the plate draws overwrites it with the factor
-  -- times where the fade has got to, so nothing here can outlive the drag.
+  -- Previewed by writing the frame's alpha, the channel the plate's fade uses.
+  -- Safe only as a preview: the plate's next draw overwrites it with the factor
+  -- times the fade, so nothing outlives the drag.
   view.plateOpacitySlider = createSlider(content, "PlateOpacity", TextKey.OPT_PLATE_OPACITY,
     view.plateWidthSlider, locale, SettingPanelRange[SettingKey.PLATE_OPACITY],
     function(value) previewPlate(function(frame) frame:SetAlpha(value) end) end,
     function(value) saveSetting(SettingKey.PLATE_OPACITY, value) end)
 
-  -- No preview, because there is nothing to show: this one is a duration, and the
-  -- only way to see it is to watch a plaque leave. The label carries what it
-  -- costs -- this is also the window a closed pull can be carried on in (D89).
+  -- No preview: a duration can only be seen by watching a plaque leave. The
+  -- label says it is also the window in which a closed pull can resume.
   view.plateHoldSlider = createSlider(content, "PlateHold", TextKey.OPT_PLATE_HOLD,
     view.plateOpacitySlider, locale, SettingPanelRange[SettingKey.PLATE_HOLD_SECONDS],
     nil, function(value) saveSetting(SettingKey.PLATE_HOLD_SECONDS, value) end)
@@ -1239,9 +1137,8 @@ function OptionsPanel.new(context)
   local plateContentHeading = heading(content, TextKey.OPT_SECTION_PLATE_CONTENT,
     view.plateHoldSlider, 24, locale)
 
-  -- How many rows are SHOWN. The rows themselves were built at the ceiling of the
-  -- range and are only shown or hidden, so this never rebuilds a frame -- which
-  -- is what lets it change mid-fight.
+  -- How many rows are shown. The rows are built at the range's ceiling and only
+  -- shown or hidden, so this rebuilds no frame and can change mid-fight.
   view.plateRowsSlider = createSlider(content, "PlateRows", TextKey.OPT_PLATE_ROWS,
     plateContentHeading, locale, SettingPanelRange[SettingKey.PLATE_ROWS],
     nil, function(value) saveSetting(SettingKey.PLATE_ROWS, value) end)
@@ -1255,18 +1152,17 @@ function OptionsPanel.new(context)
         saveSetting(SettingKey.PLATE_ZONES, zonesToggled(zone, checked))
         view.refresh()
       end,
-      -- The first box clears the slider under it; the rest stack tight, so the
-      -- seven read as one list rather than as seven controls.
+      -- The first box clears the slider above; the rest stack tight, so they
+      -- read as one list.
       index == 1 and { relativePoint = "BOTTOMLEFT", x = 4, y = -12 }
         or { relativePoint = "BOTTOMLEFT", x = 0, y = -4 })
     view.plateZoneChecks[index] = { check = check, zone = zone }
     previousZone = check
   end
 
-  -- Says what an empty selection leaves, the way the bar's field list does. Every
-  -- accessory zone off is a legitimate choice (D90), so this appears rather than
-  -- argues -- and the section below is anchored to it, which is why refresh
-  -- EMPTIES it as well as hiding it.
+  -- Says what an empty selection leaves, as the bar's field list does; every
+  -- zone off is a valid choice. The section below is anchored to it, so refresh
+  -- empties it as well as hiding it.
   view.plateZonesNote = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   view.plateZonesNote:SetPoint("TOPLEFT", previousZone, "BOTTOMLEFT", 4, -8)
   view.plateZonesNote:SetWidth(460)
@@ -1278,10 +1174,9 @@ function OptionsPanel.new(context)
   local plateLookHeading = heading(content, TextKey.OPT_SECTION_PLATE_LOOK,
     view.plateZonesNote, 24, locale)
 
-  -- No preview on these three, unlike the bar's axes above. The plate resolves
-  -- its own map off the settings inside applySkin rather than being handed one,
-  -- so there is no trial map to show it -- and a plate that is not in a fight is
-  -- not on screen to show anything to. That is what the demo button is for.
+  -- No preview on these, unlike the bar's axes: the plate reads its own map
+  -- from the settings inside applySkin, so no trial map can be handed to it,
+  -- and outside a fight it is not on screen. The demo button covers this.
   view.plateAxes = {}
   local previousPlateAxis = plateLookHeading
   for index, spec in ipairs(PLATE_AXES) do
@@ -1307,8 +1202,8 @@ function OptionsPanel.new(context)
   end)
   plateDemoButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
   if context.startPlateDemo == nil then
-    -- A context that cannot run one -- an older composition root, or a test --
-    -- gets a button that says it cannot rather than one that does nothing.
+    -- A context that cannot run one (a test, say) gets a disabled button
+    -- rather than one that does nothing.
     plateDemoButton:Disable()
   else
     plateDemoButton:SetScript("OnClick", function() context.startPlateDemo() end)
@@ -1321,11 +1216,10 @@ function OptionsPanel.new(context)
   plateReset:SetText(locale:get(TextKey.OPT_PLATE_RESET))
   plateReset:SetScript("OnClick", function()
     for _, key in ipairs(ns.core.PlateSettingKeys) do
-      -- A COPY of the default, never the default itself. A frozen map's proxy
-      -- saved back reaches Frozen again as an array-like table and is emptied in
-      -- silence, and the default list a frozen table answers with IS its backing
-      -- store -- storing that would put the addon's own constants one write away
-      -- from the player's saved variables.
+      -- A copy of the default, never the default itself: a frozen proxy saved
+      -- back reaches Frozen as an array-like table and is silently emptied, and
+      -- the list a frozen table returns is its backing store, which would put
+      -- the addon's constants one write away from the saved variables.
       saveSetting(key, Frozen.plain(ns.core.Defaults[key]))
     end
     view.refresh()
@@ -1333,9 +1227,8 @@ function OptionsPanel.new(context)
 
   pagePlate.last = plateReset
 
-  -- Each page is as tall as what it holds. Measured rather than guessed, which is
-  -- the other half of why the old single canvas lost half of itself: its height
-  -- was a constant somebody typed, and the panel outgrew it in silence.
+  -- Each page is as tall as what it holds, measured rather than a constant,
+  -- which the content would silently outgrow.
   for _, page in ipairs(pages) do
     local last = page.last
     if last ~= nil then
@@ -1346,8 +1239,7 @@ function OptionsPanel.new(context)
   -- --- refresh -------------------------------------------------------------
 
   -- Every control is set from the live settings, not from what it was built
-  -- with: the chat commands change the same values, and a panel showing a stale
-  -- snapshot is worse than one that is merely plain.
+  -- with: the chat commands change the same values.
   function view.refresh()
     refreshing = true
     local settings = currentSettings()
@@ -1414,10 +1306,9 @@ function OptionsPanel.new(context)
       view.fieldsNote:Hide()
     end
 
-    -- The slot, and what it costs. Suspended controls are DISABLED rather than
-    -- hidden: a control that vanishes reads as a bug, and one that is greyed out
-    -- with a sentence under it reads as a consequence (the spec's "suspended, and
-    -- not broken").
+    -- The slot, and what it suspends. Suspended controls are disabled, not
+    -- hidden: a vanished control reads as a bug, a greyed-out one with a
+    -- sentence under it as a consequence.
     local slot = settings[SettingKey.BAR_SLOT]
     local suspended = BarSlotPolicy.suspends(slot)
     if view.slotDropdown ~= nil then
@@ -1433,13 +1324,13 @@ function OptionsPanel.new(context)
     else
       view.widthSlider:Enable()
       view.heightSlider:Enable()
-      -- Emptied as well as hidden: a hidden font string keeps the height of the
-      -- text it last held, and everything below it is anchored to this one.
+      -- Emptied as well as hidden: a hidden font string keeps the height of its
+      -- last text, and everything below is anchored to this one.
       view.slotNote:SetText("")
       view.slotNote:Hide()
     end
-    -- The other reason a slot does nothing, and the one the player cannot see
-    -- from the bar: the client has no such bar to take over (D49).
+    -- The other reason a slot does nothing, invisible from the bar: the client
+    -- has no such bar to take over.
     if BarSlotPolicy.active(slot) and clientBarPresent ~= nil and not clientBarPresent() then
       view.slotNote:SetText(locale:get(TextKey.OPT_SLOT_UNAVAILABLE))
       view.slotNote:Show()
@@ -1449,11 +1340,9 @@ function OptionsPanel.new(context)
     else
       view.lockedCheck:Enable()
     end
-    -- Where the text goes, suspended the same way and for a reason the player can
-    -- see from the bar itself: in the client's slot there is no outside to put it
-    -- on, only the client's interface. Found by its path rather than held in a
-    -- field of its own, so adding or reordering a cycle cannot leave this
-    -- pointing at the wrong button.
+    -- The text anchor is suspended the same way: in the client's slot there is
+    -- no outside to put text on, only the client's interface. Found by path, so
+    -- adding or reordering a cycle cannot point this at the wrong button.
     for _, entry in ipairs(view.cycles or {}) do
       local path = entry.cycle.path
       if path[1] == "text" and path[2] == "anchor" then
@@ -1476,11 +1365,9 @@ function OptionsPanel.new(context)
     view.debugCheck:SetChecked(settings[SettingKey.DEBUG])
     view.updateCheck:SetChecked(settings[SettingKey.UPDATE_CHECK])
 
-    -- The plate's page. Every control of it written from the live settings, like
-    -- everything above: the refresh is shared by all seven pages and a control
-    -- left out of it shows stale state with no error -- which matters more here
-    -- than anywhere else, because the plate's settings are the ones a chat
-    -- command is most likely to have changed while the panel was open.
+    -- The plate's page, also from the live settings: a control left out of this
+    -- shared refresh shows stale state with no error, and chat commands often
+    -- change the plate's settings while the panel is open.
     view.plateEnabledCheck:SetChecked(settings[SettingKey.PLATE_ENABLED])
     view.plateLockedCheck:SetChecked(settings[SettingKey.PLATE_LOCKED])
     view.plateScaleSlider:SetValue(settings[SettingKey.PLATE_SCALE])
@@ -1489,9 +1376,8 @@ function OptionsPanel.new(context)
     view.plateHoldSlider:SetValue(settings[SettingKey.PLATE_HOLD_SECONDS])
     view.plateRowsSlider:SetValue(settings[SettingKey.PLATE_ROWS])
 
-    -- Asked of the layout service rather than scanned here: it already answers
-    -- which zones are drawn as a lookup, and a second reading of the same list
-    -- would be free to disagree with the one the plate lays itself out from.
+    -- Asked of the layout service, which returns the drawn zones as a lookup,
+    -- so the checkboxes agree with what the plate lays out.
     local chosenZones = settings[SettingKey.PLATE_ZONES]
     local _, drawnZones = PlateLayout.zones(chosenZones)
     for _, entry in ipairs(view.plateZoneChecks) do
@@ -1501,18 +1387,16 @@ function OptionsPanel.new(context)
       view.plateZonesNote:SetText(locale:get(TextKey.OPT_PLATE_ZONES_NONE))
       view.plateZonesNote:Show()
     else
-      -- Emptied as well as hidden: a hidden font string keeps the height of the
-      -- text it last held, and the section below is anchored to this one.
+      -- Emptied as well as hidden: a hidden font string keeps the height of its
+      -- last text, and the section below is anchored to this one.
       view.plateZonesNote:SetText("")
       view.plateZonesNote:Hide()
     end
 
     for _, entry in ipairs(view.plateAxes) do
       entry.slider:SetValue(plateAxisValue(entry.spec))
-      -- On screen only while the axis really is the player's, read off the
-      -- override map and never off the resolved appearance -- which has a value
-      -- for every axis, that being what resolving means, and so cannot tell an
-      -- inherited one from a chosen one.
+      -- Shown only while the axis is the player's, read from the override map:
+      -- the resolved appearance has a value for every axis.
       if hasOverride(SettingKey.PLATE_APPEARANCE, entry.spec.path) then
         entry.reset:Show()
       else
@@ -1522,14 +1406,10 @@ function OptionsPanel.new(context)
     refreshing = false
   end
 
-  -- Reachable from outside, because the panel is not the only thing that writes
-  -- these settings: a chat command, or the addon declining a slot the client
-  -- cannot honour, changes them under an open panel. Without this the panel went
-  -- on showing what it was built with until it was closed and reopened.
-  -- Every page refreshes the whole view rather than only its own controls. They
-  -- share one settings table and one preview, a page is only ever shown one at a
-  -- time, and a refresh is cheap; a per-page refresh would be six functions that
-  -- have to stay in step with which control lives where.
+  -- Reachable from outside: a chat command, or the addon declining a slot the
+  -- client cannot honour, changes these settings under an open panel.
+  -- Every page refreshes the whole view: the pages share one settings table and
+  -- one preview, only one is shown at a time, and a refresh is cheap.
   for _, page in ipairs(pages) do
     page.frame.refresh = view.refresh
     page.frame:SetScript("OnShow", view.refresh)

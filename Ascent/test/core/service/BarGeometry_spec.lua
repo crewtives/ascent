@@ -1,5 +1,4 @@
--- The property under test is the one that makes a multi-segment bar possible at
--- all: whatever the fractions are, the pieces tile the bar exactly -- no gap, no
+-- Whatever the fractions are, the pieces tile the bar exactly: no gap, no
 -- overlap, and no total that drifts away from the percentage it represents.
 
 describe("BarGeometry", function()
@@ -107,9 +106,8 @@ describe("BarGeometry", function()
     end)
 
     it("reports the ones it could not rescue instead of inventing width", function()
-      -- Eighty pixels, five sources, every one of them sub-pixel: there is no
-      -- donor wide enough, and pretending otherwise would be a lie about the
-      -- level's percentage.
+      -- Eighty pixels, five sources, every one of them sub-pixel: no donor is
+      -- wide enough, and inventing width would misstate the level's percentage.
       local shares = { 0.001, 0.001, 0.001, 0.001, 0.001 }
       local layout = BarGeometry.lay(cumulative(shares), 80)
 
@@ -132,8 +130,8 @@ describe("BarGeometry", function()
       end
     end)
   end)
-  -- D52: the bar that takes over the client's slot inherits a height much
-  -- smaller than its own default, and the text has to leave the frame on its own.
+  -- The bar that takes over the client's slot inherits a height much smaller
+  -- than its own default, and the text has to leave the frame on its own.
   describe("text inside the bar", function()
     it("fits at the bar's own default height", function()
       assert.is_true(BarGeometry.textFitsInside(24, 11))

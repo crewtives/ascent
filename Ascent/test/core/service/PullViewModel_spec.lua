@@ -17,12 +17,11 @@ describe("PullViewModel", function()
   local function levelWith(entries)
     local record = ns.core.LevelRecord.new(11, 0)
     for index, entry in ipairs(entries) do
-      -- The bucket shape XpLedger writes: { key, sharedBy, kills, xpTotal },
-      -- filed under the creature and the group it was killed in. Built by hand
-      -- rather than by driving the ledger, so a change in how experience is
-      -- POSTED cannot quietly rewrite what this test is asserting about how it is
-      -- READ. An entry with no group size is one nobody counted, which is a
-      -- population of its own and not a record of playing alone.
+      -- The bucket shape XpLedger writes, { key, sharedBy, kills, xpTotal },
+      -- filed under the creature and its group. Built by hand so a change in
+      -- how experience is posted cannot rewrite what this asserts about how it
+      -- is read. No group size means nobody counted: its own population, not
+      -- playing alone.
       local key = ns.core.CreatureKey.new(entry.npcId or index, entry.level or 10, entry.name)
       record.creatures[ns.core.LevelRecord.creatureId(key, entry.sharedBy)] =
         { key = key, sharedBy = entry.sharedBy, kills = entry.kills, xpTotal = entry.xpTotal }
@@ -69,10 +68,9 @@ describe("PullViewModel", function()
       assert.equal(before, PullViewModel.build(pull, PullPhase.ACTIVE, 5, level).projection.total)
     end)
 
-    -- The defect this replaces: the estimate used to cover only what was still
-    -- standing, so it vanished the instant the last target fell -- which in
-    -- Classic is exactly when the experience has not arrived yet. The headline
-    -- dropped to the banked zero and reported a won fight as worth nothing.
+    -- In Classic the experience arrives after the last target falls, so an
+    -- estimate covering only what is still standing would drop the headline to
+    -- the banked zero and report a won fight as worth nothing.
     it("still answers once everything is dead and the experience has not landed", function()
       local level = levelWith({ { name = "Mana Serpent", kills = 2, xpTotal = 172 } })
       local pull = PullRecord.new(0)
@@ -101,8 +99,8 @@ describe("PullViewModel", function()
       assert.is_false(view.projection.estimated)
     end)
 
-    -- D4: the level's own mean is a much wider number than a creature's own, and
-    -- the answer has to say which one it is.
+    -- The level's own mean is a much wider number than a creature's own, and the
+    -- answer has to say which one it is.
     it("falls back to the level average and marks it as the wider one", function()
       local level = levelWith({ { name = "Kobold Miner", kills = 4, xpTotal = 200 } })
       local pull = PullRecord.new(0)
@@ -126,11 +124,10 @@ describe("PullViewModel", function()
         "a sum is only as sure as its least sure term")
     end)
 
-    -- 2.4: the plate asks for the group standing in the pull, and that is the
-    -- whole reason the size is carried at all. The same creature pays a fraction
-    -- of its solo rate once four other people are splitting it, so a plate that
-    -- kept quoting the solo figure inside a dungeon would be wrong by roughly the
-    -- size of the group -- with confidence, which is the worst way to be wrong.
+    -- The plate asks for the group standing in the pull. The same creature pays a
+    -- fraction of its solo rate once four other people are splitting it, so
+    -- quoting the solo figure inside a dungeon would be wrong by roughly the size
+    -- of the group.
     it("prices the pull for the group of now, not for the one that did the killing", function()
       local level = levelWith({
         { npcId = 17204, name = "Mana Serpent", kills = 2, xpTotal = 172, sharedBy = 1 },
@@ -148,9 +145,8 @@ describe("PullViewModel", function()
       assert.equal(Basis.CREATURE, alone.projection.basis)
     end)
 
-    -- D83/D84: a level recorded before any of this still prices the pull, because
-    -- discarding it would leave the plate blank over a distinction the character
-    -- never had the chance to record -- but it is marked, never passed off as a
+    -- A level saved before group sizes were counted still prices the pull rather
+    -- than leave the plate blank, but it is marked, never passed off as a
     -- measurement of the group fighting now.
     it("serves an average from before the distinction existed, marked as mixed", function()
       local level = levelWith({ { name = "Mana Serpent", kills = 2, xpTotal = 172 } })
@@ -163,12 +159,10 @@ describe("PullViewModel", function()
       assert.equal(Basis.MIXED, view.projection.basis)
     end)
 
-    -- Both halves of the same pull, with the roles swapped: the creature measured
-    -- in this group is the first one read in one of the two and the last in the
-    -- other, whatever order `pairs` happens to use. A plate that simply kept the
-    -- last term it read would therefore claim a measurement on one of them --
-    -- which is what "least sure" has to mean now that there are three values and
-    -- not two.
+    -- Two pulls with the roles swapped: the creature measured in this group is
+    -- read first in one and last in the other, whatever order `pairs` uses, so a
+    -- plate that kept the last term it read would claim a measurement on one of
+    -- them.
     it("keeps the least sure of its terms, whichever one it reads last", function()
       local serpent = { npcId = 1, name = "Mana Serpent", kills = 2, xpTotal = 172 }
       local lynx = { npcId = 2, name = "Springpaw Lynx", kills = 2, xpTotal = 40 }
@@ -256,9 +250,9 @@ describe("PullViewModel", function()
       assert.equal(XpSource.UNKNOWN, view.sources[3].source)
     end)
 
-    -- The defect these hold: the bar and the rate read the BANKED total while the
-    -- headline read the forecast, so a plate saying "73 XP" sat above an empty
-    -- bar and "0 xp/h" for the whole of every fight.
+    -- The bar and the rate read the forecast like the headline does: reading the
+    -- banked total would put a plate saying "73 XP" above an empty bar and
+    -- "0 xp/h" for the whole of every fight.
     it("shows the forecast as a slice of its own while nothing has been paid", function()
       local level = levelWith({ { name = "Mana Serpent", kills = 1, xpTotal = 86 } })
       local pull = PullRecord.new(0)
@@ -342,11 +336,11 @@ describe("PullViewModel", function()
       assert.equal("Creature 3", view.creatures[4].name)
     end)
 
-    -- How many rows there are is the player's now, and it is asked for on every
-    -- build rather than captured: the plate is redrawn many times inside one
-    -- fight, so a number read at construction would only take effect on the next
-    -- one. The rows themselves already exist up to the ceiling (see ROW_CEILING);
-    -- this decides how many of them have anything in them.
+    -- The row count is the player's, asked for on every build rather than
+    -- captured: the plate is redrawn many times inside one fight, and a number
+    -- read at construction would only take effect on the next one. The rows
+    -- already exist up to ROW_CEILING; this decides how many have anything in
+    -- them.
     it("cuts the list to the number of rows asked for", function()
       local pull = PullRecord.new(0)
       for index = 1, 6 do
@@ -385,8 +379,8 @@ describe("PullViewModel", function()
         PullViewModel.ROW_CEILING)
     end)
 
-    -- The whole point of the engaged half: this list is not empty during the
-    -- first fight, which is when someone is actually looking at it.
+    -- The engaged half keeps this list from being empty during the first fight,
+    -- which is when someone is actually looking at it.
     it("lists what is being fought before anything has died", function()
       local pull = PullRecord.new(0)
       pull:recordDamageDealt(40, "Mana Serpent", "guid-a")
@@ -447,7 +441,7 @@ describe("PullViewModel", function()
     assert.equal(1752, view.abilities[1].key)
     assert.equal(9, view.abilities[1].count)
     assert.equal(2098, view.abilities[2].key)
-    -- Both reserved keys survive as SEPARATE entries. They are two different
+    -- Both reserved keys survive as separate entries. They are two different
     -- attacks and the plate names them apart; a ranking that folded them together
     -- would make that impossible downstream.
     assert.is_true(view.abilities[3].isAutoAttack)

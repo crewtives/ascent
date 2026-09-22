@@ -1,6 +1,4 @@
--- The changelog as the player reads it. The case with no entries is the one worth
--- a test: an empty window and "this build carries no changelog" look identical
--- from the code and completely different from the chair.
+-- The changelog as the player reads it.
 
 describe("ChangelogText", function()
   local ChangelogText

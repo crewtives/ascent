@@ -56,9 +56,9 @@ describe("the shipped classifiers", function()
       assert.equal(1234, classification.payload.questId)
     end)
 
-    -- The system echo announces the same turn-in without the id, so it has to be
-    -- offered the delta second; otherwise the gain would be attributed correctly and
-    -- still lose the identifier the spec requires it to keep.
+    -- The system echo announces the same turn-in without the id, so it has to
+    -- be offered the delta second; otherwise the gain would be attributed
+    -- correctly and still lose its quest id.
     it("outranks the system echo of the same turn-in", function()
       local event = classify({ kind = XpHintKind.QUEST_TURNED_IN, amount = 250, at = 10, questId = 1 })
       local echo = classify({ kind = XpHintKind.QUEST_MESSAGE, amount = 250, at = 10 })

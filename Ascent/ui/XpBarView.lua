@@ -1,33 +1,28 @@
--- Ascent - the experience bar (tasks 10.2, 10.4, 10.5, 10.7; 3.3, 3.6-3.9, 4.5-4.7).
+-- Ascent - the experience bar.
 --
--- This file is the COMPOSITOR. Everything that makes the bar a bar rather than a
--- picture of one lives here: where it sits, whether it can be dragged, what it
--- says, when it hides, and the two clocks that drive it. What it does NOT do is
--- paint -- ui/BarRenderer.lua does that, from a resolved appearance and a vector
--- of boundaries, and knows nothing about any of the above.
+-- The compositor: where the bar sits, dragging, its text, when it hides, and
+-- the two clocks that drive it. Painting is BarRenderer's, which knows none of
+-- this, so the options panel's preview is a renderer with no compositor and
+-- cannot move, persist or hide the real bar.
 --
--- That split is design D34, and its reason is concrete: the options panel has to
--- show a live preview of a skin, and a preview must not be able to move the real
--- bar, persist its position, or hide itself because the player happens to be at
--- max level. A preview is a renderer with no compositor around it.
+-- Two clocks. The data clock runs at 5 Hz: update() rebuilds the view-model,
+-- recomposes the text and sets where the bar should end up. The presentation
+-- clock runs every frame: tick() interpolates towards that target without
+-- allocating, and stops once everything has arrived, so a bar at rest costs
+-- nothing.
 --
--- TWO CLOCKS, and this is D24's amendment to D7. The data clock still runs at
--- 5 Hz: update() rebuilds the view-model, recomposes the text, and states where
--- the bar should END UP. The presentation clock runs every frame: tick() moves
--- the geometry towards that target and repaints. The second one does no
--- allocation and no view-model work -- it interpolates numbers that are already
--- computed -- and it stops entirely once everything has arrived, so a bar at
--- rest costs nothing.
---
--- The bar never touches SavedVariables. It is handed an already-resolved
--- `settings` table and a `saveSetting(key, value)` callback for the handful of
--- things it persists on its own: position, lock state, scale.
+-- The bar never touches SavedVariables: it gets a resolved `settings` table and
+-- a `saveSetting(key, value)` callback for position, lock state and scale.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
 
 local SettingKey = ns.core.SettingKey
 local XpSource = ns.core.XpSource
+-- The sentence for what a level was recorded without, shared with the panel and
+-- the chat summary so the three say it the same way.
+local UnavailableText = ns.core.UnavailableText
+local RecordedSource = ns.core.RecordedSource
 local PlaceContext = ns.core.PlaceContext
 local TextKey = ns.core.TextKey
 local TextAnchor = ns.core.TextAnchor
@@ -45,10 +40,8 @@ local BarRenderer = ns.ui.BarRenderer
 local BarGeometry = ns.core.BarGeometry
 local BarSlotPolicy = ns.core.BarSlotPolicy
 
--- Tooltip labels, one per source -- TextKey values, not text: the label itself
--- is resolved through `self.locale` at the point of use. The same four keys back
--- the panel and the /ascent summary, which is why they live in core/constants,
--- not here.
+-- Tooltip labels, one per source: TextKey values resolved through `self.locale`
+-- at the point of use. The same keys back the panel and the /ascent summary.
 local SOURCE_LABEL = {
   [XpSource.MOB_KILL] = TextKey.SOURCE_CREATURES,
   [XpSource.QUEST_TURNIN] = TextKey.SOURCE_QUESTS,
@@ -56,9 +49,8 @@ local SOURCE_LABEL = {
   [XpSource.UNKNOWN] = TextKey.SOURCE_UNCLASSIFIED,
 }
 
--- The same six nouns the panel uses for a kind of place, for the same reason the
--- four source labels above are shared: the bar and the panel must not learn to
--- call the same thing by two names.
+-- The same nouns the panel uses for a kind of place, so the bar and the panel
+-- never name one thing two ways.
 local PLACE_LABEL = {
   [PlaceContext.WORLD] = TextKey.PLACE_WORLD,
   [PlaceContext.DUNGEON] = TextKey.PLACE_DUNGEON,
@@ -72,10 +64,9 @@ local PLACE_LABEL = {
 -- whether the composed text fits inside it.
 local TEXT_PADDING = 8
 
--- How far off the visible screen a saved position is allowed to be before it is
--- pulled back. Not zero: a player may legitimately want the bar half off the
--- edge. Small enough that a bar saved on a monitor that no longer exists always
--- comes back within reach.
+-- How far off the visible screen a saved position may be before it is pulled
+-- back. Not zero, so the bar can sit half off an edge; small enough that a bar
+-- saved on a monitor that is gone comes back within reach.
 local OFFSCREEN_MARGIN = 40
 
 -- ---------------------------------------------------------------------------
@@ -83,13 +74,10 @@ local OFFSCREEN_MARGIN = 40
 -- isolation.
 -- ---------------------------------------------------------------------------
 
--- `update`'s params argument is the same bag XpBarViewModel.build reads
--- (restedXp, questPending, showQuestPending) plus whatever the caller wants
--- forwarded into the bar's text (see buildTextValues below) -- XpBarViewModel
--- ignores keys it does not know about, so passing the same table to both is
--- safe. The one thing resolved here is `showQuestPending`: when the caller
--- does not pass it explicitly, it defaults to the player's own preference
--- instead of leaving the view-model to decide with no opinion at all.
+-- `update`'s params are the bag XpBarViewModel.build reads (restedXp,
+-- questPending, showQuestPending) plus the values forwarded into the bar's text
+-- (buildTextValues); XpBarViewModel ignores unknown keys, so one table serves
+-- both. `showQuestPending` defaults to the player's setting when not passed.
 local function resolveParams(params, settings)
   local resolved = {}
   if params ~= nil then
@@ -103,13 +91,11 @@ local function resolveParams(params, settings)
   return resolved
 end
 
--- The values XpBarText.format needs, built from whatever this module actually
--- has on hand. A field with no caller to supply it arrives nil, and XpBarText
--- renders a nil as its not-available marker rather than a fabricated number.
--- xpCurrent/xpRemaining read viewModel.xpTotal, not record.xpTotal directly: it
--- already folds in what the client confirmed but XpAttribution has not yet
--- settled into a source (D21), which is what lets the number on the bar move
--- within one redraw tick of a kill instead of lagging behind it.
+-- The values XpBarText.format needs. A field no caller supplies arrives nil,
+-- and XpBarText renders nil as its not-available marker, never a made-up number.
+-- xpCurrent/xpRemaining read viewModel.xpTotal, not record.xpTotal: it includes
+-- experience the client confirmed but XpAttribution has not yet assigned to a
+-- source, so the number moves within one redraw tick of a kill.
 local function buildTextValues(record, viewModel, params)
   return {
     level = record.level,
@@ -139,14 +125,12 @@ local XpBarView = {}
 XpBarView.__index = XpBarView
 
 -- ---------------------------------------------------------------------------
--- Construction and appearance (3.3, 3.6)
+-- Construction and appearance
 -- ---------------------------------------------------------------------------
 
--- Pulled back inside the visible screen when the saved position would put it out
--- of reach (task 3.9). The failure this prevents is not hypothetical: the
--- position is re-applied on every login, so a bar saved on a monitor that is no
--- longer attached stays unreachable forever, and the player cannot drag what
--- they cannot see.
+-- Pulled back inside the visible screen when the saved position is out of
+-- reach: the position is re-applied on every login, so a bar saved on a
+-- detached monitor would otherwise stay where it cannot be dragged back.
 function XpBarView:clampedPosition(position)
   local width, height = UIParent:GetWidth(), UIParent:GetHeight()
   if type(width) ~= "number" or type(height) ~= "number" or width <= 0 then
@@ -166,38 +150,30 @@ function XpBarView:clampedPosition(position)
 end
 
 function XpBarView:applySavedPosition()
-  -- Suspended, not forgotten: while the bar sits in the client's slot the saved
-  -- position stays on disk untouched and this simply declines to apply it. That
-  -- is what makes turning the slot off a complete undo (D50).
+  -- While the bar sits in the client's slot the saved position stays on disk
+  -- untouched and is not applied, so turning the slot off is a complete undo.
   if self.slotFrame ~= nil then
     return
   end
-  -- No "is there one saved?" branch: the resolved settings table always carries
-  -- a complete position, because BAR_POSITION's default declares its shape and
-  -- Settings.resolve completes a stored one key by key (Settings.lua).
+  -- No "is one saved?" branch: BAR_POSITION's default declares its shape and
+  -- Settings.resolve completes a stored one key by key, so it is always whole.
   local position = self:clampedPosition(self.settings[SettingKey.BAR_POSITION])
   self.frame:ClearAllPoints()
   self.frame:SetPoint(position.point, UIParent, position.point, position.x, position.y)
 end
 
 -- ---------------------------------------------------------------------------
--- The client's slot (D47, D48, D50, D52)
+-- The client's slot
 -- ---------------------------------------------------------------------------
 
--- The width and height the bar actually has, which is not the same question as
--- what the player configured. Anchored to the client's bar, the settings are
--- suspended and the real measure is the frame's own -- and it is the frame's,
--- not the client frame's, because the two may be at different scales and the
--- anchor resolves that between them.
--- Asked of the slot every time, never remembered.
+-- The width and height the bar actually has, not what the player configured.
+-- Anchored to the client's bar, the settings are suspended and the measure is
+-- this frame's own, not the client frame's: the two may differ in scale, and
+-- the anchor resolves that between them.
 --
--- A remembered measure is a copy, and D47 is about not keeping one: the whole
--- reason the bar anchors instead of copying coordinates is that a copy goes stale
--- and nobody notices until it is painted. The cached width did exactly that --
--- change any visual setting and the bar repainted from the last measure rather
--- than the current one, drawing itself across the client's frame.
---
--- Reading it costs two calls on a settings change and none on a redraw.
+-- Asked of the slot every time, never cached: a remembered measure goes stale,
+-- and a repaint from it draws the bar across the client's frame. It costs two
+-- calls on a settings change and none on a redraw.
 function XpBarView:barWidth()
   if self.slotFrame ~= nil then
     local width = self:slotSize(self.slotFrame)
@@ -218,18 +194,15 @@ function XpBarView:barHeight()
   return self.settings[SettingKey.BAR_HEIGHT]
 end
 
--- Anchoring rather than copying the geometry over: the four things that can move
--- the client's bar -- interface scale, resolution, the player, another addon --
--- are then not four events to get right but none at all (D47).
+-- Anchored rather than copying geometry, so interface scale, resolution, the
+-- player or another addon moving the client's bar needs no event handling.
 --
--- Position and size only. Not visibility: the client hides its own bar on its own
--- schedule, and inheriting that would put this bar's showing and hiding in the
--- client's hands instead of the player's (D48).
+-- Position and size only, not visibility: the client hides its own bar on its
+-- own schedule, and this bar's showing and hiding belongs to the player.
 --
--- Depth too, and for the same reason as position: a copy goes stale. Which slot
--- the player chose decides whether the client's frame art draws over this bar or
--- under it (BarSlotPolicy.depth), and that has to be said out loud on every
--- attach -- see applyDepth.
+-- Depth is re-stated on every attach, since a copy goes stale: the chosen slot
+-- decides whether the client's frame art draws over this bar or under it
+-- (BarSlotPolicy.depth, applyDepth).
 function XpBarView:attachTo(clientFrame, slot)
   if clientFrame == nil then
     return self
@@ -246,31 +219,25 @@ function XpBarView:attachTo(clientFrame, slot)
     end)
   end
 
-  -- Re-measured even when the frame was already the one we were on: the player
-  -- can move between the two active slots without passing through off, and an
-  -- early return there left the bar showing whatever it last measured.
+  -- Re-measured even on the same frame: the player can switch between the two
+  -- active slots without passing through off.
   self:applyDepth(clientFrame, slot)
   self:inheritSize()
   return self
 end
 
--- Where the bar sits in the drawing order while it stands in the client's slot:
--- the client frame's own strata, and the level the chosen slot asks for.
+-- Where the bar sits in the drawing order while in the client's slot: the
+-- client frame's strata, and the level the chosen slot asks for.
 --
--- Re-applied on every attach rather than once when the frame changes, because the
--- level is the client's to move and it moves it without telling anyone -- a
--- loading screen, its own layout pass, another addon. Attaching already runs at
--- each of those moments (Bootstrap re-applies the slot on PLAYER_ENTERING_WORLD
--- and on every settings change), so a depth stated here is a depth that survives
--- them; a depth stated once is the bug the player reported, where the bar spent
--- an evening inside the client's frame and then started painting over it.
+-- Re-applied on every attach, not once per frame change: the client moves the
+-- level silently (a loading screen, its own layout pass, another addon), and
+-- Bootstrap re-attaches on PLAYER_ENTERING_WORLD and every settings change. A
+-- depth set once ends up with the bar painting over the client's frame art.
 --
--- Every call is guarded: the frame arrives from _G by name (adapter/compat), and
--- a name another addon has taken for something else must cost the depth, not the
--- bar.
--- Each half written as "set it only if it is not already that", because this runs
--- on the data tick as well as on every attach (see holdDepth): the reads are two
--- numbers the client already has, and the writes are what a frame notices.
+-- Every call is guarded: the frame comes from _G by name, and a name another
+-- addon took must cost the depth, not the bar. Each value is written only when
+-- it differs, because this also runs on the data tick (holdDepth): the reads
+-- are cheap, the writes are what a frame notices.
 function XpBarView:applyDepth(clientFrame, slot)
   if clientFrame.GetFrameStrata ~= nil then
     local strata = clientFrame:GetFrameStrata()
@@ -282,11 +249,9 @@ function XpBarView:applyDepth(clientFrame, slot)
     return self
   end
   local level = BarSlotPolicy.depth(slot, clientFrame:GetFrameLevel(), self:slotFloor(clientFrame))
-  -- Kept so the diagnostic can print what was ASKED FOR beside what the frame
-  -- reads back. They are not the same question, and a client that quietly refuses
-  -- a level -- or something that moves it afterwards -- looks exactly like a rule
-  -- that computed the wrong number. Five rounds of screenshots could not tell
-  -- those two apart.
+  -- Kept so the diagnostic prints the level asked for beside the one the frame
+  -- reads back: a client that refuses a level, or something that moves it later,
+  -- otherwise looks exactly like a rule that computed the wrong number.
   self.wantedLevel = level
   if level ~= nil and self.frame:GetFrameLevel() ~= level then
     self.frame:SetFrameLevel(level)
@@ -294,22 +259,18 @@ function XpBarView:applyDepth(clientFrame, slot)
   return self
 end
 
--- How many frames up the client's own chain to look for the floor. The art that
--- has to stay on top belongs to the anchor's parent, and four is room for a
--- client that nests one or two deeper than that without walking to UIParent and
--- back on a tick.
+-- How many frames up the client's chain to look for the floor. The art that
+-- must stay on top belongs to the anchor's parent; four leaves room for a
+-- client that nests one or two deeper without walking to UIParent on a tick.
 local SLOT_CHAIN = 4
 
 -- The lowest level among the client frames whose art must draw over this bar:
--- the anchor and the frames it hangs from, which is where the bar's own frame art
--- actually lives (BarSlotPolicy.depth says why the anchor alone is not it).
+-- the anchor and the frames it hangs from, where the client bar's frame art
+-- lives (BarSlotPolicy.depth says why the anchor alone is not enough).
 --
--- Only ancestors in the SAME strata are considered. A frame in another strata is
--- not competing on level at all, and folding its number in here would answer a
--- question nobody asked -- and could drag the bar below a strata it belongs in.
---
--- Nil when the chain says nothing useful, which leaves the rule to fall back on
--- the anchor's own level rather than on a number invented here.
+-- Only ancestors in the same strata count: a frame in another strata does not
+-- compete on level, and its number could drag the bar below where it belongs.
+-- Nil when the chain says nothing, so the rule falls back on the anchor's level.
 function XpBarView:slotFloor(clientFrame)
   if clientFrame.GetParent == nil or clientFrame.GetFrameStrata == nil then
     return nil
@@ -326,8 +287,8 @@ function XpBarView:slotFloor(clientFrame)
         floor = level
       end
     end
-    -- UIParent is everyone's ancestor and its level says nothing about the art
-    -- around the client's bar, so the walk stops there rather than at it.
+    -- UIParent is everyone's ancestor and says nothing about the art around the
+    -- client's bar, so the walk ends there.
     if frame == UIParent or frame.GetParent == nil then
       break
     end
@@ -336,19 +297,13 @@ function XpBarView:slotFloor(clientFrame)
   return floor
 end
 
--- The depth, held rather than announced once.
+-- The depth, held rather than set once.
 --
--- Stating it on every attach is not enough and the player found the gap by using
--- the addon: the moments Ascent re-applies the slot are its own, and the client
--- re-lays its main bar out in moments that are the CLIENT's -- closing a settings
--- panel is one of them, which is why "I change the config and it covers the frame"
--- was the report. Whatever Ascent set a moment earlier is stale by then, and
--- nothing was watching.
---
--- So the slot's depth is asked the same way the slot's size is (barWidth): every
--- time, never remembered. On the 5 Hz data tick rather than the per-frame one,
--- because the client does not move a frame's level between two frames of
--- animation -- and at rest the tick is not running at all.
+-- Re-applying on attach is not enough: the client re-lays its main bar out at
+-- moments of its own, closing its settings panel among them, and the depth set
+-- earlier is stale by then. So it is re-applied on the 5 Hz data tick, like the
+-- slot's size (barWidth); not per frame, since the client does not move a
+-- level between two frames of animation.
 function XpBarView:holdDepth()
   if self.slotFrame == nil then
     return self
@@ -358,14 +313,10 @@ end
 
 -- The slot's measure, in this frame's coordinates.
 --
--- Read from the CLIENT's frame, not from ours. Ours has just been anchored to it
--- and the client has not laid it out yet, so asking ours answers with the size
--- the bar had before the slot -- one frame painted at the old width, corrected on
--- the next layout pass. That is the blink, and it is avoidable by asking the
--- frame that already knows.
---
--- Scaled, because the two frames need not be at the same scale: anchoring makes
--- them cover the same screen area, which is a different number of points each.
+-- Read from the client's frame, not ours: ours was just anchored and is not laid
+-- out yet, so it would answer with the pre-slot size and paint one frame at the
+-- old width. Scaled by GetEffectiveScale, because the two frames may differ in
+-- scale: they cover the same screen area in different numbers of points.
 function XpBarView:slotSize(clientFrame)
   local width, height = clientFrame:GetWidth(), clientFrame:GetHeight()
   local theirs, ours = clientFrame:GetEffectiveScale(), self.frame:GetEffectiveScale()
@@ -375,9 +326,9 @@ function XpBarView:slotSize(clientFrame)
   return width * theirs / ours, height * theirs / ours
 end
 
--- Where the bar draws, for the diagnostic to print next to the client's own rows.
--- Asked of the frame rather than remembered, for the same reason the slot's
--- measure is: what this addon last SET is not what the drawing order IS.
+-- Where the bar draws, for the diagnostic to print next to the client's rows.
+-- Asked of the frame, not remembered: what was last set is not necessarily
+-- what the drawing order is.
 function XpBarView:depth()
   if self.frame.GetFrameStrata == nil or self.frame.GetFrameLevel == nil then
     return nil, nil
@@ -385,9 +336,8 @@ function XpBarView:depth()
   return self.frame:GetFrameStrata(), self.frame:GetFrameLevel(), self.wantedLevel
 end
 
--- Back to the bar the player had. Nothing to undo in the settings, because
--- nothing was ever written over them (D50) -- the saved position and size were
--- only suspended, and reapplying them is the whole of it.
+-- Back to the bar the player had. Nothing in the settings was overwritten, so
+-- reapplying the saved position and size is all it takes.
 function XpBarView:detach()
   if self.slotFrame == nil then
     return self
@@ -403,25 +353,21 @@ function XpBarView:detach()
     self.frame:SetFrameLevel(self.freeLevel)
   end
   self.appearance = self:resolveAppearance()
-  -- Position FIRST, then size, and the order is the whole of it. While the slot
-  -- lasted the frame was held by SetAllPoints on the client's, which pins both
-  -- corners -- and a frame pinned at both corners ignores SetSize. Sizing before
-  -- releasing those anchors therefore did nothing at all, and the bar came back
-  -- from the slot wearing the client's width. applySavedPosition is what releases
-  -- them, so it has to happen before there is a size to apply.
+  -- Position first, then size. In the slot the frame was held by SetAllPoints
+  -- on the client's, which pins both corners, and a frame pinned at both corners
+  -- ignores SetSize. applySavedPosition releases those anchors, so sizing before
+  -- it would leave the bar at the client's width.
   self:applySavedPosition()
   self.renderer:setSize(self.settings[SettingKey.BAR_WIDTH], self.settings[SettingKey.BAR_HEIGHT])
   self.renderer:applyAppearance(self.appearance)
   return self
 end
 
--- The measure arrives from the frame rather than from a setting while the slot
--- lasts. Guarded against the zero the client reports for a frame it has not laid
--- out yet: a renderer sized zero is a bar that exists and occupies nothing.
--- The slot changed shape, so repaint at what it measures now. Takes no
--- measurements from its caller: the client hands OnSizeChanged the frame's new
--- size, and taking that would be keeping a copy again -- by the time it is used
--- the only number that matters is what the slot reads at that moment.
+-- The slot changed shape: repaint at what it measures now. In the slot the
+-- measure comes from the frame, not a setting, and a zero (a frame the client
+-- has not laid out yet) is ignored, since a renderer sized zero draws nothing.
+-- It ignores the size OnSizeChanged passes and asks the slot at the moment of
+-- use, rather than keeping a copy.
 function XpBarView:inheritSize()
   local width, height = self:barWidth(), self:barHeight()
   if type(width) ~= "number" or width <= 0 or type(height) ~= "number" or height <= 0 then
@@ -438,9 +384,9 @@ function XpBarView:inheritSize()
   return self
 end
 
--- The appearance the renderer paints: the chosen skin, the player's own tweaks
--- on top, and the palette. Resolved in core/ and handed over whole, so this file
--- has no idea which skin it is showing (design D27).
+-- The appearance the renderer paints: the chosen skin, the player's tweaks on
+-- top, and the palette. Resolved in core/ and handed over whole, so this file
+-- never knows which skin it shows.
 function XpBarView:resolveAppearance()
   local options = {
     skin = SkinResolver.skinFor(SkinCatalog, self.settings[SettingKey.BAR_SKIN], ns.core.DEFAULT_SKIN_ID),
@@ -458,10 +404,8 @@ function XpBarView:resolveAppearance()
 
   local wanted = text.anchor
 
-  -- In the client's slot there is no text to place: the bar shows none and the
-  -- readout lives in the tooltip (see showText). So nothing here reconsiders the
-  -- anchor -- the player's choice is suspended, not overruled, and it is waiting
-  -- exactly as they left it for when the bar comes back out.
+  -- In the client's slot the bar shows no text (see showText), so the anchor is
+  -- left alone: the player's choice is suspended, not overruled.
   if self.slotFrame ~= nil then
     return appearance
   end
@@ -472,11 +416,8 @@ function XpBarView:resolveAppearance()
     end
     wanted = self:outsideTextAnchor(text.size)
   elseif text.anchor == TextAnchor.BELOW then
-    -- Below is a place, and in the client's slot there is no room there: the
-    -- action bar is. This applies to a below the PLAYER chose as much as to one
-    -- this code chose -- the first version only checked the text it had moved
-    -- itself, so a player whose skin or own setting said below got a bar with no
-    -- text at all and nothing to suggest why.
+    -- Below may have no room, as when the action bar sits there. This checks a
+    -- below chosen by the player or the skin as well as one chosen here.
     wanted = self:outsideTextAnchor(text.size)
   end
 
@@ -484,49 +425,36 @@ function XpBarView:resolveAppearance()
     return appearance
   end
 
-  -- D52. The client's bar is much thinner than this bar's own default, so a skin
-  -- that puts its text inside would be asking eleven points of font to live in
-  -- ten pixels. Resolved again rather than edited: what comes back is frozen, and
-  -- the size a skin asks for is only known after resolving once. Twice is free --
-  -- this runs on a settings change and on a size change, never on a redraw.
+  -- A bar thinner than the text cannot hold it inside. Resolved again rather
+  -- than edited: the result is frozen, and the skin's text size is only known
+  -- after resolving once. This runs on settings and size changes, never on a
+  -- redraw, so twice costs nothing.
   options.textAnchor = wanted
   return SkinResolver.resolve(options)
 end
 
--- Which side the text ends up on when it has to leave the bar. The room below is
--- the bar's own distance from the bottom of the screen: in the client's slot that
--- is a handful of pixels, and the text that went there was drawn behind the
--- action bar. Unknown -- a frame the client has not laid out yet -- keeps the
--- conventional side rather than guessing.
+-- Which side the text goes to when it has to leave the bar. The room below is
+-- the bar's distance from the bottom of the screen; near the bottom, text there
+-- would draw behind the action bar. Unknown room (a frame not laid out yet)
+-- keeps the conventional side rather than guessing.
 function XpBarView:outsideTextAnchor(textSize)
-  -- The frame may not exist yet, and that is not an edge case: the constructor
-  -- resolves the appearance one line BEFORE it creates the frame, so a skin whose
-  -- text sits below -- cartographer is one of the six -- reached this during
-  -- construction and took the whole interface down with it, panel and options
-  -- included. A frame that has not been laid out and a frame that does not exist
-  -- yet are the same question here, and BarGeometry already answers it: a
-  -- non-number room keeps the conventional side rather than guessing.
+  -- The frame may not exist yet: the constructor resolves the appearance
+  -- before it creates the frame, and a skin whose text sits below reaches this
+  -- during construction. BarGeometry treats a nil room as unknown.
   local bottom = self.frame ~= nil and self.frame:GetBottom() or nil
   return BarGeometry.textAnchorOutside(bottom, textSize)
 end
 
--- The composed text, and whether it is being shown right now. Kept apart because
--- the player can ask for a bar that says nothing until the cursor is on it: the
--- text is still composed on every update -- the cursor may arrive at any moment --
--- and only its showing waits.
+-- The composed text, and whether it is shown right now. Kept apart because the
+-- bar can be set to show text only on hover: the text is still composed on
+-- every update, since the cursor may arrive at any moment.
 function XpBarView:showText(value)
   if value ~= nil then
     self.composedText = value
   end
-  -- Nothing at all while the bar stands in the client's slot, on the owner's
-  -- instruction from the client: "no se llega a ver y tampoco se entiende".
-  --
-  -- The strip is twelve pixels tall and as wide as the screen, so the line was
-  -- either too small to read or a row of unlabelled numbers running into each
-  -- other -- and every place to put it OUTSIDE the bar is the client's own
-  -- interface. There is no arrangement of that text that works there, and the
-  -- readout the player actually wants already exists a hover away: the tooltip
-  -- names every source and every number, with words next to them.
+  -- No text while the bar stands in the client's slot: the strip is about
+  -- twelve pixels tall, too thin to read a line in, and every place outside it
+  -- is the client's own interface. The tooltip carries the full readout.
   if self.slotFrame ~= nil then
     self.renderer:setText("")
     return
@@ -543,10 +471,9 @@ function XpBarView:createFrame()
   frame:RegisterForDrag("LeftButton")
 
   self.frame = frame
-  -- The drawing order of a bar that is nobody's guest, READ rather than chosen:
-  -- a bar that never enters the slot keeps exactly the depth it has always had,
-  -- and one that leaves the slot is handed that same depth back (D50 again --
-  -- the slot suspends, it does not overwrite).
+  -- The free bar's drawing order, read rather than chosen: a bar that never
+  -- enters the slot keeps its default depth, and one that leaves the slot gets
+  -- this same depth back.
   self.freeStrata = frame.GetFrameStrata ~= nil and frame:GetFrameStrata() or nil
   self.freeLevel = frame.GetFrameLevel ~= nil and frame:GetFrameLevel() or nil
   self.renderer = BarRenderer.new({
@@ -578,23 +505,22 @@ function XpBarView.new(options)
     saveSetting = options.saveSetting,
     locale = options.locale,
     onToggle = options.onToggle,
-    -- The same directory the panel reads, so one quest is written the same way on
-    -- both. Optional: a bar built without it numbers its quests.
+    -- The same directory the panel reads, so a quest is named the same way on
+    -- both. Optional: without it the bar numbers its quests.
     questNames = options.questNames,
-    -- ASKED, not carried: a function called once, when the popup opens. Building
-    -- and sorting the pending entries on the redraw tick -- five times a second,
-    -- hovered or not -- is what `placesFor` exists to avoid, and this is the same
-    -- shape of question.
+    -- A function called once when the popup opens, not data carried on every
+    -- update: building and sorting the pending entries five times a second,
+    -- hovered or not, is the cost `placesFor` also avoids.
     questEntries = options.questEntries,
-    -- A local, mutable copy: self.settings is frozen and read-only, so the one
-    -- piece of it that changes during play (the lock) needs a home of its own.
+    -- A local, mutable copy: self.settings is frozen, and the lock changes
+    -- during play.
     locked = options.settings[SettingKey.BAR_LOCKED],
     dragging = false,
     tween = BarTween.new({ channels = channelIds() }),
     pulse = Pulse.new(),
     level = nil,
-    -- The last total the bar was told about, so a redraw can tell "the player
-    -- gained experience" from "nothing changed" and only flash for the first.
+    -- The last total the bar was given, so a redraw flashes only when the
+    -- player gained experience.
     previousTotal = nil,
     record = nil,
     viewModel = nil,
@@ -609,17 +535,15 @@ function XpBarView.new(options)
   return self
 end
 
--- Re-reads settings and reapplies everything that comes out of them, without
--- rebuilding a single frame or texture (the spec's "applies immediately, no
--- reload"). Recreating frames would be the obvious way to do this and is the
--- wrong one -- a WoW frame cannot be destroyed, so every rebuild leaks one.
+-- Re-reads settings and reapplies everything that comes out of them, at once
+-- and without a reload, rebuilding no frame or texture: a WoW frame cannot be
+-- destroyed, so every rebuild would leak one.
 function XpBarView:applySettings(settings)
   self.settings = settings or self.settings
   self.appearance = self:resolveAppearance()
   self.frame:SetScale(self.settings[SettingKey.BAR_SCALE])
-  -- barWidth/barHeight rather than the settings directly: in the client's slot
-  -- those two settings are suspended and the measure is the inherited one, so
-  -- reapplying settings there must not resize the bar out of the slot it is in.
+  -- barWidth/barHeight, not the settings: in the client's slot those settings
+  -- are suspended and the measure is inherited.
   self.renderer:setSize(self:barWidth(), self:barHeight())
   self.renderer:applyAppearance(self.appearance)
   self:showText()
@@ -629,14 +553,13 @@ function XpBarView:applySettings(settings)
 end
 
 -- ---------------------------------------------------------------------------
--- Text (3.7, 3.8)
+-- Text
 -- ---------------------------------------------------------------------------
 
--- The composed text, shortened until it fits. Fields are given up in the order
--- TEXT_PRIORITY declares, lowest rank first, so a bar too narrow for everything
--- sheds the same fields every time instead of whatever happens to be longest.
--- Only enforced when the text sits INSIDE the bar: above or below it has the
--- whole screen's width and nothing to collide with.
+-- The composed text, shortened until it fits. Fields are dropped in the order
+-- TEXT_PRIORITY declares, lowest rank first, so a narrow bar always sheds the
+-- same fields rather than the longest. Only when the text sits inside the bar:
+-- above or below it has the screen's width.
 function XpBarView:composeText(values)
   local chosen = {}
   for _, token in ipairs(self.settings[SettingKey.BAR_TEXT_TOKENS]) do
@@ -669,7 +592,7 @@ function XpBarView:composeText(values)
 end
 
 -- ---------------------------------------------------------------------------
--- Drawing and the presentation clock (4.5, 4.6, 4.7)
+-- Drawing and the presentation clock
 -- ---------------------------------------------------------------------------
 
 function XpBarView:paint()
@@ -678,11 +601,9 @@ function XpBarView:paint()
   return self
 end
 
--- Called every frame by the composition root, from the OnUpdate that already
--- exists (design D32: no second per-frame script for this). Returns whether the
--- bar is still moving, so the caller can see at a glance that a resting bar
--- costs nothing -- but the cheap exit is here regardless of what the caller
--- does with it.
+-- Called every frame by the composition root from its existing OnUpdate, not a
+-- second per-frame script. Returns whether the bar is still moving; the cheap
+-- exit for a resting bar is here whatever the caller does with it.
 function XpBarView:tick(elapsed)
   local moving = self.tween:advance(elapsed)
   local flashing = self.pulse:advance(elapsed)
@@ -693,12 +614,10 @@ function XpBarView:tick(elapsed)
   return true
 end
 
--- Nothing to show: max level, or experience disabled (10.7). No segment, no
--- rested mark, no pending channel, and no token-composed text -- the numbers
--- behind those tokens would not mean anything without an active level, and
--- showing them (even as zeroes) is exactly the misleading data the spec rules
--- out. `HIDE_WITHOUT_XP` decides between hiding the bar outright and showing
--- it with a fixed status line instead.
+-- Nothing to show: max level, or experience disabled. No segment, rested mark,
+-- pending channel or token text: without an active level those numbers mean
+-- nothing, and zeroes would mislead. `HIDE_WITHOUT_XP` chooses between hiding
+-- the bar and showing a fixed status line.
 function XpBarView:drawInactive()
   self.renderer:hideProgress()
   if self.settings[SettingKey.HIDE_WITHOUT_XP] then
@@ -709,13 +628,11 @@ function XpBarView:drawInactive()
   self:showText(self.locale:get(TextKey.BAR_NO_XP))
 end
 
--- Rebuilds the view-model from `record`/`params` and states where the bar should
--- end up. This is the 5 Hz half of D24: it does not paint the final position, it
--- sets the target -- tick() walks there.
+-- Rebuilds the view-model from `record`/`params` and sets where the bar should
+-- end up: the 5 Hz half. It sets the target; tick() walks there.
 function XpBarView:update(record, params)
-  -- Before the branch below can return early: a bar with nothing to show is still
-  -- a bar standing in the client's slot, and the client re-levels its frames
-  -- whether or not this character is earning experience.
+  -- Before the early return below: a bar with nothing to show may still stand
+  -- in the client's slot, and the client re-levels its frames regardless.
   self:holdDepth()
   params = resolveParams(params, self.settings)
   self.record = record
@@ -734,11 +651,9 @@ function XpBarView:update(record, params)
   local motion = self.settings[SettingKey.MOTION_SCALE]
   local shares = XpBarViewModel.shares(viewModel)
 
-  -- A level-up is not a move, it is a reset. Animating the bar back down from
-  -- full would show a completed level that is no longer the player's for as long
-  -- as the animation lasts, which is precisely the misleading state 10.7 rules
-  -- out elsewhere. So the vector is dropped to zero with no motion at all, and
-  -- only the new level's progress is animated in.
+  -- A level-up is a reset, not a move: animating down from full would show a
+  -- finished level that is no longer the player's. The vector drops to zero at
+  -- once and only the new level's progress animates in.
   if self.level ~= nil and record.level ~= self.level then
     self.tween:setTarget({}, 0)
     self.pulse:bump():bump()
@@ -758,23 +673,20 @@ function XpBarView:update(record, params)
 end
 
 -- ---------------------------------------------------------------------------
--- Tooltip (10.4)
+-- Tooltip
 -- ---------------------------------------------------------------------------
 
--- How many quests the popup names before it starts counting the rest. Three, and
--- the number is presentation, not data: the popup answers at a glance and the
--- panel answers in full (design.md D1), so this is "enough to recognise where the
--- pending experience is" and not "the list".
+-- How many quests the popup names before counting the rest. Presentation, not
+-- data: the popup answers at a glance, the panel in full.
 local QUESTS_IN_POPUP = 3
 
--- A blank line between blocks. GameTooltip has no rule to draw, and three headed
--- blocks running together read as one list with odd headings in it.
+-- A blank line between blocks: GameTooltip has no rule to draw, and headed
+-- blocks running together read as one list.
 local function blockBreak(tooltip)
   tooltip:AddLine(" ")
 end
 
--- Block one: the level. Its own total first, then the sources that make it up --
--- which is the order the question comes in ("how far am I, and from what").
+-- Block one: the level. Its total first, then the sources that make it up.
 local function addLevelBlock(view, tooltip, viewModel)
   local locale = view.locale
   local levelPercent = locale:get(TextKey.PERCENT, math.floor(viewModel.percentComplete * 100 + 0.5))
@@ -783,50 +695,58 @@ local function addLevelBlock(view, tooltip, viewModel)
 
   local observation = viewModel.observation
   local declared = false
+  -- Why creatures are not among the sources, when they are not. Printed under
+  -- the unclassified line, the bucket it explains.
+  local unnamed = viewModel.sourcesUnavailable ~= nil
+    and locale:get(UnavailableText[RecordedSource.XP_CHAT][viewModel.sourcesUnavailable]) or nil
+  local unnamedSaid = false
 
   for _, segment in ipairs(viewModel.segments) do
-    -- segment.amount, not record:xpFrom(segment.source): UNKNOWN's segment can
-    -- include experience the client confirmed but attribution has not settled
-    -- yet (D21), which record:xpFrom alone would not show.
+    -- segment.amount, not record:xpFrom(segment.source): UNKNOWN's segment
+    -- includes experience the client confirmed but attribution has not
+    -- assigned yet.
     local percentText = locale:get(TextKey.PERCENT, math.floor(segment.fraction * 100 + 0.5))
     tooltip:AddDoubleLine(locale:get(TextKey.BAR_TOOLTIP_PLACE, locale:get(SOURCE_LABEL[segment.source])),
       locale:get(TextKey.BAR_TOOLTIP_VALUE, segment.amount, percentText))
 
-    -- Under the unclassified line, because that is the bucket whose ambiguity
-    -- this resolves: both halves live in it and neither is legible without the
-    -- other. The figures above are untouched -- the split is printed beneath
-    -- them, never subtracted from them, so the percentages still sum to the
-    -- level's own.
+    -- Under the unclassified line, the bucket this splits. The split is printed
+    -- beneath the figures, never subtracted from them, so the percentages still
+    -- sum to the level's.
+    if unnamed ~= nil and segment.source == XpSource.UNKNOWN then
+      tooltip:AddLine(unnamed, nil, nil, nil, true)
+      unnamedSaid = true
+    end
     if observation ~= nil and segment.source == XpSource.UNKNOWN then
       declared = true
       if observation.seededXp ~= nil then
         tooltip:AddDoubleLine(locale:get(TextKey.BAR_NOT_OBSERVED), tostring(observation.seededXp))
-        -- Omitted at zero rather than printed as "0": everything unclassified
-        -- here came in with the level, and a zero would invite the reader to
-        -- look for a failure that did not happen.
+        -- Omitted at zero: everything unclassified came in with the level, and
+        -- a "0" would suggest a failure that did not happen.
         if observation.unexplainedXp > 0 then
           tooltip:AddDoubleLine(locale:get(TextKey.BAR_UNEXPLAINED), tostring(observation.unexplainedXp))
         end
       else
-        -- A record from before the addon kept the figure. It can say the
-        -- accounting is incomplete and no more.
+        -- A record saved before the addon kept this figure: it can only say
+        -- the accounting is incomplete.
         tooltip:AddLine(locale:get(TextKey.BAR_PARTIAL))
       end
     end
   end
 
-  -- A partial level with nothing unclassified to hang it from -- one opened at
-  -- its very first point, or one whose seed was spent by a level-up. The mark
-  -- still belongs: it is a fact about the recording, not about the bucket.
+  -- A partial level with nothing unclassified to print it under (opened at its
+  -- first point, or its seed spent by a level-up): the mark is about the
+  -- recording, not the bucket, so it is still shown.
   if observation ~= nil and not declared then
     tooltip:AddLine(locale:get(TextKey.BAR_PARTIAL))
   end
+  -- Nothing unclassified yet to print it under: it is still true of the level.
+  if unnamed ~= nil and not unnamedSaid then
+    tooltip:AddLine(unnamed, nil, nil, nil, true)
+  end
 end
 
--- Block two: where it was earned. One line per place and never one per place per
--- source: a level played in one zone used to print that zone under every source,
--- saying it twice and never saying what the zone gave. The cross-reading of
--- source by place lives in the panel now (design.md D1).
+-- Block two: where it was earned. One line per place, never one per place per
+-- source; source by place is the panel's.
 local function addZoneBlock(view, tooltip, record)
   local places = XpBarViewModel.placesOf(record)
   if places == nil then
@@ -843,9 +763,8 @@ local function addZoneBlock(view, tooltip, record)
 end
 
 -- Block three: what has not been earned yet. A separate block, never folded into
--- the sources above: it is a projection from the quest log, not experience
--- actually earned, so it must not read as part of a total that sums to the
--- level's percentage.
+-- the sources: it is a projection from the quest log, not earned experience,
+-- and must not read as part of the level's total.
 local function addPendingBlock(view, tooltip, viewModel)
   if viewModel.pending == nil or view.params == nil then
     return
@@ -860,10 +779,8 @@ local function addPendingBlock(view, tooltip, viewModel)
     return
   end
 
-  -- Only the quests with a reward anybody knows: entries() sorts unknown ones
-  -- last precisely because there is no figure to print beside them, and a name
-  -- with a blank number in a block about how much is pending is noise. How many
-  -- of them there are is already reported, by the panel, as its own count.
+  -- Only quests with a known reward: entries() sorts unknown ones last, and a
+  -- name without a figure is noise here. The panel reports their count.
   local named, rest, restTotal = 0, 0, 0
   for _, entry in ipairs(entries) do
     if entry.adjustedReward ~= nil then
@@ -879,9 +796,8 @@ local function addPendingBlock(view, tooltip, viewModel)
     end
   end
 
-  -- One line for everything that did not fit, with its own total: without the
-  -- figure the reader cannot tell the three shown from the whole, and the block
-  -- would look like it disagrees with its own heading.
+  -- One line for the rest, with its total, so the block still adds up to its
+  -- heading.
   if rest > 0 then
     tooltip:AddDoubleLine(locale:get(TextKey.BAR_TOOLTIP_MORE, rest), tostring(restTotal))
   end
@@ -893,16 +809,9 @@ function XpBarView:attachTooltip()
   frame:SetScript("OnEnter", function()
     self.hovered = true
     self:showText()
-    -- Where the player keeps their tooltips, not where this addon would like
-    -- them. GameTooltip_SetDefaultAnchor is the client's own answer to that
-    -- question, and it is the function every tooltip addon in the ecosystem
-    -- hooks -- Leatrix, TipTac -- so honouring it is how a bar that is not the
-    -- player's only addon behaves. Anchoring to the bar instead put the
-    -- breakdown wherever the bar happened to be, which on a bar the player can
-    -- drag anywhere is nowhere in particular.
-    --
-    -- The fallback is not defensive: it is the older clients this addon
-    -- supports, where the function may simply not be there.
+    -- Where the player keeps tooltips: GameTooltip_SetDefaultAnchor is the
+    -- client's answer, and the function tooltip addons such as Leatrix and
+    -- TipTac hook. The SetOwner fallback is for older clients that may lack it.
     if GameTooltip_SetDefaultAnchor ~= nil then
       GameTooltip_SetDefaultAnchor(GameTooltip, frame)
     else
@@ -928,16 +837,15 @@ function XpBarView:attachTooltip()
 end
 
 -- ---------------------------------------------------------------------------
--- Drag, lock, scale, position, click-to-toggle (10.5)
+-- Drag, lock, scale, position, click-to-toggle
 -- ---------------------------------------------------------------------------
 
 function XpBarView:attachDrag()
   local frame = self.frame
 
   frame:SetScript("OnDragStart", function()
-    -- Two different reasons not to move, and the player is told them apart
-    -- elsewhere: locked is their own doing, the slot is the geometry not being
-    -- this bar's to give (D50).
+    -- Two reasons not to move, reported to the player separately elsewhere:
+    -- locked is their choice; in the slot the geometry is the client frame's.
     if self.locked or self.slotFrame ~= nil then
       return
     end
@@ -952,10 +860,9 @@ function XpBarView:attachDrag()
     self.dragging = false
   end)
 
-  -- OnMouseUp always fires; OnDragStart only fires once the drag threshold is
-  -- actually crossed. So a plain click never sets `dragging`, and this is the
-  -- standard way a WoW frame tells a click apart from a drag without a
-  -- hand-rolled timer or distance check.
+  -- OnMouseUp always fires; OnDragStart only once the drag threshold is
+  -- crossed. So a plain click never sets `dragging`, which tells a click from a
+  -- drag without a timer or distance check.
   frame:SetScript("OnMouseUp", function(_, button)
     if button == "LeftButton" and not self.dragging and self.onToggle ~= nil then
       self.onToggle()

@@ -1,16 +1,13 @@
--- The guarantee under test is the level-report-panel spec's "experiencia
--- pendiente" scenarios: total/readyTotal/unknownCount pass straight through
--- from the report as a projection this module never touches, an unknown
--- quest shows up in entries without affecting the total, an empty forecast
--- (no quests accepted) is active but empty, and only the total absence of
--- both a report and entries reads as inactive.
+-- total/readyTotal/unknownCount pass straight through from the report, which
+-- this module never touches; an unknown quest shows up in entries without
+-- affecting the total; an empty forecast (no quests accepted) is active but
+-- empty; and only the absence of both a report and entries reads as inactive.
 
 describe("QuestPendingViewModel", function()
   local ns, QuestPendingViewModel, QuestXpOrigin
 
   -- `sharedBy` is how many were splitting the pay when these died. Nil means
-  -- nobody counted, which is what every kill recorded before this distinction
-  -- existed says about itself.
+  -- nobody counted, as for kills saved by older versions.
   local function killed(record, name, kills, each, sharedBy)
     for _ = 1, kills do
       ns.core.XpLedger.post(record, ns.core.XpGain.new({
@@ -74,14 +71,14 @@ describe("QuestPendingViewModel", function()
       assert.equal("Springpaw Lynx", shown.creature)
       assert.equal(3, shown.remaining)
       assert.equal(126, shown.estimate)
-      -- Measured on this creature AND with this many people sharing the pay, which
-      -- is the only combination that earns the unqualified word.
+      -- Measured on this creature and with this many people sharing the pay: the
+      -- only combination that earns the unqualified word.
       assert.equal("creature", shown.basis)
     end)
 
-    -- 2.4: the tab asks for the group of now, the same way it asks for the level
-    -- of now. Three kills left are worth what three kills are worth to the group
-    -- the player is standing in, not to the one that happened to do the killing.
+    -- The tab asks for the group of now, the same way it asks for the level of
+    -- now. Three kills left are worth what three kills are worth to the group the
+    -- player is standing in, not to the one that happened to do the killing.
     it("prices what is left for the group of now, not for the one that killed them", function()
       local record = levelThatKilled("Springpaw Lynx", 2, 42, 1)
       killed(record, "Springpaw Lynx", 4, 10, 5)
@@ -96,10 +93,9 @@ describe("QuestPendingViewModel", function()
       assert.equal("creature", alone.basis)
     end)
 
-    -- D83/D84: what was recorded before anyone counted the context still prices
-    -- the objective, because the alternative is a tab that says nothing over a
-    -- distinction the character never had the chance to record -- but it goes out
-    -- marked, not as a measurement of the group the player is in now.
+    -- Kills recorded before the group was counted still price the objective
+    -- rather than leave the tab empty, but the estimate goes out marked, not as a
+    -- measurement of the group the player is in now.
     it("marks an estimate served from kills nobody counted the group for", function()
       local record = levelThatKilled("Springpaw Lynx", 2, 42)
       local model = QuestPendingViewModel.build(nil,
@@ -138,8 +134,8 @@ describe("QuestPendingViewModel", function()
       assert.is_nil(model.entries[2].objectives)
     end)
 
-    -- The guarantee of design D2: those kills will be recorded as creatures when
-    -- they happen, so adding them here would count the same afternoon twice.
+    -- Those kills will be recorded as creatures when they happen, so adding them
+    -- here would count the same experience twice.
     it("never lets an estimate reach the pending totals", function()
       local record = levelThatKilled("Springpaw Lynx", 2, 42)
       local report = { total = 300, readyTotal = 0, unknownCount = 0 }

@@ -1,19 +1,16 @@
 -- Ascent - dispatches combat-topic events to the metric collectors that declared
--- them (D10, D23, group 6).
+-- them.
 --
 -- The tracker never learns a collector exists: this subscribes to the bus on the
--- registry's behalf and always writes into `currentRecord()` -- read fresh on
--- every event, never cached -- which is what makes a topic landing after a level
--- crossed land on the level it actually happened in (6.8) without this module
--- knowing anything about levels itself. A nil current record (no level open: max
--- level, or gain disabled) means nothing to attribute to, so the event is dropped
--- rather than guessed at.
+-- registry's behalf and writes into `currentRecord()`, read fresh on every event
+-- and never cached, so a topic that lands after a level crossed goes to the level
+-- it happened in without this module knowing about levels. A nil current record
+-- (no level open: max level, or gain disabled) means nothing to attribute to, so
+-- the event is dropped rather than guessed at.
 --
--- One EventBus subscription per topic already isolates a failing SUBSCRIBER from
--- the rest (core/service/EventBus.lua), but this is a single subscriber that loops
--- over several collectors per topic -- so a second, per-collector pcall lives
--- here too (12.5's own requirement: one broken collector must not stop the others
--- from seeing the SAME event, not just later ones).
+-- EventBus already isolates a failing subscriber, but this one subscriber loops
+-- over several collectors per topic, so each collector runs under its own pcall:
+-- one broken collector must not stop the others from seeing the same event.
 
 local _, ns = ...
 ns.core = ns.core or {}

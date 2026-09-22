@@ -12,8 +12,8 @@ describe("ClientXpBar", function()
       mouse = (fields or {}).mouse ~= false,
     }
     function frame:GetWidth() return 400 end
-    -- Thin, the way the client's own bar is: it is the height the inventory
-    -- reports that decides whether the text can stay inside it (D52).
+    -- Thin, like the client's own bar: the height the inventory reports decides
+    -- whether the text can stay inside it.
     function frame:GetHeight() return 10 end
     function frame:GetAlpha() return self.alpha end
     function frame:SetAlpha(value) self.alpha = value end
@@ -146,9 +146,8 @@ describe("ClientXpBar", function()
       assert.equal(1, _G.MainMenuXPBarTextureMid.alpha)
     end)
 
-    -- The case that makes the capture worth doing at all: a piece somebody else
-    -- had already turned off must not come back on because this addon assumed
-    -- full opacity was the natural state.
+    -- A piece somebody else had already turned off must not come back on:
+    -- full opacity is not assumed to be the natural state.
     it("leaves a piece that was already invisible invisible", function()
       _G.MainMenuBarExpText = fakeFrame({ alpha = 0, mouse = false })
 
@@ -183,9 +182,8 @@ describe("ClientXpBar", function()
       assert.equal(1, _G.MainMenuExpBar.alpha)
     end)
   end)
-  -- 1.1: the probe and what an absent capability costs. The registry is the real
-  -- one, so "appears in the list of what got turned off" is the addon's own
-  -- diagnostic surface rather than a second list written for the test.
+  -- The registry is the real one, so "appears in the list of what got turned off"
+  -- is the addon's own diagnostic surface rather than a list written for the test.
   describe("as a capability", function()
     local Capabilities
 
@@ -227,8 +225,8 @@ describe("ClientXpBar", function()
       assert.equal(BarSlot.REPLACE, slot:effectiveSlot(chosen))
     end)
   end)
-  -- The instrument spike 0.2 asks for. A client nobody here can open answers the
-  -- question from a chat window, but only if the addon asks it out loud.
+  -- The inventory lets a client that cannot be run here say, in a chat window,
+  -- which bar frames it has and how big they are.
   describe("the inventory it can be asked for", function()
     local function rowFor(rows, name)
       for _, row in ipairs(rows) do
@@ -236,7 +234,7 @@ describe("ClientXpBar", function()
       end
     end
 
-    it("reports what is there, with the measure that decides D52", function()
+    it("reports what is there, with its width and height", function()
       buildClient()
 
       local rows = slot:inventory()
@@ -255,8 +253,6 @@ describe("ClientXpBar", function()
       assert.is_nil(row.width)
     end)
 
-    -- Names the addon does not use, probed so a client that keeps its bar
-    -- somewhere else says where, instead of only saying no.
     -- A piece with alpha but no geometry -- a texture -- must be reported as
     -- there rather than crashing the diagnostic that went looking for its size.
     it("reports a piece that has no geometry to offer", function()
@@ -268,9 +264,10 @@ describe("ClientXpBar", function()
       assert.is_nil(row.width)
     end)
 
-    -- MainMenuBar is present on the client spike 0.2 read and is NOT the bar --
-    -- 1024x53, the whole bottom bar. Probed so the diagnostic can say it is
-    -- there and still not the thing being looked for.
+    -- Names the addon does not use are probed so a client that keeps its bar
+    -- somewhere else says where. MainMenuBar is one: on the Anniversary Burning
+    -- Crusade Classic client it is present and is not the bar -- 1024x53, the
+    -- whole bottom bar.
     it("probes names it does not use, and marks them as such", function()
       _G.MainMenuBar = fakeFrame()
 
@@ -280,9 +277,9 @@ describe("ClientXpBar", function()
       assert.is_false(row.used)
     end)
   end)
-  -- The client spike 0.2 actually found: an Anniversary Burning Crusade client
-  -- with none of the classic tree and the experience bar in the modern
-  -- status-tracking system. Measured there, and reproduced here.
+  -- The Anniversary Burning Crusade Classic client has none of the classic tree:
+  -- its experience bar lives in the modern status-tracking system. This fixture
+  -- reproduces what was measured there.
   describe("on a client with the modern status tracking bar", function()
     before_each(function()
       _G.MainStatusTrackingBarContainer = fakeFrame()
@@ -320,11 +317,9 @@ describe("ClientXpBar", function()
       assert.is_true(_G.MainStatusTrackingBarContainer.mouse)
     end)
 
-    -- The defect the owner reported as "I change the appearance and the native
-    -- bars disappear", and the reason the two slots were indistinguishable on
-    -- this client: the anchor here is the CONTAINER, and the art of the client's
-    -- frame is its child -- so quieting the anchor took the frame with it, in
-    -- both slots. Inset promises the opposite.
+    -- On this client the anchor is the container and the art of the client's
+    -- frame is its child, so quieting the anchor takes the frame with it. The
+    -- inset slot must quiet only the bar inside and keep the frame.
     describe("with the bar living inside the container", function()
       local bar, art
 
@@ -355,7 +350,7 @@ describe("ClientXpBar", function()
         assert.equal(0, _G.MainStatusTrackingBarContainer.alpha)
       end)
 
-      -- The whole reason applyQuiet is a convergence: the player can move
+      -- applyQuiet converges on the new slot because the player can move
       -- between the two active slots without passing through off.
       it("converges when the player moves from one slot to the other", function()
         slot:applySlot(BarSlot.INSET)
@@ -395,9 +390,8 @@ describe("ClientXpBar", function()
       end)
     end)
   end)
-  -- The mechanism behind "the native bar frame is sometimes left hidden": a piece
-  -- that was already invisible when the addon arrived must not be recorded as
-  -- this addon's to give back, or giving it back means hiding it again, for good.
+  -- A piece that was already invisible when the addon arrived must not be
+  -- recorded as this addon's to give back, or giving it back hides it for good.
   describe("a piece that was already invisible", function()
     before_each(buildClient)
 
@@ -422,7 +416,7 @@ describe("ClientXpBar", function()
       assert.equal(0, _G.MainMenuBarExpText.alpha)
     end)
 
-    -- And the piece this addon DID quiet still comes back, including across a
+    -- A piece this addon did quiet still comes back, including across a
     -- re-application: its own zero is not mistaken for somebody else's.
     it("does not stop the addon giving back what it did quiet", function()
       slot:applySlot(BarSlot.INSET)

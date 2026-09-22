@@ -5,9 +5,8 @@
 -- bar moves by. The base portion is therefore derived by subtraction, never by
 -- addition, and base + rested always equals amount exactly.
 --
--- Note for whoever runs spike 0.4: if the parenthetical in the client's message
--- turns out to be the base rather than the bonus, only the parser changes. This
--- model holds the identity either way.
+-- Whether the parenthetical in the client's rested kill message names the bonus
+-- or the base is a parser concern; this model holds the identity either way.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -43,10 +42,8 @@ function XpGain.new(fields)
 
   -- Guarded rather than copied raw like `creature` and `questId`, because the one
   -- wrong value this field can take is the client's own: `GetNumGroupMembers()`
-  -- answers 0 out of a group, and a payment split between nobody is not a
-  -- population an average can belong to. If a zero ever reaches here, the adapter
-  -- stopped translating and every average measured after it would be filed under a
-  -- group size nobody ever played at.
+  -- answers 0 out of a group, which the adapter translates to one. A zero here
+  -- would file every later average under a group size nobody played at.
   if fields.sharedBy ~= nil then
     Guard.positiveInteger(fields.sharedBy, "XpGain.sharedBy")
   end
@@ -61,12 +58,10 @@ function XpGain.new(fields)
     creature = fields.creature, -- CreatureKey, when the gain came from a kill
     questId = fields.questId,   -- when the gain came from a turn-in
     -- How many the payment was split between at the instant it was collected, and
-    -- nil when nobody was watching to count (D81). Absent is NOT one: a gain
-    -- written before this field existed, or posted by a path that never saw the
-    -- kill happen, says nothing about the group -- and reading that silence as
-    -- "alone" is exactly the invented observation D84 refuses to make, the more so
-    -- because most of it probably was solo, which is what would make the lie hard
-    -- to catch.
+    -- nil when nothing counted it. Absent is not one: a gain written before this
+    -- field existed, or posted by a path that never saw the kill happen, says
+    -- nothing about the group, and reading it as "alone" would invent an
+    -- observation -- one hard to catch, since most such gains probably were solo.
     sharedBy = fields.sharedBy,
   }, XpGain)
 end
@@ -141,7 +136,7 @@ end
 -- already spoken for: it means nobody counted. A kill measured alone is a
 -- measurement, and it is the population every average of a solo level belongs to.
 --
--- The creature's NAME is deliberately not here. It is display-only, it is the same
+-- The creature's name is deliberately not here. It is display-only, it is the same
 -- for every gain from the same creature, and the level record already holds it once
 -- in that creature's aggregate -- which is where restoring puts it back from.
 --
@@ -208,8 +203,7 @@ function XpGain.restore(stored)
     raidPenalty = Stored.count(Packed.number(fields, 6), 0),
     creature = creature,
     questId = Stored.positiveInteger(Packed.number(fields, 9)),
-    -- Nil for every gain written before this field existed, which is the whole of
-    -- a player's history on the day they update. Unknown, never alone.
+    -- Nil for every gain written before this field existed: unknown, never alone.
     sharedBy = Stored.positiveInteger(Packed.number(fields, 10)),
   })
 end

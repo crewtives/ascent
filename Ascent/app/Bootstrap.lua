@@ -1,42 +1,19 @@
--- Ascent - the composition root (12.1-12.6).
+-- Ascent - the composition root.
 --
--- Every other file in this addon defines something and waits to be asked for it.
--- This is the one file that actually asks: it is the only place that sees core/,
--- adapter/ and ui/ all at once, and the only place a port's real implementation
--- ever meets the port itself.
+-- The only place that sees core/, adapter/ and ui/ at once, and where each
+-- port's real implementation meets the port. It runs once, on ADDON_LOADED for
+-- this addon's name: SavedVariables are empty before that event, and reading
+-- them earlier would make every character look freshly installed.
 --
--- WHY IT WAITS FOR ADDON_LOADED. SavedVariables are not populated until the client
--- fires ADDON_LOADED for this addon's own name -- reading them any earlier would
--- read nothing, silently, and every character would look freshly installed. A frame
--- exists for exactly this one event, checks the name, and un-registers itself: the
--- rest of this file runs exactly once per session, after the moment its data
--- actually exists.
---
--- WHY THE ORDER BELOW IS NOT INCIDENTAL. Later constructors close over earlier ones
--- (the bus's error handler needs the logger, the bar's saveSetting needs the bar
--- itself), so building out of order is not a style problem, it is a nil reference.
--- The order here is the one dependency graph these modules actually have.
---
--- WHY ALMOST NOTHING HERE IS WRAPPED IN pcall. Every constructor below already
--- fails loudly on its own -- Port.verify and the explicit option checks throw
--- with the module's name in the message. Swallowing that here would hide exactly
--- the failure a composition root exists to surface.
---
--- THE ONE EXCEPTION IS THE VIEW LAYER, and it was earned the hard way. "Fails
--- loudly" is only true when the client is showing Lua errors, and it is NOT by
--- default: with scriptErrors off, a throw while building a frame is completely
--- silent. Because the views are built here and the slash commands are registered
--- three hundred lines below them, one bad CreateFrame turned into an addon that
--- collected data perfectly and answered nothing at all -- no bar, no panel, and
--- no way to ask it why.
---
--- So the views go through pcall, and the error is REPORTED rather than
--- swallowed: it goes to the chat frame through the logger, where it is visible
--- whether or not the client would have shown it. Everything downstream then
--- guards against a missing view instead of assuming one. That is the
--- capability's own "fault isolation" requirement applied to the layer that
--- actually needed it: the addon keeps recording, keeps answering commands, and
--- says what broke.
+-- The build order below is the dependency graph (the bus's error handler needs
+-- the logger, the bar's saveSetting needs the bar); out of order is a nil
+-- reference. Constructors are not wrapped in pcall, since Port.verify and the
+-- option checks already throw with the module's name. The views are the
+-- exception: with scriptErrors off, the client's default, a throw while a view
+-- runs CreateFrame is silent, and the slash commands are registered after the
+-- views. So the views go through pcall, the error is reported through the
+-- logger, and everything downstream guards against a missing view: the addon
+-- keeps recording, keeps answering commands, and says what broke.
 
 local ADDON_NAME, ns = ...
 
@@ -95,29 +72,23 @@ local ReportPanelView = ns.ui.ReportPanelView
 local OptionsPanel = ns.ui.OptionsPanel
 local CopyDialog = ns.ui.CopyDialog
 local CopyReport = ns.core.CopyReport
--- The update check is reached through `ns` at the point of use rather than
--- through file-local aliases like the lines above. Lua 5.1 allows a function 60
--- upvalues and buildContext, which is this whole file, spends all 60: the budget
--- this note once advertised is gone, and ONE more alias used in there is a SYNTAX
--- error at load time, in the client, with nothing to read.
---
--- Re-measured 2026-09-22 (it had drifted -- this said 57): every file-local above
--- is an upvalue of buildContext, so there is no dead alias to reclaim, and a copy
--- with one more fails to compile with "has more than 60 upvalues". Worse, luajit
--- blames the line of buildContext's `end`, not the alias that overflowed it.
--- `ns` is already one of the 60, so `ns.core.X` at the point of use is free.
--- Method and figures: openspec/changes/add-ascent-plate-customisation/design.md.
+-- Further modules, such as the update check, are reached through `ns` at the
+-- point of use rather than through a file-local alias like the lines above.
+-- Lua 5.1 allows a function 60 upvalues and buildContext, which is most of this
+-- file, spends all 60: every file-local above is one of them, so there is no
+-- dead alias to reclaim. One more alias used in there fails to compile at load
+-- time ("has more than 60 upvalues"), and LuaJIT blames the line of
+-- buildContext's `end`, not the alias. `ns` is already one of the 60, so
+-- `ns.core.X` at the point of use is free.
 
 local LocaleTable = ns.locale.LocaleTable
 
 ns.app = ns.app or {}
 
--- Text keys for the /ascent summary breakdown (12.2). app/ keeps its own tiny table
--- instead of reaching into ui/ for XpBarView's SOURCE_LABEL: this only ever needs
--- a name to print next to a number, never the color that table also carries, and
--- app/ has no reason to depend on ui/ for that. Both tables now name the same four
--- keys, so the two surfaces cannot drift apart in wording the way two literal
--- tables could.
+-- Text keys for the /ascent summary breakdown. app/ keeps its own table rather
+-- than reaching into ui/ for XpBarView's SOURCE_LABEL, which also carries the
+-- colours this does not need. Both tables name the same four keys, so the two
+-- surfaces cannot drift apart in wording.
 local SOURCE_NAME = {
   [XpSource.MOB_KILL] = TextKey.SOURCE_CREATURES,
   [XpSource.QUEST_TURNIN] = TextKey.SOURCE_QUESTS,
@@ -126,30 +97,25 @@ local SOURCE_NAME = {
 }
 
 -- Splits a slash command's message into its first token and everything after it,
--- both trimmed. Used for `/ascent <command> <rest>` and, inside opciones' own
--- handler, for `<sub> <arg>` -- the same shape one level deeper.
+-- both trimmed. Used for `/ascent <command> <rest>` and, inside the options
+-- handler, for `<sub> <arg>`.
 local function splitFirst(text)
   local head, tail = (text or ""):match("^%s*(%S*)%s*(.-)%s*$")
   return head or "", tail or ""
 end
 
--- 12.7's registration, against whichever options system this build actually has.
--- Classic Era and BC Classic turn out to run the same Settings.* canvas system
--- retail has used since Dragonflight on at least some recent builds -- replacing
--- InterfaceOptionsFrame rather than sitting next to it, so a panel registered only
--- the legacy way never appears under Interface > AddOns at all. This tries the
--- modern path first and only falls back to the legacy one when Settings itself is
--- not there, rather than assuming either.
+-- Registers the addon's pages against whichever options system the client has:
+-- the first page is the category in the AddOns list and the rest its children,
+-- the shape other addons in that list use. Recent Classic Era and Burning
+-- Crusade Classic builds run the Settings canvas system, which replaces
+-- InterfaceOptionsFrame, so a panel registered only the legacy way never appears
+-- under Interface > AddOns. The modern path is tried first, the legacy one only
+-- when Settings is absent.
 --
--- Explicitly `_G.Settings` throughout, never the bare name: this file already has
--- a local `Settings` bound to ns.core.Settings (the options-resolving module,
--- line ~39), and that local shadows the client global of the same name for the
--- rest of the file. Writing the bare name here would silently probe the wrong
--- table -- ns.core.Settings has no RegisterCanvasLayoutCategory, so it would
--- always look absent and this would always fall back to the legacy path,
--- regardless of what the client actually has.
--- Registers the addon's pages: the first is the category in the AddOns list and
--- the rest are its children, the shape every other addon in that list uses.
+-- Always `_G.Settings`, never the bare name: the file-local `Settings` is
+-- ns.core.Settings, which shadows the client global and has no
+-- RegisterCanvasLayoutCategory, so the bare name would always take the legacy
+-- path whatever the client has.
 local function registerOptionsPanel(pages)
   local parentPage = pages[1]
   local wowSettings = _G.Settings
@@ -158,8 +124,8 @@ local function registerOptionsPanel(pages)
     local category = wowSettings.RegisterCanvasLayoutCategory(parentPage.frame, parentPage.frame.name)
     wowSettings.RegisterAddOnCategory(category)
     -- Subcategories when the client has them. Without that function the children
-    -- simply do not appear -- one page of settings rather than six -- which is a
-    -- worse panel and not a broken addon.
+    -- do not appear (one page of settings rather than six): a worse panel, not a
+    -- broken addon.
     if wowSettings.RegisterCanvasLayoutSubcategory ~= nil then
       for index = 2, #pages do
         wowSettings.RegisterCanvasLayoutSubcategory(category, pages[index].frame, pages[index].frame.name)
@@ -167,9 +133,9 @@ local function registerOptionsPanel(pages)
     end
     return category
   end
-  -- Verified absent from Burning Crusade Classic 2.5.6: this whole branch is the
-  -- fallback for a client that has neither system, and calling a global that is
-  -- not there would fail here, during initialisation, where it costs the most.
+  -- Checked because InterfaceOptions_AddCategory is absent from Burning Crusade
+  -- Classic 2.5.6: a client may have neither system, and calling a missing global
+  -- here fails during initialisation, where it costs the most.
   if type(_G.InterfaceOptions_AddCategory) == "function" then
     _G.InterfaceOptions_AddCategory(parentPage.frame)
     -- The old system nests by name: a panel whose `parent` is another panel's
@@ -188,10 +154,9 @@ local function openOptionsPanel(panel, category)
     wowSettings.OpenToCategory(category:GetID())
     return
   end
-  -- Blizzard's classic Interface Options frame has a long-known bug where the
-  -- category is not reliably selected the first time it is opened in a session;
-  -- calling this twice in a row is the standard addon-ecosystem workaround, not
-  -- something to question. Only reached when the modern path above is absent.
+  -- The legacy Interface Options frame does not reliably select the category the
+  -- first time it opens in a session; calling this twice in a row is the usual
+  -- workaround. Only reached when the modern path above is absent.
   if type(_G.InterfaceOptionsFrame_OpenToCategory) == "function" then
     _G.InterfaceOptionsFrame_OpenToCategory(panel)
     _G.InterfaceOptionsFrame_OpenToCategory(panel)
@@ -200,7 +165,7 @@ end
 
 local function buildContext()
   -- ---------------------------------------------------------------------------
-  -- 12.1: construction, in dependency order.
+  -- Construction, in dependency order.
   -- ---------------------------------------------------------------------------
 
   local repository = SavedVariablesRepository.new()
@@ -212,16 +177,15 @@ local function buildContext()
 
   local logger = ChatLogger.new({ debug = settings[SettingKey.DEBUG] })
 
-  -- The client's language cannot change mid-session, so LocaleTable resolves it once
-  -- from GetLocale. Diagnostic mode can change, which is why it arrives as a function
-  -- and not as the boolean read a line above: a key with no text must start showing
-  -- itself the moment the player turns debug on, not after the next reload.
+  -- The client's language cannot change mid-session, so LocaleTable resolves it
+  -- once from GetLocale. Diagnostic mode can, so it arrives as a function rather
+  -- than the boolean read a line above: a key with no text must show itself the
+  -- moment the player turns debug on, not after the next reload.
   local locale = LocaleTable.new({ isDebug = function() return logger:isDebug() end })
 
-  -- The bus already isolates a failing handler from the rest (core/service/EventBus.lua):
-  -- this onError is only the notice to the player that it happened. logger:warn
-  -- dedupes by exact text, so one handler stuck failing on every event does not
-  -- spam the chat frame once per occurrence.
+  -- The bus already isolates a failing handler (core/service/EventBus.lua); this
+  -- onError only tells the player. logger:warn dedupes by exact text, so a
+  -- handler failing on every event does not spam the chat frame.
   local bus = EventBus.new(function(topic, err)
     logger:warn(locale:get(TextKey.CMD_HANDLER_FAILED, tostring(topic), tostring(err)))
   end)
@@ -231,33 +195,31 @@ local function buildContext()
 
   local correlator = KillCorrelator.new({ logger = logger })
 
-  -- XpAttribution subscribes itself to the bus in its own constructor; nothing
-  -- here calls it again. Kept anyway so the context below can expose it.
+  -- XpAttribution subscribes itself to the bus in its constructor. Kept in a
+  -- local so the context below can expose it.
   local xpAttribution = XpAttribution.new({ bus = bus, registry = registry, correlator = correlator, logger = logger })
 
   local tracker = LevelTracker.new({
     bus = bus, clock = clock, playerState = playerState, store = store, settings = settings, logger = logger,
   })
 
-  -- Group 7: experience gained since the client itself started (D14's definition
-  -- of "session"), which no LevelRecord can answer on its own because it spans
-  -- whatever levels the player crosses in one sitting.
+  -- Experience gained since the client started, which is what "session" means
+  -- here. No LevelRecord can answer it, because a session spans whatever levels
+  -- the player crosses in one sitting.
   local sessionXpTracker = SessionXpTracker.new({ bus = bus })
 
-  -- Group 6 (D10, D23): registering a collector never touches the tracker. None of
-  -- the six needs flavor-gating -- ability usage, combat outcome, deaths, time and
-  -- damage all read the same client-side API on Era and TBC -- so every one of them
-  -- registers unconditionally, and Capabilities still has nothing to probe for
-  -- these (see the comment on `capabilities` below, which is a separate concern).
+  -- Registering a collector never touches the tracker. None of the six is gated
+  -- by client flavour: ability usage, combat outcome, deaths, time, place and
+  -- damage read the same client API on Classic Era and Burning Crusade Classic,
+  -- so all of them register unconditionally.
   --
-  -- `recordingLevel` (not tracker:current() directly): current() can be non-nil
-  -- while tracker:isRecording() is false -- experience gain switched off mid-
-  -- session leaves the record open but frozen (LevelTracker's own onAttributed
-  -- already gates on isRecording()) -- and without the same gate here, combat
-  -- metrics would keep accruing onto a level whose playedSeconds/xpTotal have
-  -- stopped moving, breaking the very "combat + out-of-combat = played" invariant
-  -- 6.5 exists to keep. Both CombatAggregator's dispatch and observe()'s own
-  -- per-tick sampling read this, so neither path can drift from the other.
+  -- `recordingLevel`, not tracker:current(): current() can be non-nil while
+  -- tracker:isRecording() is false, because experience gain switched off
+  -- mid-session leaves the record open but frozen. LevelTracker's onAttributed
+  -- gates on isRecording(); without the same gate here, combat metrics would keep
+  -- accruing onto a level whose playedSeconds and xpTotal have stopped, breaking
+  -- the invariant "combat + out-of-combat = played". CombatAggregator's dispatch
+  -- and the per-tick sampling both read this, so neither path can drift.
   local function recordingLevel()
     if tracker:isRecording() then
       return tracker:current()
@@ -272,9 +234,9 @@ local function buildContext()
     clock = clock, recoveryThreshold = settings[SettingKey.RECOVERY_THRESHOLD],
   })
   local placeTimeCollector = PlaceTimeCollector.new({ clock = clock })
-  -- The `enabled` closure reads `settings` live (the same upvalue saveSetting
-  -- reassigns below), so toggling "collect damage data" in the options panel
-  -- takes effect immediately -- no rebuild of the collector or the registry.
+  -- The `enabled` closure reads `settings` live (the upvalue saveSetting
+  -- reassigns below), so toggling "collect damage data" takes effect at once,
+  -- with no rebuild of the collector or the registry.
   local damageCollector = DamageCollector.new({ enabled = function() return settings[SettingKey.COLLECT_DAMAGE] end })
   for _, collector in ipairs({
     AbilityUsageCollector.new(), combatOutcomeCollector, deathCollector, combatTimeCollector, damageCollector,
@@ -286,40 +248,43 @@ local function buildContext()
   end
   CombatAggregator.new({ bus = bus, registry = metricRegistry, currentRecord = recordingLevel, logger = logger })
 
-  -- Kept rather than discarded now that it counts template hits: that counter is
-  -- what a real levelling session uses to settle whether the group figure is
-  -- already inside the total (design D45), and the diagnostic command reads it.
+  -- A source closing mid-session, which the two routers below are the ones to
+  -- see and the capability registry further down is the one to be told.
+  -- Declared here because the routers are built first, and assigned once the
+  -- registry exists: a closure cannot reach a local declared after it.
+  local sourceClosed
+
+  -- Kept in a local for its template-hit counter, which the diagnostic prints:
+  -- it shows whether the group figure is already inside the credited total.
   local eventRouter = WowEventRouter.new({
     bus = bus, clock = clock, playerState = playerState, logger = logger,
+    onUnreadable = function() sourceClosed(ns.core.RecordedSource.XP_CHAT) end,
   })
   eventRouter:start()
 
-  -- The flight recorder (app/EvidenceLog.lua). Subscribed BEFORE anything else
-  -- starts publishing, so a session records from its first event rather than
-  -- from whenever the rest of the wiring happened to finish.
+  -- The flight recorder (app/EvidenceLog.lua), subscribed before anything else
+  -- publishes, so a session records from its first event rather than from
+  -- whenever the rest of the wiring finished.
   --
-  -- The environment goes in with it: which client, which language, and which of
-  -- the experience templates this client actually carries. Samples without that
-  -- cannot be interpreted by anyone who was not sitting at the machine.
+  -- The environment goes in with it: which client, which language, and which
+  -- experience templates this client carries. Samples without it cannot be
+  -- interpreted away from the machine they came from.
   local evidence = EvidenceLog.new({
     bus = bus, clock = clock, playerState = playerState,
     enabled = settings[SettingKey.EVIDENCE],
   })
-  -- Gathered in one place because two paths need exactly the same environment:
-  -- the one at startup, and the one the chat command takes when recording is
-  -- switched on mid-session.
-  -- THE ADDON'S VERSION, READ ONCE, IN ONE PLACE.
-  --
-  -- Read through whichever accessor this client has. Three things now depend on
-  -- it -- the evidence file, the report header, and the update check -- and a
-  -- second declaration anywhere would be a build that reports one version and
-  -- compares another (spec addon-lifecycle, "Identidad del addon"). "unknown"
-  -- rather than nil: it is printed, and it must never read as a blank.
+  -- The addon's version, read once, through whichever accessor this client has
+  -- (C_AddOns.GetAddOnMetadata or the older global). The evidence file, the
+  -- report header and the update check all read this one value, so a build
+  -- cannot report one version and compare another. "unknown" rather than nil:
+  -- it is printed, and must never read as a blank.
   local addonVersion = (C_AddOns ~= nil and C_AddOns.GetAddOnMetadata ~= nil
     and C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version"))
     or (GetAddOnMetadata ~= nil and GetAddOnMetadata(ADDON_NAME, "Version"))
     or "unknown"
 
+  -- In one place because two paths need the same environment: startup, and the
+  -- chat command that switches recording on mid-session.
   local function evidenceEnvironment()
     local templates = {}
     for _, entry in ipairs(eventRouter.patterns.xpFamily) do
@@ -339,23 +304,24 @@ local function buildContext()
     evidence:start():attachTo(AscentCharDB, evidenceEnvironment())
   end
 
-  -- One door into the recorder for the facts the bus does not carry. The spikes of
-  -- group 0 are answered from a session that may run for hours, and their
-  -- instrumentation used to write through the logger -- into a 500-line chat ring
-  -- shared with roughly three lines per kill, which is overwritten long before the
-  -- session ends. Everything that has to survive the session goes to the file.
+  -- The entry point into the recorder for facts the bus does not carry. They go
+  -- to the file, not through the logger: its 500-line chat ring, shared with
+  -- about three lines per kill, is overwritten long before a session ends.
   local function recordEvidence(kind, fields)
     evidence:record(kind, fields)
   end
 
   CombatLogRouter.new({ bus = bus, clock = clock, playerState = playerState, logger = logger,
-    recordEvidence = recordEvidence }):start()
+    recordEvidence = recordEvidence,
+    onUnreadable = function() sourceClosed(ns.core.RecordedSource.COMBAT_LOG) end,
+  }):start()
   TimePlayedSync.new({
     bus = bus, clock = clock, logger = logger,
     recordEvidence = recordEvidence,
-    -- Spike 0.6 asks whether the server sends time played unprompted, which cannot
-    -- be asked while the addon requests it on entering the world. Read here and not
-    -- later because the request fires during the loading screen.
+    -- Switchable so a session can observe whether the server sends time played
+    -- unprompted, which cannot be seen while the addon requests it on entering
+    -- the world. Read here, not later, because the request fires during the
+    -- loading screen.
     requests = settings[SettingKey.TIME_SYNC],
   }):start()
 
@@ -364,18 +330,15 @@ local function buildContext()
   local questLogReader = QuestLogReader.new()
 
   -- The client's own experience bar, as a place to stand and as something to
-  -- quiet. Declared before the registry because register() runs its probe there
-  -- and then, so a probe that closes over this must have something to close over.
+  -- quiet. Declared before the registry because register() runs its probe at
+  -- once, so a probe that closes over this needs it to exist.
   local clientXpBar = ClientXpBar.new()
 
-  -- One probe per client function this addon actually forks on. Until these
-  -- existed the registry held nothing, so `capabilities:missing()` was
-  -- structurally empty -- and an empty registry and a healthy one printed the
-  -- same sentence, which is why nobody noticed for the whole of this change.
+  -- One probe per client function this addon forks on. An empty registry would
+  -- report `capabilities:missing()` as empty, the same as a healthy client.
   --
-  -- `_G.Settings` is spelled out on purpose: this file binds a local `Settings`
-  -- for the addon's own settings module, and it shadows the client global
-  -- everywhere below.
+  -- `_G.Settings` is spelled out: the file-local `Settings` is the addon's own
+  -- settings module, and it shadows the client global.
   local capabilities = Capabilities.new()
   capabilities:register("creature_level", function() return UnitTokenFromGUID ~= nil end)
   capabilities:register("map_position", function()
@@ -384,7 +347,7 @@ local function buildContext()
   capabilities:register("quest_reward_on_turn_in", function() return GetQuestLogRewardXP ~= nil end)
   -- Absent when another addon has replaced the main bar, and on any client whose
   -- bar is not where this one looks. The slot setting then stays on disk and
-  -- simply does not take effect (D49).
+  -- does not take effect.
   capabilities:register("client_xp_bar", function() return clientXpBar:present() end)
   -- Whether the options panel can offer a list rather than a button that cycles.
   -- Probed here, next to the others, so the answer reaches the diagnostic even on
@@ -397,19 +360,67 @@ local function buildContext()
   capabilities:register("settings_canvas", function()
     return _G.Settings ~= nil and _G.Settings.RegisterCanvasLayoutCategory ~= nil
   end)
-  -- The addon channel. Absent, the addon loses exactly one thing -- hearing that
-  -- somebody nearby runs a newer build -- and keeps the changelog, the upgrade
-  -- notice and everything else. Named here so the diagnostic can say it was off.
+  -- The addon channel. Without it the addon loses only the news that somebody
+  -- nearby runs a newer build, and keeps the changelog, the upgrade notice and
+  -- everything else. Named here so the diagnostic can say it was off.
   capabilities:register("addon_messages", function() return ns.adapter.VersionChannel.isSupported() end)
-  -- Absent when the player has nameplates switched off, and then a pull is built
-  -- from the combat log alone -- which sees every creature that has touched you and
-  -- none of the ones still running at you.
+  -- Absent when the player has nameplates switched off. A pull is then built from
+  -- the combat log alone, which sees every creature that has touched the player
+  -- and none of those still running at them.
   capabilities:register("nameplates", function() return ns.adapter.NameplateWatch.isSupported() end)
 
-  -- THE VERSION CHECK. An addon cannot ask a server anything, so the only source
-  -- for "is there something newer" is the people already around the player. Three
-  -- pieces, and only the last one touches the client (design D64): what is newer
-  -- and who said so, how often this addon is allowed to speak, and the channel.
+  -- The sources the whole addon hangs from. The probes above are about one
+  -- feature each; these say what Ascent does on this client, registered together
+  -- because that answer is this list, not a flavour name. Each can be absent (the
+  -- client does not have it) or unreadable (it has it and will not let an addon
+  -- read what it returns, as the 12.0 engine of World of Warcraft: Forever
+  -- does), which is why a capability carries a reason.
+  --
+  -- The combat log, which every combat metric hangs from and nothing else does.
+  -- Only a fight shows whether its lines are readable, so the probe reports
+  -- unreadable only when handed something it may not read, never from the
+  -- client's name.
+  capabilities:register(ns.core.RecordedSource.COMBAT_LOG, function() return CombatLogRouter.isSupported() end)
+  -- The chat channel that names where a gain came from. Without it the addon
+  -- still sees the experience (PLAYER_XP_UPDATE is a separate source) but cannot
+  -- say what paid it: the level still adds up, and every unnamed point is
+  -- unclassified rather than guessed at.
+  capabilities:register(ns.core.RecordedSource.XP_CHAT, function() return WowEventRouter.isXpChatSupported() end)
+  -- The quest log, whichever way this client lets it be read. Absent means the
+  -- pending tab has nothing to forecast from, not that nothing is pending.
+  capabilities:register("quest_log", function() return QuestLogReader.isSupported() end)
+
+  -- What a level remembers about the sources it was recorded without. Two
+  -- moments mark it: the level opening or resuming while a source is already off
+  -- (on World of Warcraft: Forever, the combat log from the first minute), and a
+  -- source closing while the level is recorded. The views read the mark off the
+  -- record, not off this registry, because a level may be read later, on a
+  -- client that has the source.
+  bus:subscribe(EventTopic.LEVEL_STARTED, function(payload)
+    for _, source in Frozen.each(ns.core.RecordedSource) do
+      if not capabilities:has(source) then
+        payload.record:markUnavailable(source, capabilities:reasonFor(source))
+      end
+    end
+  end)
+  sourceClosed = function(source)
+    if not capabilities:degrade(source, Capabilities.Reason.UNREADABLE) then
+      return
+    end
+    local record = tracker:current()
+    if record ~= nil then
+      record:markUnavailable(source, Capabilities.Reason.UNREADABLE)
+    end
+    -- Rare by construction (once per source per session), so it is kept whole
+    -- rather than only counted.
+    recordEvidence("sourceClosed", { source = source, at = clock:now() })
+    logger:debug(("source closed mid-session: %s"):format(source))
+  end
+
+  -- The version check. An addon cannot query a server, so the only source for
+  -- "is there something newer" is the players around this one. Three pieces, and
+  -- only the last touches the client: what is newer and who said so, how often
+  -- this addon may speak, and the channel.
   local updateWatch = ns.core.UpdateWatch.new({
     version = addonVersion,
     enabled = settings[SettingKey.UPDATE_CHECK],
@@ -425,18 +436,17 @@ local function buildContext()
   }):start()
 
   -- Every quest the addon can name, in one place for every surface that shows
-  -- one. It is fed HERE, from both of the places a client ever says a name --
-  -- the log sweep just below and the quest dialogue further down -- rather than
-  -- by the services those two feed, so that neither of them has to carry a
-  -- string it does not use to a screen it does not know about.
+  -- one. It is fed here, from both places a client says a name (the log sweep
+  -- just below and the quest dialogue further down), rather than by the services
+  -- those two feed, so neither carries a string it does not use to a screen it
+  -- does not know about.
   local questNames = QuestNames.new({ repository = repository })
 
-  -- The only way this addon reads the quest log, so that a title cannot be read
-  -- and thrown away by one caller while another keeps it. The sweep reads a title
-  -- for every accepted quest and the forecast service has no use for one; this is
-  -- where it stops being discarded. It is also what makes naming retroactive: a
-  -- quest is named when it is ACCEPTED, so by the time it is handed in -- and for
-  -- every level report written afterwards -- the directory already knows it.
+  -- The only way this addon reads the quest log, so a title cannot be read and
+  -- thrown away by one caller while another keeps it: the sweep reads a title
+  -- for every accepted quest and the forecast service has no use for one. It
+  -- also makes naming retroactive: a quest is named when it is accepted, so by
+  -- the time it is handed in, and for every later level report, it is known.
   local function sweepQuestLog(sweepLogger, recorder)
     local forecasts = questLogReader:scan(sweepLogger, recorder)
     local learned = 0
@@ -453,10 +463,9 @@ local function buildContext()
     return forecasts
   end
 
-  -- Group 8: experience pending from the quest log. `scan` is a plain
-  -- function rather than handing the reader itself to the service, the same
-  -- reason LevelTracker takes `xpForLevel` as a function (core/ must never
-  -- hold a reference typed by adapter/).
+  -- Experience pending from the quest log. `scan` is a plain function rather
+  -- than the reader itself, for the reason LevelTracker takes `xpForLevel` as a
+  -- function: core/ must never hold a reference typed by adapter/.
   local questForecastService = QuestForecastService.new({
     playerState = playerState, repository = repository,
     scan = function() return sweepQuestLog() end,
@@ -468,13 +477,12 @@ local function buildContext()
   -- client sent something this addon does not trust either.
   bus:subscribe(EventTopic.QUEST_COMPLETED, function(payload)
     if payload.xpReward ~= nil then
-      -- The record, not just the side effect: task 8.7 wants twenty of these from
-      -- a real session, compared against what the panel was showing at the time.
+      -- The calibration record, not just its side effect, so a session's file
+      -- can compare what turn-ins paid with what the forecast showed at the time.
       recordEvidence("questCalibration", questForecastService:calibrate(payload.questId, payload.xpReward))
     end
   end)
-  -- 8.4b: the quest-dialogue reward (D15's "level 2"), learned before the
-  -- quest is ever turned in.
+  -- The reward the quest dialogue shows, learned before the quest is turned in.
   bus:subscribe(EventTopic.QUEST_REWARD_SEEN, function(payload)
     questForecastService:learn(payload.questId, payload.reward)
     -- The dialogue's own title, which is the only way to name a quest that was
@@ -482,23 +490,19 @@ local function buildContext()
     questNames:remember(payload.questId, payload.title)
   end)
 
-  -- Forward-declared alongside `bar`: redraw() has to be able to ask whether the
-  -- demo is running, and the demo cannot exist until the bar it drives does.
+  -- Forward-declared: redraw() has to ask whether the demo is running, and the
+  -- demo cannot exist until the bar it drives does.
   local demo
 
-  -- Forward-declared: saveSetting closes over it, but it is only assigned once the
-  -- bar itself is constructed, a few lines below.
-  -- optionsPanel is declared up here with the other two views and not where it is
-  -- built, because saveSetting closes over it and is written long before it.
-  -- optionsCategory rides along for the same reason: the report panel's shortcut
-  -- into the settings closes over both, and that panel is built long before the
-  -- options register themselves.
+  -- Forward-declared because saveSetting closes over the views and is written
+  -- before any of them is built. optionsCategory rides along because the report
+  -- panel's shortcut into the settings closes over it and optionsPanel, and that
+  -- panel is built long before the options register themselves.
   local bar, panel, optionsPanel, optionsCategory, plate
 
-  -- The pull plate's own recorder. Built here rather than inside the views'
-  -- pcall on purpose: it is pure domain and cannot fail on a client quirk, and a
-  -- session whose frames failed to build should still be RECORDING pulls -- the
-  -- same principle that keeps the level tracker outside that pcall.
+  -- The pull plate's recorder, built outside the views' pcall: it is pure domain
+  -- and cannot fail on a client quirk, and a session whose frames failed to
+  -- build should still record pulls, as it still records levels.
   --
   -- `enabled` is read live rather than captured, so turning the plate off stops
   -- the recording on the same tick instead of after a reload.
@@ -507,26 +511,23 @@ local function buildContext()
     clock = clock,
     enabled = function() return settings[SettingKey.PLATE_ENABLED] end,
     -- A pull can be carried on for exactly as long as the player can still see
-    -- it. Derived rather than restated, so the offer the plate is making and the
+    -- it. Derived rather than restated, so the offer the plate makes and the
     -- window the tracker honours cannot disagree.
     --
-    -- A FUNCTION and not the number, because how long the plaque stays is the
-    -- player's now (D89): captured as a value, changing it would move what is
-    -- drawn and not what counts as the same fight until the next /reload -- the
-    -- gap RECOVERY_THRESHOLD still has and COLLECT_DAMAGE closed the same way.
+    -- A function, not the number, because the hold time is a player setting: a
+    -- captured value would change what is drawn but not what counts as the same
+    -- fight until the next /reload (the gap RECOVERY_THRESHOLD still has).
     resumeSeconds = function()
       return settings[SettingKey.PLATE_HOLD_SECONDS] + PullPlateView.FADE_SECONDS
     end,
   })
 
-  -- A pull that never happened, for looking at the plate without going to find
+  -- A pull that never happened, for looking at the plate without finding
   -- something to kill. It stands in for the tracker rather than publishing on
-  -- the bus, and that is the whole of its design: the topics a real pull rides
-  -- on are the same ones the level's own collectors and the experience ledger
-  -- read, so a demo that published them would write a fictional fight into the
-  -- player's actual level record. A stand-in answers the three questions the
-  -- plate asks -- which pull, what phase, which generation -- and touches
-  -- nothing else.
+  -- the bus: the topics a real pull rides on also feed the level's collectors
+  -- and the experience ledger, so publishing them would write a fictional fight
+  -- into the player's level record. The stand-in answers only what the plate
+  -- asks (which pull, what phase, which generation).
   local plateDemo
 
   local function startPlateDemo()
@@ -534,12 +535,10 @@ local function buildContext()
     plateDemo = {
       pull = pull,
       phase = PullPhase.ACTIVE,
-      -- The script, in seconds from the start. Written as data so the shape of
-      -- the demo is readable at a glance rather than spread through a branch.
-      -- Engagements come FIRST and deliberately: the demo has to show the state
-      -- the plate used to have nothing to say about -- two creatures pulled, both
-      -- still standing, nothing dead. A script that opened with a kill would
-      -- skip straight past the case this is meant to demonstrate.
+      -- The script, in seconds from the start, written as data so its shape
+      -- reads at a glance. Engagements come first so the demo shows two
+      -- creatures pulled, both still standing and nothing dead; a script that
+      -- opened with a kill would skip that state.
       script = {
         { at = 0.2, damage = 90, on = { "Kobold Miner", "demo-a" }, ability = { 1752, "Sinister Strike" } },
         { at = 0.8, damage = 70, on = { "Kobold Miner", "demo-b" }, ability = { 1752, "Sinister Strike" } },
@@ -575,9 +574,8 @@ local function buildContext()
         if beat.healing then self.pull:recordHealing(beat.healing) end
         self.step = self.step + 1
       end
-      -- Two beats past the last one, so the settling state is on screen long
-      -- enough to be read -- it is a real state of a real pull and the demo
-      -- exists to show the states.
+      -- Two beats past the last one, so the settling state, a real state of a
+      -- real pull, stays on screen long enough to be read.
       if self.step > #self.script and self.phase == PullPhase.ACTIVE and elapsed >= 6.5 then
         self.pull.endedAt = self.pull.startedAt + 6.5
         self.phase = PullPhase.SETTLING
@@ -592,14 +590,14 @@ local function buildContext()
     return plateDemo
   end
 
-  -- One function, called from everywhere the answer could change: after the views
-  -- exist, on every settings change, and on entering the world -- which is both
-  -- the first moment the client's bar is real and the moment after a loading
-  -- screen when whatever the client did to its own bar has just been redone.
+  -- Called from everywhere the answer could change: after the views exist, on
+  -- every settings change, and on entering the world, which is both the first
+  -- moment the client's bar is real and the moment after a loading screen when
+  -- the client has redone whatever it does to its own bar.
   --
-  -- Idempotent on purpose (ClientXpBar:applyQuiet converges), so calling it again
-  -- costs a table walk over four names and never records its own silence as the
-  -- state to give back later.
+  -- Idempotent (ClientXpBar:applyQuiet converges), so a repeat call costs a
+  -- table walk over four names and never records its own silence as the state
+  -- to give back later.
   local function applyBarSlot()
     if bar == nil then
       return
@@ -616,24 +614,21 @@ local function buildContext()
     end
   end
 
-  -- Whether the player asked to hide the bar via `/ascent ocultar`. draw() in
-  -- ui/XpBarView.lua unconditionally shows the frame whenever it has something to
-  -- draw, so without tracking this separately the very next redraw -- any XP gain,
-  -- rest change, anything on the topic list below -- would silently undo the
-  -- command within moments. redraw() further down is the one place that honors it.
+  -- Whether the player hid the bar with `/ascent hide`. draw() in
+  -- ui/XpBarView.lua shows the frame whenever it has something to draw, so
+  -- without this the next redraw (any gain, rest change, anything on the topic
+  -- list below) would undo the command. redraw() is the one place that honours it.
   local userHidden = false
 
-  -- The bar's own persistence callback (see ui/XpBarView.lua's header), and also
-  -- 12.3's hot-apply: it re-resolves `settings` and pushes the new table into the
-  -- three things that captured a copy at construction time and have no way to
-  -- notice a change on their own.
+  -- The bar's persistence callback (see ui/XpBarView.lua's header), and the
+  -- hot-apply path: it re-resolves `settings` and pushes the new table into the
+  -- views, which captured a copy at construction and cannot notice a change.
   --
-  -- COLLECT_DAMAGE now hot-applies too, but not through this function: DamageCollector's
-  -- `enabled` closure reads the same `settings` upvalue this reassigns, so a toggle
-  -- is visible on that collector's very next call with no rebuild needed.
-  -- RECOVERY_THRESHOLD is the one setting still construction-time-only:
-  -- CombatTimeCollector.new stores it as a plain value, not a closure, so changing
-  -- it takes a reload -- the same gap COLLECT_DAMAGE had before group 6 existed.
+  -- COLLECT_DAMAGE hot-applies without this function: DamageCollector's
+  -- `enabled` closure reads the `settings` upvalue this reassigns.
+  -- RECOVERY_THRESHOLD is the one construction-time-only setting:
+  -- CombatTimeCollector.new stores it as a plain value, so changing it takes a
+  -- reload.
   local function saveSetting(key, value)
     local stored = repository:settings()
     local merged = {}
@@ -648,9 +643,8 @@ local function buildContext()
     settings = Settings.resolve(merged)
 
     -- Not `bar.settings = settings`: the bar has an appearance, a size and a
-    -- position to re-derive from the new table, and it does it without
-    -- rebuilding a frame (ui/XpBarView.lua). That is the spec's "applies
-    -- immediately, no reload".
+    -- position to re-derive from the new table, and does it without rebuilding
+    -- a frame (ui/XpBarView.lua), so a change applies with no reload.
     if bar ~= nil then
       bar:applySettings(settings)
       -- After applySettings, not before: that call re-resolves the appearance and
@@ -662,19 +656,18 @@ local function buildContext()
       panel:applySettings(settings)
     end
     if plate ~= nil then
-      -- The whole table, so the view is looking at the same settings this
-      -- function just resolved. It follows the bar's skin rather than carrying
-      -- one of its own: two surfaces of the same addon picking different skins
-      -- is a setting nobody asked for and a screenshot nobody wants.
+      -- The whole table, so the view sees the settings this function just
+      -- resolved. The plate follows the bar's skin rather than carrying its
+      -- own, so the two surfaces never wear different skins.
       plate:applySettings(settings)
       if not settings[SettingKey.PLATE_ENABLED] then
         plate:hide()
         pullTracker:reset()
       end
     end
-    -- The options panel too, and for the same reason the bar gets told: it holds
-    -- a control per setting, and every one of them is showing a value that just
-    -- changed. Guarded because it is built last and may not exist at all.
+    -- The options panel too: it holds a control per setting, each showing a value
+    -- that may just have changed. Guarded because it is built last and may not
+    -- exist at all.
     if optionsPanel ~= nil and optionsPanel.refresh ~= nil then
       optionsPanel.refresh()
     end
@@ -697,25 +690,22 @@ local function buildContext()
     -- not the bar.
     applyBarSlot()
 
-    -- Group 11.1: the level report panel. `recordingLevel` (defined above, group
-    -- 6) is exactly the right indirection here too -- the panel has no more
-    -- business knowing about isRecording()'s gate than the combat collectors do.
-    -- Wired to the bar's click-to-toggle only now, after both exist: XpBarView
-    -- reads `onToggle` once from its constructor options rather than re-reading
-    -- it later, so setting the field directly here (it is a plain value on
-    -- `self`, not a setter) is simpler than restructuring either constructor's
-    -- order to make onToggle available up front.
+    -- The level report panel. `recordingLevel` (above) is the right indirection
+    -- here too: the panel has no more business knowing isRecording()'s gate than
+    -- the combat collectors do. Wired to the bar's click-to-toggle after both
+    -- exist: XpBarView keeps `onToggle` as a plain field on `self`, read at click
+    -- time, so assigning it here is simpler than reordering either constructor.
     panel = ReportPanelView.new({
       settings = settings, saveSetting = saveSetting, currentRecord = recordingLevel,
       questForecastService = questForecastService, questNames = questNames, locale = locale,
-      -- How many are sharing the pay right now. The domain cannot ask the client
-      -- itself, so the question crosses here, through the port, exactly like every
-      -- other reading of the character's state -- and it is asked on each rebuild
-      -- because the answer changes the moment the player joins or leaves a group.
+      -- How many are sharing the pay right now. The domain cannot ask the client,
+      -- so the question crosses here through the port, like every other reading
+      -- of the character's state, and is asked on each rebuild because the answer
+      -- changes the moment the player joins or leaves a group.
       sharedBy = function() return playerState:sharedBy() end,
-      -- The three history seams (6.7). Functions rather than the store itself, for
-      -- the same reason `currentRecord` is one: the view asks a question and gets
-      -- an answer, and never learns that a RecordStore exists.
+      -- The history seams. Functions rather than the store itself, for the same
+      -- reason `currentRecord` is one: the view asks a question and gets an
+      -- answer, and never learns that a RecordStore exists.
       completedLevels = function() return store:completedLevels() end,
       currentLevel = function()
         local record = tracker:current()
@@ -732,9 +722,9 @@ local function buildContext()
         end
         return store:completed(level)
       end,
-      -- Resolved at click time, not now: the options panel registers itself much
-      -- further down this function, so a value captured here would be nil for the
-      -- whole session. The same two fields `/ascent options panel` reads.
+      -- Resolved at click time: the options panel registers itself much further
+      -- down this function, so a value captured here would be nil for the whole
+      -- session. The same two fields `/ascent options panel` reads.
       onOpenOptions = function()
         openOptionsPanel(optionsPanel, optionsCategory)
       end,
@@ -746,17 +736,15 @@ local function buildContext()
     -- plate and leaves the bar and the panel already built above.
     plate = PullPlateView.new({
       settings = settings, saveSetting = saveSetting, locale = locale,
-      -- What the LEVEL still needs, asked fresh on every draw. `recordingLevel`
-      -- is the same indirection the panel and the collectors use: nil when there
-      -- is no level open, which the plate reads as "nothing to say" rather than
-      -- as zero.
-      -- Read-only, and for one purpose: KillXpEstimator needs this level's own
-      -- per-creature history to say what the things still standing are likely to
-      -- pay. The same indirection everything else here uses.
+      -- Read-only, for one purpose: KillXpEstimator needs this level's
+      -- per-creature history to price what is still standing. The same
+      -- `recordingLevel` indirection the panel and the collectors use.
       levelRecord = recordingLevel,
       -- The other half of what the forecast needs: which population to price it
       -- from. Same seam, same reason as the panel's.
       sharedBy = function() return playerState:sharedBy() end,
+      -- What the level still needs, asked fresh on every draw. nil when no level
+      -- is open, which the plate reads as "nothing to say" rather than as zero.
       levelProgress = function()
         local record = recordingLevel()
         if record == nil or record.xpRequired == nil or record.xpRequired <= 0 then
@@ -789,29 +777,24 @@ local function buildContext()
     logger:warn(locale:get(TextKey.ERR_UI_FAILED, tostring(viewsError)))
   end
 
-  -- The one place that actually repaints the bar, so every call site that wants a
-  -- redraw gets `userHidden` honored for free instead of having to remember it.
-  -- unattributedXp is what XpAttribution has confirmed from the client but not
-  -- yet settled into a source (D21) -- passed through so the bar's total and
-  -- percent move immediately instead of lagging behind the settling window.
+  -- The one place that repaints the bar, so every caller gets `userHidden`
+  -- honoured. unattributedXp is what XpAttribution has confirmed from the client
+  -- but not yet settled into a source; passing it lets the bar's total and
+  -- percent move at once instead of lagging behind the settling window.
   local function redraw()
-    -- No views this session (see the pcall above): everything else carries on,
-    -- there is simply nothing to paint.
+    -- No views this session (see the pcall above): nothing to paint.
     if bar == nil then
       return
     end
-    -- The demo owns the bar while it is on: without this, the next 5 Hz tick
-    -- would paint the player's real level straight over whatever state they
-    -- were looking at (app/DemoDriver.lua).
+    -- The demo owns the bar while it is on: otherwise the next 5 Hz tick would
+    -- paint the player's real level over the demo state (app/DemoDriver.lua).
     if demo ~= nil and demo:isActive() then
       return
     end
 
     local restedXp = playerState:restedXp()
-    -- Group 7: pace and projections, computed fresh on every redraw from the
-    -- record's own live numbers -- nothing here is persisted, so there is
-    -- nothing to keep in sync with the record besides calling this before
-    -- reading it.
+    -- Pace and projections, computed fresh on every redraw from the record's
+    -- live numbers. Nothing here is persisted, so nothing has to be kept in sync.
     local estimate = ProgressEstimator.build(tracker:current(), {
       playedSeconds = tracker:playedSeconds(),
       restedXp = restedXp,
@@ -824,13 +807,12 @@ local function buildContext()
       unattributedXp = xpAttribution:pendingAmount(),
       xpPerHour = estimate.xpPerHourLevel,
       timeToLevel = estimate.timeToLevel,
-      -- "time on this sitting" (see XpBarView.buildTextValues) is D14's session
-      -- clock, the same one SessionXpTracker's own pace is measured against.
+      -- "Time this session" (see XpBarView.buildTextValues) is the session
+      -- clock, time since the client started, which SessionXpTracker's pace is
+      -- also measured against.
       sessionTime = clock:now(),
-      -- Group 8: everything accepted, not only what is already turned-in-ready
-      -- -- the proposal's own framing ("lo que el personaje cobrará al
-      -- entregar lo que ya lleva aceptado") is about the whole log, not just
-      -- the subset ready this instant.
+      -- Everything accepted, not only what is ready to turn in: the pending
+      -- channel projects what the whole quest log will pay.
       questPending = questForecastService:report().total,
     })
     if userHidden then
@@ -841,12 +823,10 @@ local function buildContext()
   for _, topic in ipairs({
     EventTopic.RECORD_UPDATED, EventTopic.REST_CHANGED, EventTopic.XP_STATE_CHANGED,
     EventTopic.LEVEL_STARTED, EventTopic.LEVEL_COMPLETED,
-    -- Without this one, redraw()'s own read of xpAttribution:pendingAmount() (D21,
-    -- above) was correct but never got CALLED promptly: nothing marked the
-    -- scheduler dirty on a raw delta, only once it settled ~3s later into
-    -- RECORD_UPDATED -- at which point pendingAmount() was already back to zero
-    -- and the bar jumped straight from the old total to the final one, never
-    -- showing the provisional frame this fix exists to show.
+    -- A raw delta marks the scheduler dirty before it settles (~3 s later, into
+    -- RECORD_UPDATED): xpAttribution:pendingAmount() is non-zero only in that
+    -- window, and without this topic the bar would jump from the old total to
+    -- the final one without showing the provisional state.
     EventTopic.XP_DELTA_OBSERVED,
   }) do
     bus:subscribe(topic, function()
@@ -857,15 +837,12 @@ local function buildContext()
     end)
   end
 
-  -- XpAttribution.settle() only runs on intake (a delta, a hint, a death arriving)
-  -- -- see its own header comment: "Called after every intake and, from the
-  -- composition root, on a timer, so a lone delta with nothing following it still
-  -- settles." That timer never existed until now, so the last gain of a farming
-  -- session (nothing arrives after it to trigger settle()) sat unsettled forever:
-  -- shown as provisional (D21, above) but never resolved to its real source or to
-  -- confirmed UNKNOWN. Throttled well under the ~4.5s window (3x the 1.5s default)
-  -- this exists to drain, so it costs nothing that redraw's own 5Hz cap doesn't
-  -- already pay for elsewhere.
+  -- XpAttribution:settle() otherwise runs only on intake (a delta, a hint, a
+  -- death), so the timer below settles a lone delta with nothing after it, such
+  -- as the last gain of a farming session; without it that gain would stay
+  -- provisional instead of resolving to its source or to UNKNOWN. Once a second
+  -- is well under the ~4.5 s settling window (3x the 1.5 s default), and costs
+  -- nothing the 5 Hz redraw cap does not already pay for.
   local lastSettleAt = nil
   local lastObserveAt = nil
   local lastQuestScanAt = nil
@@ -876,9 +853,8 @@ local function buildContext()
 
   local ticker = CreateFrame("Frame")
   ticker:SetScript("OnUpdate", function(_, elapsed)
-    -- The presentation clock (design D24). One line, inside the OnUpdate that
-    -- already existed rather than a second script of its own (D32): this frame
-    -- was already being paid for. The call returns immediately once the bar has
+    -- The presentation clock, inside this OnUpdate rather than a second script:
+    -- this frame is already paid for. The call returns at once when the bar has
     -- arrived and nothing is flashing, so a bar at rest costs a comparison.
     if bar ~= nil then
       bar:tick(elapsed)
@@ -886,32 +862,20 @@ local function buildContext()
 
     local now = clock:now()
 
-    -- The pull plate, on the same frame clock the bar uses and for the same
-    -- reason (D24, D32): its counters interpolate per frame and its finished
-    -- plaque fades per frame, and neither is worth a second OnUpdate.
+    -- The pull plate, on the same frame clock: its counters interpolate and its
+    -- finished plaque fades per frame, and neither is worth a second OnUpdate.
     --
-    -- Three calls in a fixed order, and the order is the whole of it: tick the
-    -- tracker so a settled pull closes, redraw only if something actually
-    -- changed, then advance whatever the redraw left in motion. Redrawing
-    -- unconditionally here would rebuild a view-model sixty times a second
-    -- during a fight for a frame whose numbers changed twice.
+    -- Three calls in a fixed order: tick the tracker so a settled pull closes,
+    -- redraw only if something changed, then advance whatever the redraw left in
+    -- motion. Redrawing unconditionally would rebuild a view-model sixty times a
+    -- second during a fight whose numbers changed twice.
     pullTracker:tick(now)
-    -- What you pulled that has not reached you yet (D6's budget is why this is
-    -- throttled AND gated): only while a pull is actually open, so out of combat
-    -- it costs one comparison, and four times a second inside one, which is far
-    -- faster than a creature can cross the ground between you.
-    -- It used to run ONLY while a pull was already open, which put the one thing
-    -- that could see a creature coming behind the thing it was supposed to
-    -- precede: of nine fights recorded on 2026-09-22, eight were opened by a
-    -- combat log line and the sweep was switched off for every one of them until
-    -- after the fact. A creature charging you with a shield up writes nothing the
-    -- client calls damage, so the plate stayed empty until something landed.
-    --
-    -- Now it always runs, and the rate is what keeps D6's budget: four times a
-    -- second inside a fight, where creatures arrive and the answer changes, and
-    -- once a second outside one, which is far faster than anything can cross the
-    -- ground between you and still slow enough to disappear into the frame this
-    -- OnUpdate was already paying for.
+    -- Nameplates: what was pulled and has not reached the player yet. The sweep
+    -- runs outside pulls too, because it has to see a creature before the combat
+    -- log does: one charging a shielded player writes nothing the client calls
+    -- damage. The rate keeps the frame budget: four times a second inside a
+    -- fight, where the answer changes, once a second outside one, still faster
+    -- than anything can cross the ground to the player.
     local sweepEvery = pullTracker:current() ~= nil and 0.25 or 1
     if lastSweepAt == nil or now - lastSweepAt >= sweepEvery then
       lastSweepAt = now
@@ -919,9 +883,8 @@ local function buildContext()
     end
     if plate ~= nil then
       if plateDemo ~= nil then
-        -- The demo owns the plate while it runs, the same way DemoDriver owns
-        -- the bar: without this the next real change would paint a live pull
-        -- straight over the state the player asked to look at.
+        -- The demo owns the plate while it runs, as DemoDriver owns the bar:
+        -- otherwise the next real change would paint a live pull over it.
         if not plateDemo:advance(now) then
           plateDemo = nil
           plate:hide()
@@ -929,14 +892,10 @@ local function buildContext()
           plate:follow(plateDemo, now)
         end
       elseif pullTracker:consumeChange() then
-        -- What the plate is actually being handed, which until now was the one
-        -- link in this chain with no instrument on it. Three sessions were spent
-        -- reasoning about an empty plate from enrolment data alone -- the file
-        -- could say a creature joined a pull and nothing at all about whether a
-        -- pull existed, what phase it was in, or what the view was asked to draw.
-        --
-        -- Only on a change, which is already throttled by consumeChange, and a
-        -- counter-only family so it can never crowd the ring.
+        -- What the plate is handed, so the file can say whether a pull existed,
+        -- what phase it was in and what the view was asked to draw, not only
+        -- that a creature enrolled. Only on a change, which consumeChange
+        -- throttles, and in a counter-only family so it cannot crowd the ring.
         local pull = pullTracker:current()
         recordEvidence("plate." .. tostring(pullTracker:currentPhase())
           .. "." .. (pull ~= nil and tostring(pull:engagedCount()) or "nopull"))
@@ -948,31 +907,29 @@ local function buildContext()
       lastSettleAt = now
       xpAttribution:settle(now)
     end
-    -- CombatTimeCollector's recovery sampling (6.5, D23): tied to its own 5Hz
-    -- throttle, not to scheduler:tick(), which only fires when something is
-    -- already dirty -- a player standing still recovering triggers no bus event
-    -- at all, so waiting on the redraw scheduler would mean this never runs.
+    -- CombatTimeCollector's recovery sampling, on its own 5 Hz throttle rather
+    -- than scheduler:tick(), which fires only when something is dirty: a player
+    -- standing still to recover triggers no bus event at all.
     if lastObserveAt == nil or now - lastObserveAt >= 0.2 then
       lastObserveAt = now
       combatTimeCollector:observe(recordingLevel(), playerState:healthFraction(), playerState:powerFraction())
-      -- The place is sampled on the same tick and for the same reason: the client
+      -- The place is sampled on the same tick for the same reason: the client
       -- fires no event for "the character is somewhere else now", and the time a
       -- place cost is the denominator of every rate the panel shows for it. The
-      -- collector rebuilds its key only when the answer actually changes, so a
-      -- tick that finds the character where it left them costs two comparisons.
+      -- collector rebuilds its key only when the answer changes, so a tick that
+      -- finds the character where it was costs two comparisons.
       placeTimeCollector:observe(recordingLevel(), playerState:place())
     end
-    -- Group 8's own cadence (8.3): tied to its own throttle rather than
-    -- scheduler:tick(), for the same reason CombatTimeCollector's sampling
-    -- above is -- QUEST_LOG_CHANGED marking this dirty has nothing to do with
-    -- whatever marks the bar's own scheduler dirty, and accepting a quest
-    -- with no XP gain in the same moment must not have to wait for one.
+    -- The quest forecast's cadence, on its own throttle for the same reason:
+    -- QUEST_LOG_CHANGED marks this service dirty independently of the bar's
+    -- scheduler, and accepting a quest with no experience gain must not wait
+    -- for one.
     if lastQuestScanAt == nil or now - lastQuestScanAt >= 0.2 then
       lastQuestScanAt = now
       if questForecastService:tick() then
         -- A fresh forecast changes the bar's pending channel and the panel's
-        -- (future) pending tab, neither of which QUEST_LOG_CHANGED marks
-        -- dirty on its own -- that topic only tells this service to rescan.
+        -- pending tab, neither of which QUEST_LOG_CHANGED marks dirty: that
+        -- topic only tells this service to rescan.
         scheduler:markDirty()
         if panel ~= nil then
           panel:markDirty()
@@ -981,32 +938,27 @@ local function buildContext()
     end
     if scheduler:tick() then
       redraw()
-      -- Riding the bar's own 5Hz tick (D7's general cap, not just the bar's
-      -- own) rather than calling this unthrottled every frame: the panel's
-      -- RebuildGate (11.7) already answers "is it even open" and "did
-      -- anything change" for free, but that is a cap on whether it does
-      -- real work at all, not on how OFTEN this call itself would otherwise
-      -- happen while both are true.
+      -- On the scheduler's 5 Hz tick, the general redraw cap, rather than every
+      -- frame. The panel's RebuildGate already skips the work when the panel is
+      -- closed or nothing changed, but that caps the work, not how often this
+      -- call is made while both are true.
       if panel ~= nil then
         panel:refresh()
       end
     end
   end)
 
-  -- tracker:start() reads UnitXPMax("player") (via LevelTracker:requiredFor), and
-  -- that is not reliably populated yet at ADDON_LOADED -- the client can still be
-  -- on the loading screen, unit data not yet synced from the server. Calling it
-  -- there produced a level record with xpRequired == 0 on a fresh login: read as
-  -- "nothing to show" by XpBarViewModel, and refused outright by XpLedger, which
-  -- errors rather than post experience into a level that needs none. A /reload
-  -- never showed the bug because the world was never torn down, so the unit data
-  -- was already real.
+  -- tracker:start() reads UnitXPMax("player") (via LevelTracker:requiredFor),
+  -- which is not reliably populated at ADDON_LOADED on a fresh login: the client
+  -- can still be on the loading screen, unit data not yet synced. A record with
+  -- xpRequired == 0 reads as "nothing to show" to XpBarViewModel, and XpLedger
+  -- refuses to post experience into it. A /reload does not show this, because
+  -- the world is not torn down.
   --
-  -- PLAYER_ENTERING_WORLD is the client's own signal that this data now exists,
-  -- so that is what triggers the actual start -- and start() is designed to be
-  -- safe to call again on every later firing too (a loading screen mid-session,
-  -- a second /reload), the same self-healing behaviour WowEventRouter already
-  -- relies on for its own XP snapshot anchor.
+  -- PLAYER_ENTERING_WORLD is the client's signal that the unit data exists, so
+  -- it triggers the start. start() is safe to call again on every later firing
+  -- (a loading screen mid-session, a /reload), as WowEventRouter's experience
+  -- snapshot anchor also relies on.
   local entering = CreateFrame("Frame")
   entering:RegisterEvent(WowEvent.PLAYER_ENTERING_WORLD)
   entering:SetScript("OnEvent", function()
@@ -1017,10 +969,9 @@ local function buildContext()
     redraw()
   end)
 
-  -- Everything built above, kept reachable so the options panel that is the next
-  -- phase of this same work can read and write settings, toggle the bar and read
-  -- diagnostics without reconstructing any of it. Read-only by convention: nothing
-  -- outside this file should replace one of these wholesale.
+  -- Everything built above, reachable so the options panel can read and write
+  -- settings, toggle the bar and read diagnostics without rebuilding any of it.
+  -- Read-only by convention: nothing outside this file replaces an entry.
   local context = {
     repository = repository,       -- the raw SavedVariables port
     store = store,                 -- the record store (current/completed levels)
@@ -1035,11 +986,10 @@ local function buildContext()
     tracker = tracker,             -- the level tracker (current level, history)
     sessionXpTracker = sessionXpTracker,
     scheduler = scheduler,
-    -- The frame clock itself. Published for the same reason the views are: the
-    -- smoke harness has to be able to DRIVE the addon, and the three-call order
-    -- inside this OnUpdate -- close a settled pull, redraw if something changed,
-    -- advance what is in motion -- is behaviour worth exercising rather than
-    -- restating in a test.
+    -- The frame clock itself, published like the views so the smoke harness can
+    -- drive the addon: the three-call order inside this OnUpdate (close a
+    -- settled pull, redraw if something changed, advance what is in motion) is
+    -- behaviour worth exercising rather than restating in a test.
     ticker = ticker,
     bar = bar,                     -- the XpBarView instance
     panel = panel,                 -- the ReportPanelView instance
@@ -1052,42 +1002,35 @@ local function buildContext()
     clientBarPresent = function() return clientXpBar:present() end,
     saveSetting = saveSetting,     -- (key, value) -> persists + hot-applies
     settings = function() return settings end, -- always the current resolved table
-    -- The level the options panel's previews draw (7.3). A module function, not
-    -- the driver instance: the panel wants the demo's script, not a demo to
-    -- drive, and asking for the instance would have tied the preview to a
-    -- session where the views were built successfully.
+    -- The level the options panel's previews draw. A module function, not the
+    -- driver instance: the panel wants the demo's script, not a demo to drive,
+    -- and the instance exists only when the views were built.
     demoSample = DemoDriver.sample,
-    -- The plate's page has no preview of its own and does not want one (D92):
-    -- its button runs THIS, the same fake pull `/ascent options plate demo`
-    -- runs, on the real plate. Published as the function rather than as the
-    -- stand-in it builds, for the same reason demoSample is a module function --
-    -- the panel wants to start one, not to drive one.
+    -- The plate's page has no preview of its own: its button runs this, the
+    -- same fake pull `/ascent options plate demo` runs, on the real plate.
+    -- Published as the function rather than the stand-in it builds, because the
+    -- panel starts a demo and does not drive one.
     startPlateDemo = startPlateDemo,
   }
   ns.app.context = context
 
   -- ---------------------------------------------------------------------------
-  -- 12.2: chat commands.
+  -- Chat commands.
   -- ---------------------------------------------------------------------------
 
-  -- The keyword is a literal and the description is a key, deliberately: the
-  -- dispatcher below matches these spellings byte for byte, so a translated keyword
-  -- would document a command that no longer answers.
+  -- The keyword is a literal and the description is a key: the dispatcher below
+  -- matches these spellings byte for byte, so a translated keyword would
+  -- document a command that does not answer.
   local HELP_LINES = {
     { "show", TextKey.CMD_HELP_SHOW },
     { "hide", TextKey.CMD_HELP_HIDE },
     { "panel", TextKey.CMD_HELP_PANEL },
     { "summary", TextKey.CMD_HELP_SUMMARY },
     { "pending", TextKey.CMD_HELP_PENDING },
-    -- Every subcommand handleOptions answers, and nothing else. It had grown three
-    -- short: `plate`, `slot` and `panel` all shipped without ever reaching this
-    -- line, which documents a command that does not exist just as surely as
-    -- advertising one that was folded away does -- and the harness checks it by
-    -- running what this line announces.
-    --
-    -- The alternatives are bracketed so that each one's first word IS the
-    -- keyword: `contrast on|off` read as two alternatives, the second of them
-    -- "off", which is not a subcommand at all.
+    -- Every subcommand handleOptions answers, and nothing else; the smoke harness
+    -- runs what this line announces. Alternatives are bracketed so each one's
+    -- first word is the keyword: `contrast on|off` unbracketed would read as two
+    -- alternatives, the second of them "off", which is not a subcommand.
     { "options [reset|skin <id>|slot <where>|plate [on|off|demo|reset]|panel"
       .. "|contrast <on|off>|motion <0-1>|lock|unlock|scale <n>|debug <on|off>]",
       TextKey.CMD_HELP_OPTIONS },
@@ -1112,10 +1055,10 @@ local function buildContext()
       return
     end
 
-    -- xpRequired is nilable by design (core/model/LevelRecord.lua: "learned from
-    -- the client; unknown until then"), so between login and the first PLAYER_XP_UPDATE
-    -- there is genuinely no total to show. The marker says that; tostring(nil) said
-    -- "nil xp".
+    -- xpRequired is nilable (core/model/LevelRecord.lua: "learned from the
+    -- client; unknown until then"), so between login and the first
+    -- PLAYER_XP_UPDATE there is no total to show, and the marker says so rather
+    -- than printing "nil xp".
     local xpRequired = record.xpRequired
       and tostring(record.xpRequired)
       or locale:get(TextKey.NOT_AVAILABLE)
@@ -1128,12 +1071,17 @@ local function buildContext()
         logger:info(locale:get(TextKey.CMD_SUMMARY_ROW, locale:get(SOURCE_NAME[source]), amount))
       end
     end
+    -- The same sentence the panel and the bar say about this level: where the
+    -- experience of creatures went when no kill line was there to name it.
+    local unnamed = record:unavailableReason(ns.core.RecordedSource.XP_CHAT)
+    if unnamed ~= nil then
+      logger:info(locale:get(ns.core.UnavailableText[ns.core.RecordedSource.XP_CHAT][unnamed]))
+    end
   end
 
-  -- 12.2's own scenario: total, subtotal ready to turn in, and the count of
-  -- quests with no known reward -- printed as a projection, never folded into
-  -- printSummary's own breakdown (quest-xp-forecast's "nunca se cuenta como
-  -- obtenida").
+  -- The pending total, the subtotal ready to turn in and the count of quests
+  -- with no known reward, printed as a projection and never folded into
+  -- printSummary's breakdown: pending experience is never counted as earned.
   local function printPending()
     local report = questForecastService:report()
     logger:info(locale:get(TextKey.CMD_PENDING, report.total, report.readyTotal))
@@ -1147,22 +1095,22 @@ local function buildContext()
     logger:info(locale:get(TextKey.CMD_STATUS_SCALE, tostring(settings[SettingKey.BAR_SCALE])))
     logger:info(locale:get(TextKey.CMD_STATUS_DEBUG, tostring(settings[SettingKey.DEBUG])))
     logger:info(locale:get(TextKey.CMD_STATUS_SLOT, tostring(settings[SettingKey.BAR_SLOT])))
-    -- Only when it would explain something. A player on the default slot has no
-    -- reason to be told about a bar the addon was not going to touch anyway.
+    -- Only when it would explain something: a player on the default slot has no
+    -- reason to hear about a bar the addon was not going to touch.
     if BarSlotPolicy.active(settings[SettingKey.BAR_SLOT]) and not clientXpBar:present() then
       logger:warn(locale:get(TextKey.CMD_SLOT_NO_CLIENT_BAR))
     end
   end
 
-  -- What `/ascent options plate` answers with no argument, the way `skin` and
-  -- `slot` already do. Written for a player who cannot find the plate at all, so
-  -- it leads with the three states that hide one -- switched off, transparent, or
-  -- dropped past the edge of the screen -- and says where it is before what it
-  -- draws. The lock is on the first line because it is what stops them moving it
-  -- once they have found it.
+  -- What `/ascent options plate` answers with no argument, as `skin` and `slot`
+  -- do. It is for a player who cannot find the plate, so it leads with the three
+  -- states that hide one (switched off, transparent, past the edge of the
+  -- screen) and says where it is before what it draws. The lock is on the first
+  -- line because it is what stops the plate moving once found.
   --
-  -- The plate's own appearance map is deliberately not printed: it is partial by
-  -- design (D87), it is the page's business, and no axis in it can hide a plate.
+  -- The plate's own appearance map is not printed: it is partial by design (it
+  -- only overrides the bar's skin), it belongs to the options page, and no axis
+  -- in it can hide a plate.
   local function printPlateStatus()
     logger:info(locale:get(TextKey.CMD_PLATE_STATUS,
       tostring(settings[SettingKey.PLATE_ENABLED]),
@@ -1178,8 +1126,8 @@ local function buildContext()
     logger:info(locale:get(TextKey.CMD_PLATE_AT,
       tostring(position.point), tostring(position.x), tostring(position.y)))
 
-    -- Through the layout service, so what is printed is in the order the plate
-    -- draws (D90) rather than in whatever order the saved file happens to list.
+    -- Through the layout service, so the zones print in the order the plate
+    -- draws them rather than in the saved file's order.
     local zones = ns.core.PlateLayout.zones(settings[SettingKey.PLATE_ZONES])
     if #zones == 0 then
       logger:info(locale:get(TextKey.CMD_PLATE_NO_ZONES))
@@ -1211,12 +1159,11 @@ local function buildContext()
         bar:setScale(scale) -- also persists internally
       end
     elseif sub == "reset" then
-      -- The way back. A player who made the bar unreadable, or dragged it
-      -- somewhere they cannot reach, cannot fix it from a panel they have to see
-      -- to click -- so this path deliberately does not depend on the interface
-      -- being usable, only on being able to type. Data is untouched: this resets
-      -- how the addon LOOKS, never what it has recorded ("/ascent reset confirm"
-      -- is the other one, and it asks first).
+      -- The way back. A player who made the bar unreadable, or dragged it out of
+      -- reach, cannot fix it from a panel they have to see to click, so this
+      -- path depends only on being able to type. Data is untouched: this resets
+      -- how the addon looks, never what it recorded ("/ascent reset confirm" is
+      -- the other one, and it asks first).
       saveSetting(SettingKey.BAR_APPEARANCE, {})
       saveSetting(SettingKey.BAR_COLORS, {})
       saveSetting(SettingKey.BAR_SKIN, ns.core.DEFAULT_SKIN_ID)
@@ -1228,10 +1175,8 @@ local function buildContext()
       logger:info(locale:get(TextKey.CMD_APPEARANCE_RESET))
     elseif sub == "skin" then
       -- The options panel is where a player picks a skin (ui/OptionsPanel.lua).
-      -- This is the shortcut, and -- like every other appearance command here --
-      -- the way back when the interface itself cannot be used: a bar dragged off
-      -- screen or made unreadable cannot be fixed from a panel the player has to
-      -- see to click.
+      -- This is the shortcut and, like every appearance command here, the way
+      -- back when the interface cannot be used.
       local catalog = ns.core.SkinCatalog
       if arg == "" then
         logger:info(locale:get(TextKey.CMD_SKINS, table.concat(ns.core.Frozen.keys(catalog), ", ")))
@@ -1247,8 +1192,8 @@ local function buildContext()
       local wanted = arg:lower()
       if wanted == "" then
         logger:info(locale:get(TextKey.CMD_STATUS_SLOT, tostring(settings[SettingKey.BAR_SLOT])))
-        -- The choices table is keyed BY the slot names, so its keys are the
-        -- vocabulary itself -- sorted, and with no second list to drift.
+        -- The choices table is keyed by the slot names, so its keys are the
+        -- vocabulary itself: sorted, with no second list to drift.
         logger:info(locale:get(TextKey.CMD_SLOTS,
           table.concat(Frozen.keys(ns.core.SettingChoices[SettingKey.BAR_SLOT]), ", ")))
       elseif Frozen.has(ns.core.SettingChoices[SettingKey.BAR_SLOT], wanted) then
@@ -1261,9 +1206,8 @@ local function buildContext()
       end
     elseif sub == "plate" then
       -- The pull plate, on or off. A frame that appears the moment a fight
-      -- starts is the one surface in this addon a player might want gone in a
-      -- hurry -- mid-raid, mid-anything -- so it gets a typed way out that does
-      -- not require finding a checkbox first.
+      -- starts is the surface a player may want gone in a hurry, so it gets a
+      -- typed way out that does not need a checkbox.
       local wanted = arg:lower()
       if wanted == "" then
         printPlateStatus()
@@ -1278,20 +1222,19 @@ local function buildContext()
           startPlateDemo()
         end
       elseif wanted == "reset" then
-        -- The way back, and for this surface the only one there is. The plate's
-        -- page is reached by clicking, and a plate dragged off the screen or left
-        -- at an opacity that hides it cannot be clicked: you cannot grab what you
-        -- cannot see. Same argument as the bar's reset above, and the same
-        -- promise -- this resets how the plate LOOKS, never what was recorded.
+        -- The way back, and for this surface the only one: the plate's page is
+        -- reached by clicking, and a plate dragged off screen or left at an
+        -- opacity that hides it cannot be clicked. Like the bar's reset, it
+        -- resets how the plate looks, never what was recorded.
         --
-        -- Its own keys and no others (D87): the plate follows the bar's skin,
-        -- palette and contrast, so a reset that reached those would undo, from a
-        -- command about one surface, choices made for the other. The list is
-        -- shared with the button on the plate's page so the two cannot disagree.
+        -- Its own keys and no others: the plate follows the bar's skin, palette
+        -- and contrast, so resetting those from a command about the plate would
+        -- undo choices made for the bar. The list is shared with the button on
+        -- the plate's page so the two cannot disagree.
         for _, key in ipairs(ns.core.PlateSettingKeys) do
-          -- A COPY of the default, never the default itself: a frozen map's proxy
+          -- A copy of the default, never the default itself: a frozen map's proxy
           -- written back is an empty carrier and reaches disk empty, and the zone
-          -- list a frozen table answers with IS its backing store.
+          -- list a frozen table answers with is its backing store.
           saveSetting(key, Frozen.plain(ns.core.Defaults[key]))
         end
         logger:info(locale:get(TextKey.CMD_PLATE_RESET))
@@ -1334,20 +1277,19 @@ local function buildContext()
       return
     end
 
-    -- 12.4: the same re-seeding path LevelTracker_spec.lua already exercises for
-    -- "new character mid-level" -- clearing record/sessionMark and calling start()
-    -- again lets it reconcile a fresh record from the character's current state,
-    -- rather than inventing a separate reset mechanism.
+    -- The re-seeding path LevelTracker_spec.lua exercises for "new character
+    -- mid-level": clearing record and sessionMark and calling start() again
+    -- reconciles a fresh record from the character's current state, with no
+    -- separate reset mechanism.
     store:clear()
     tracker.record = nil
     tracker.sessionMark = nil
     tracker:start()
     redraw()
-    -- The panel reads the store, and an open one is holding a view-model built
-    -- from records that no longer exist -- including, since the level selector,
-    -- a title naming one of them. `select(nil)` drops the selection and rebuilds
-    -- in one call; without it the panel keeps showing an erased level until
-    -- something unrelated happens to mark it dirty.
+    -- The panel reads the store, and an open one holds a view-model built from
+    -- records that no longer exist, including a selected level in its title.
+    -- `select(nil)` drops the selection and rebuilds in one call; without it the
+    -- panel shows an erased level until something else marks it dirty.
     if panel ~= nil then
       panel:select(nil)
     end
@@ -1355,17 +1297,10 @@ local function buildContext()
     logger:info(locale:get(TextKey.CMD_RESET_DONE))
   end
 
-  -- 12.6: what the running client looks like. Two facets the design calls out by
-  -- name have nothing to show today and this must not pretend otherwise --
-  -- "collector registration gated by flavor" is group 6's job and "quest data
-  -- provenance" is group 8's, neither exists yet, so neither has registered a
-  -- capability probe. capabilities:missing() is genuinely empty, not faked empty.
-  -- The order XpAttribution's counters print in, fixed rather than `pairs`
-  -- (non-deterministic order, same reason D22 sorts before writing to disk).
-  -- These already exist (XpAttribution:diagnostics()) but had no reader: a
-  -- player who sees experience land in "Unclassified" had no way to tell
-  -- whether it was a delta nothing claimed, a hint nothing settled, or a
-  -- channel this build's classifiers do not recognise.
+  -- XpAttribution's diagnostic counters, in a fixed order rather than the
+  -- non-deterministic order of `pairs`. They tell a player whose experience
+  -- landed in "Unclassified" whether it was a delta nothing claimed, a hint
+  -- nothing settled, or a channel this build's classifiers do not recognise.
   local DIAGNOSTICS_LABELS = {
     { "pendingDeltas", "deltas awaiting settlement" },
     { "pendingHints", "hints awaiting settlement" },
@@ -1379,20 +1314,15 @@ local function buildContext()
     { "uncorrelatedKills", "kills whose death and XP hint never matched" },
   }
 
-  -- Spike support for the group/raid experience work: dumps the client's own
-  -- GlobalStrings and location APIs to chat AND to saved variables.
+  -- The client's GlobalStrings and location answers, dumped to the debug log and
+  -- to the saved variables. The parser builds its experience patterns from these
+  -- strings, so their exact shape (which marker comes first, whether markers are
+  -- positional) decides what each capture holds, and getting it wrong
+  -- misclassifies silently. None of it is documented for Burning Crusade Classic.
   --
-  -- The reason it writes to disk rather than only printing: the addon parses
-  -- experience messages by building patterns from these strings, so their exact
-  -- shape -- which marker comes first, whether they use positional markers --
-  -- decides what each capture group holds. Getting that wrong does not fail; it
-  -- misclassifies silently. Reading them off the player's actual client is
-  -- first-hand evidence, and none of it is documented for BC Classic anywhere.
-  -- DERIVED from the list the parser actually reads, not pasted beside it. The
-  -- paste had already drifted: the eight EXHAUSTION*_GROUP/_RAID templates were
-  -- missing, which are exactly the ones the group and raid work added -- so the
-  -- dump a tester takes on a non-English client to answer task 5.2 would not have
-  -- contained the strings 5.2 is about.
+  -- Derived from the list the parser reads (GlobalStringPattern.SOURCES), not
+  -- copied beside it, so a dump taken on a non-English client holds every
+  -- template the parser uses, the EXHAUSTION*_GROUP/_RAID ones included.
   local XP_GLOBALS = {}
   for _, source in ipairs(GlobalStringPattern.SOURCES) do
     XP_GLOBALS[#XP_GLOBALS + 1] = source.global
@@ -1417,11 +1347,9 @@ local function buildContext()
   local function dumpStrings()
     local dump = { locale = GetLocale(), flavor = Compat.flavor(), strings = {}, location = {} }
 
-    -- To the debug log and not to chat. These are fifteen lines of the client's
-    -- own raw text: their value is in the snapshot below and in the log file,
-    -- and printing them pushed everything else in the diagnostic off the top of
-    -- a 500-line chat ring -- the same reason the evidence recorder writes to a
-    -- file instead of here.
+    -- To the debug log, not to chat: fifteen lines of the client's raw text
+    -- whose value is in the snapshot below and the log file. Printed, they would
+    -- push the rest of the diagnostic off the top of the 500-line chat ring.
     for _, name in ipairs(XP_GLOBALS) do
       local value = _G[name]
       dump.strings[name] = value ~= nil and value or false
@@ -1465,36 +1393,34 @@ local function buildContext()
     logger:info(locale:get(TextKey.CMD_STRINGS_DUMPED, countKeys(dump.strings)))
   end
 
-  -- The quest log's own section of the diagnostic. Spike 0.5's per-quest dump
-  -- goes to the debug log (the reader writes it when given a logger), and what
-  -- comes to chat is the three figures a player can act on -- most of all the
-  -- last one, which is the only way to tell "this client words a kill objective
-  -- differently" apart from "these quests ask for feathers".
+  -- The quest log's section of the diagnostic. The per-quest dump goes to the
+  -- debug log (the reader writes it when given a logger); chat gets the three
+  -- figures a player can act on, above all the last, the only way to tell "this
+  -- client words a kill objective differently" from "these quests ask for
+  -- feathers".
   local function printQuestDebug()
-    -- The recorder goes in HERE and not into the `scan` closure the scheduler
-    -- drives: this is the sweep an operator asked for, once, and the ticker's runs
-    -- on every quest-log change would evict everything else from the ring.
+    -- The recorder goes in here and not into the `scan` closure the scheduler
+    -- drives: this sweep is asked for once, while the ticker's runs on every
+    -- quest-log change would evict everything else from the ring.
     local forecasts = sweepQuestLog(logger, recordEvidence)
     logger:info(locale:get(TextKey.CMD_QUESTS_SCANNED, #forecasts))
     logger:info(locale:get(TextKey.CMD_QUESTS_NAMED, questNames:count()))
-    logger:info(locale:get(TextKey.CMD_QUESTS_OBJECTIVES,
-      questLogReader.objectivesRead, questLogReader.objectivesSeen))
+    logger:info(locale:get(TextKey.CMD_QUESTS_OBJECTIVES, questLogReader:objectiveTally()))
   end
 
-  -- What the group dimension has actually collected, which is the only way the
-  -- design's open question -- whether sizes that turn up once a level deserve
-  -- lumping in with a bigger one -- gets settled against a file instead of an
-  -- argument. It needs a SAMPLE COUNT, and no other surface carries one: the panel
-  -- and the plate price a population, they never say how thin it is.
+  -- What the group dimension has collected, with a sample count no other surface
+  -- carries: the panel and the plate price a population but never say how thin
+  -- it is. The count shows whether group sizes seen once a level are worth
+  -- lumping in with a bigger one.
   --
-  -- Grouped by NAME and not by aggregate, because the name is what the estimator
+  -- Grouped by name and not by aggregate, because the name is what the estimator
   -- matches on: `creatureRate` sums every level band of a name at one group size,
   -- so the population behind a number is the pair (name, size), and a listing
   -- split per band would show halves of one.
   local function printGroupDebug()
     -- Asked of the port rather than of `GetNumGroupMembers`, so the figure printed
-    -- here is the one the estimator will be handed -- including the translation
-    -- of the client's zero into the one person who is always there (D85).
+    -- is the one the estimator is handed, including the translation of the
+    -- client's zero into the one person who is always there.
     logger:info(("group: %d sharing the pay"):format(playerState:sharedBy()))
 
     local record = tracker:current()
@@ -1510,7 +1436,7 @@ local function buildContext()
         order[#order + 1] = name
       end
       -- `false` and not nil: the kills nobody counted are a population of their
-      -- own (D84), and a nil would drop them out of the very list they belong in.
+      -- own, and a nil would drop them out of the list they belong in.
       local size = bucket.sharedBy or false
       if entry.sizes[size] == nil then
         entry.sizes[size] = 0
@@ -1539,9 +1465,9 @@ local function buildContext()
     logger:info(("creature populations: %d across %d creatures"):format(populations, #order))
     for _, name in ipairs(order) do
       local entry = byName[name]
-      -- Smallest group first and the uncounted one last: it is what was recorded
-      -- before this distinction existed, and it stops growing the moment this
-      -- build runs, so it belongs at the end rather than in the middle.
+      -- Smallest group first and the uncounted one last: it holds kills recorded
+      -- before group sizes were counted and no longer grows, so it belongs at
+      -- the end.
       table.sort(entry.order, function(a, b)
         return (a or math.huge) < (b or math.huge)
       end)
@@ -1559,10 +1485,10 @@ local function buildContext()
     logger:info(("flavor: %s"):format(Compat.flavor()))
     logger:info(("max level: %d"):format(Compat.maxLevel()))
 
-    -- Which experience templates this client actually produced, and how often.
-    -- A template at zero is as informative as one at a thousand: the research
-    -- holds that the fatigue family never appears on either supported client,
-    -- and this is what would show otherwise.
+    -- Which experience templates this client produced, and how often. A
+    -- template at zero is as informative as one at a thousand: the fatigue
+    -- family is expected never to appear on Classic Era or Burning Crusade
+    -- Classic, and this is what would show otherwise.
     local hits = eventRouter:templateHits()
     local names = {}
     for name in pairs(hits) do
@@ -1578,9 +1504,11 @@ local function buildContext()
     end
 
     logger:info(("time sync: %s"):format(
-      settings[SettingKey.TIME_SYNC] and "on" or "OFF (spike 0.6; levels will not be time-anchored)"))
-    for _, entry in ipairs(capabilities:all()) do
-      logger:info(("  capability %s: %s"):format(entry.name, entry.present and "present" or "absent"))
+      settings[SettingKey.TIME_SYNC] and "on" or "OFF (levels will not be time-anchored)"))
+    -- With the reason, not present/absent: "absent" and "unreadable" are one
+    -- "no" to the addon and two different clients to whoever reads this.
+    for _, line in ipairs(CopyReport.capabilityLines(capabilities:all())) do
+      logger:info(line)
     end
     local missing = capabilities:missing()
     if #missing == 0 then
@@ -1589,10 +1517,10 @@ local function buildContext()
       logger:info(("missing capabilities: %s"):format(table.concat(missing, ", ")))
     end
 
-    -- Two states that look the same from outside and are not: the player left the
-    -- bar where it was, and the player asked for the client's slot and the client
-    -- had nothing to give. A diagnostic that printed one line for both would send
-    -- someone looking for a bug in a setting that is working exactly as written.
+    -- Two states that look the same from outside: the player left the bar where
+    -- it was, or asked for the client's slot and the client had nothing to give.
+    -- One line for both would send someone looking for a bug in a setting that
+    -- works as written.
     local chosenSlot = settings[SettingKey.BAR_SLOT]
     local effectiveSlot = clientXpBar:effectiveSlot(chosenSlot)
     if chosenSlot == effectiveSlot then
@@ -1602,10 +1530,10 @@ local function buildContext()
         :format(tostring(chosenSlot), tostring(effectiveSlot)))
     end
 
-    -- The names, and what is actually under them. Printed always rather than only
-    -- when the bar is missing: a client where the slot works and a client where it
-    -- works for a different reason are not the same answer, and spike 0.2 wants
-    -- both flavours read the same way.
+    -- The names, and what is under them. Printed always, not only when the bar
+    -- is missing: a client where the slot works and one where it works for a
+    -- different reason are not the same answer, and Classic Era and Burning
+    -- Crusade Classic must be read the same way.
     for _, row in ipairs(clientXpBar:inventory()) do
       local mark = row.used and "  " or "  ? "
       local held = ""
@@ -1614,8 +1542,8 @@ local function buildContext()
           tostring(row.givesBack), tostring(row.alphaNow))
       end
       -- Compared against the bar's own depth, printed just below: the two
-      -- numbers are the whole answer to "who draws on top", and the bar painting
-      -- over the client's frame is what that reads like when they are wrong.
+      -- numbers answer "who draws on top", and the bar painting over the
+      -- client's frame is what it looks like when they are wrong.
       if row.strata ~= nil then
         held = (" [%s:%s]"):format(tostring(row.strata), tostring(row.level)) .. held
       end
@@ -1628,17 +1556,17 @@ local function buildContext()
       end
     end
 
-    -- The bar's own depth, in the same shape as the rows above so the two can be
-    -- read side by side. Inset puts the bar one level UNDER its anchor so the
-    -- client's frame art draws over it; replace puts it one over. A reading where
-    -- those two do not line up is the bug the player photographed twice.
+    -- The bar's own depth, in the same shape as the rows above so the two read
+    -- side by side. Inset puts the bar one level under its anchor so the
+    -- client's frame art draws over it; replace puts it one over. If these do
+    -- not line up, the draw order is wrong.
     if bar ~= nil and bar.depth ~= nil then
       local strata, level, wanted = bar:depth()
       if strata ~= nil then
-        -- The level it asked for is printed only when the frame disagrees with
-        -- it. Silence means the two match and the rule is the thing to look at;
-        -- a second number means the client did not honour the first, which is a
-        -- different problem with a different fix.
+        -- The level it asked for is printed only when the frame disagrees:
+        -- silence means the two match and the rule is what to look at; a second
+        -- number means the client did not honour the request, a different
+        -- problem with a different fix.
         local asked = ""
         if wanted ~= nil and wanted ~= level then
           asked = (" -- asked for %s"):format(tostring(wanted))
@@ -1656,20 +1584,16 @@ local function buildContext()
       end
     end
 
-    -- How often the client could not say where the character was. The design
-    -- would not settle this by reasoning -- "con qué frecuencia el cliente sabe
-    -- decir dónde está" is on the list of things only a real session answers --
-    -- so it is counted here rather than supposed. The number that matters is the
-    -- share, not the amount: a hundred unplaced experience means one thing in a
-    -- level of two hundred and another in a level of twenty thousand.
+    -- How often the client could not say where the character was, counted
+    -- because only real play answers it. The share matters, not the amount: a
+    -- hundred unplaced experience means one thing in a level of two hundred and
+    -- another in a level of twenty thousand.
     local record = tracker:current()
     if record ~= nil and record:hasPlaces() then
-      -- Two numbers that are not the same one, and printing the ledger's total
-      -- under the word "placed" let these two lines contradict each other in the
-      -- same breath: "1000 of 1000 experience placed" directly above "with no
-      -- place the client could name: 1000 (100%)". The reserved entry is a place
-      -- to the ledger -- that is what keeps the two dimensions equal -- and the
-      -- absence of one to a reader.
+      -- Two different numbers. The reserved "unknown place" entry is a place to
+      -- the ledger, which keeps the two dimensions equal, and the absence of one
+      -- to a reader; printing the ledger's total as "placed" would contradict
+      -- the unplaced line below it.
       local unplaced = record:xpAt(PlaceKey.unknown())
       local named = record:placedXp()
       local ledgered = record:sumOfPlaces()
@@ -1689,22 +1613,18 @@ local function buildContext()
 
     printGroupDebug()
 
-    -- Everything the diagnostic knows, in one command. There used to be three of
-    -- them and no reason for it: a player chasing one number had to know which
-    -- of the three held it, and the two extra ones existed only because they
-    -- were written at different times.
+    -- Everything the diagnostic knows, in one command, so a player chasing one
+    -- number does not have to know which command holds it.
     printQuestDebug()
     dumpStrings()
   end
 
-  -- THE ONLY CHANNEL BACK.
-  --
-  -- No addon can make a network request, so there is no telemetry in this one
-  -- and there cannot be: everything the author will ever learn about how it
-  -- behaves on someone else's machine is what that player chooses to send. The
-  -- diagnostics above were already written; this runs them with their output
-  -- diverted into a table (ChatLogger:capture) and puts the result in a window
-  -- whose text can be selected. One generator, two destinations.
+  -- The only channel back. An addon cannot make network requests, so there is
+  -- no telemetry: all that is learned about how it behaves on someone else's
+  -- machine is what that player chooses to send. This runs the diagnostics
+  -- above with their output diverted into a table (ChatLogger:capture) and shows
+  -- the result in a window whose text can be selected. One generator, two
+  -- destinations.
   local copyDialog
 
   -- What makes a pasted report worth reading. Without the build and the flavour
@@ -1715,7 +1635,11 @@ local function buildContext()
     local environment = evidenceEnvironment()
     return {
       { "addon", ("%s %s"):format(ADDON_NAME, tostring(environment.addonVersion)) },
-      { "client", ("%s, max level %s"):format(tostring(environment.flavor), tostring(environment.maxLevel)) },
+      -- The interface number alongside the name, because the name is derived
+      -- from it: a report from a client this build does not know says
+      -- "unknown", and the number is the only part anyone can act on.
+      { "client", ("%s (interface %s), max level %s"):format(tostring(environment.flavor),
+        tostring(Compat.interfaceVersion()), tostring(environment.maxLevel)) },
       { "locale", tostring(environment.locale) },
       { "character", ("level %s"):format(tostring(playerState:level())) },
     }
@@ -1739,15 +1663,13 @@ local function buildContext()
     return true
   end
 
-  -- The flight recorder's switch. A SUBCOMMAND of debug rather than a command of
-  -- its own: `/ascent debug` is where everything the addon knows about itself
-  -- lives, and a player chasing one thing should not have to know which of two
-  -- top-level words holds it -- the same reason the three diagnostic dumps were
-  -- folded into one.
+  -- The flight recorder's switch, a subcommand of debug: `/ascent debug` holds
+  -- everything the addon knows about itself, so a player chasing one thing does
+  -- not have to know which of two top-level words holds it.
   --
-  -- What it is NOT is a second debug mode. Debug prints to chat, which is fine
-  -- for a two-minute check; this writes to the saved variables file and is meant
-  -- to be left on for a whole levelling session without being noticed.
+  -- It is not a second debug mode: debug prints to chat for a quick check, while
+  -- this writes to the saved variables and is meant to stay on, unnoticed, for
+  -- a whole levelling session.
   local function handleEvidence(sub)
     sub = sub:lower()
     if sub == "on" then
@@ -1794,19 +1716,18 @@ local function buildContext()
     local lines = logger:capture(printer)
 
     if not openWindow(CopyReport.build({ header = reportHeader(), lines = lines })) then
-      -- The report was captured instead of printed, so without this the
-      -- diagnostics would vanish into a window that does not exist. Chat is
-      -- where they went before this command, and it is where they go now.
+      -- The report was captured instead of printed, so without this it would
+      -- vanish with the window that failed to open; it goes to chat instead.
       for _, line in ipairs(lines) do
         logger:info(line)
       end
     end
   end
 
-  -- What changed, version by version, in the window that already knows how to
-  -- show text (design D71). The entries are generated from CHANGELOG.md at build
-  -- time, so this never parses markdown on a player's machine -- and a build
-  -- carrying none says so rather than opening empty.
+  -- What changed, version by version, in the window that already shows text.
+  -- The entries are generated from CHANGELOG.md at build time, so no markdown is
+  -- parsed on a player's machine, and a build carrying none says so rather than
+  -- opening empty.
   local function handleChangelog()
     local text = ns.core.ChangelogText.build(ns.core.CHANGELOG, addonVersion)
     if text == nil then
@@ -1819,27 +1740,26 @@ local function buildContext()
       locale:get(TextKey.CHANGELOG_RUNNING, tostring(addonVersion)))
 
     if not openWindow(header .. "\n" .. text) then
-      -- No window, so the one thing worth saying goes to chat: which build this
-      -- is. The whole changelog there would be a wall nobody can scroll back to.
+      -- No window, so only which build this is goes to chat: the whole
+      -- changelog there would scroll out of reach.
       logger:info(locale:get(TextKey.CHANGELOG_RUNNING, tostring(addonVersion)))
     end
   end
 
-  -- The same door, opened from the options panel (which is built further down,
-  -- from this table). Assigned here rather than declared up with the rest of the
-  -- context because `handleCopy` is a local defined just above: a closure written
-  -- at line 919 would have captured a global nil instead.
+  -- The same report, opened from the options panel (built further down, from
+  -- this table). Assigned here rather than in the context table above because
+  -- `handleCopy` is a local defined just above: a closure written there would
+  -- capture a global nil instead.
   context.copyReport = function() handleCopy("") end
-  -- Applied live, in both directions: the watch stops counting reports AND the
+  -- Applied live, in both directions: the watch stops counting reports and the
   -- channel stops announcing, because `announce` asks the same object whether it
-  -- speaks at all (design D74).
+  -- speaks at all.
   context.setUpdateCheck = function(enabled) updateWatch:enable(enabled) end
 
   SLASH_ASCENT1 = "/ascent"
-  -- The commands that cannot do anything without a frame. Everything else --
-  -- the summary, the pending report, the diagnostics, the data wipe -- works
-  -- perfectly well with no views at all, and keeping them alive is the point of
-  -- isolating the failure in the first place.
+  -- The commands that cannot do anything without a frame. Everything else (the
+  -- summary, the pending report, the diagnostics, the data wipe) works with no
+  -- views, which is why the view failure is isolated.
   local NEEDS_VIEWS = {
     show = true, hide = true, panel = true, demo = true, options = true,
   }
@@ -1888,11 +1808,10 @@ local function buildContext()
       if sub == "evidence" then
         handleEvidence(arg)
       elseif sub == "timesync" then
-        -- Spike 0.6's lever, and the only way to ask its question: the request
-        -- fires from PLAYER_ENTERING_WORLD, during the loading screen, so
-        -- suppressing it has to be decided before the session starts. It takes
-        -- effect on the next login, and `printDebug` reports the state so a player
-        -- who set it and forgot has somewhere to find out.
+        -- The time played request fires from PLAYER_ENTERING_WORLD, during the
+        -- loading screen, so suppressing it has to be decided before the session
+        -- starts: it takes effect on the next login. `printDebug` reports the
+        -- state so a player who set it and forgot can find out.
         local wanted = arg:lower()
         if wanted == "on" or wanted == "off" then
           saveSetting(SettingKey.TIME_SYNC, wanted == "on")
@@ -1910,23 +1829,22 @@ local function buildContext()
   end
 
   -- ---------------------------------------------------------------------------
-  -- 12.7: the Interface > AddOns options panel.
+  -- The Interface > AddOns options panel.
   -- ---------------------------------------------------------------------------
 
   -- Built last, after everything it reads from and writes through (bar,
-  -- saveSetting, settings) already exists on `context`. Kept on `context`
-  -- itself, not a separate upvalue, so handleOptions' "panel" branch above --
-  -- defined earlier in this same function, before this line runs -- can reach
-  -- it too.
-  -- Built only when there is a bar for its controls to drive. Its own failure is
-  -- reported the same way, and separately: losing the options panel must not cost
-  -- the commands, which are the way back when the interface is unusable.
+  -- saveSetting, settings) exists on `context`, and kept on `context` itself so
+  -- handleOptions' "panel" branch, defined earlier, can reach it.
+  --
+  -- Built only when there is a bar for its controls to drive. Its failure is
+  -- reported separately: losing the options panel must not cost the commands,
+  -- which are the way back when the interface is unusable.
   if bar ~= nil then
     local optionsOk, optionsError = pcall(OptionsPanel.new, context)
     if optionsOk then
-      -- A list of pages now, parent first. The context keeps both: the pages to
-      -- register, and the parent frame for everything that just wants "the
-      -- options panel" -- opening it, refreshing it.
+      -- A list of pages, parent first. The context keeps both the pages to
+      -- register and the parent frame, for everything that wants "the options
+      -- panel": opening it, refreshing it.
       context.optionsPages = optionsError
       context.optionsPanel = optionsError[1].frame
       optionsPanel = context.optionsPanel
@@ -1939,13 +1857,12 @@ local function buildContext()
     optionsCategory = context.optionsCategory
   end
 
-  -- WHAT CHANGED SINCE THE LAST SESSION. Last, so a session that had trouble
+  -- What changed since the last session. Last, so a session that had trouble
   -- building its interface has already said so before this speaks.
   --
-  -- The downgrade line is the only sentence in this addon that explains something
-  -- which ALREADY happened and was never reported: a history written by a newer
-  -- build cannot be migrated backwards, so RecordStore sets it aside on load
-  -- (core/service/RecordStore.lua). Until now the player just found it missing.
+  -- History written by a newer build cannot be migrated backwards, so
+  -- RecordStore sets it aside on load (core/service/RecordStore.lua); the
+  -- downgrade line tells the player where it went.
   local lastSeen = settings[SettingKey.LAST_SEEN_VERSION]
   local since = ns.core.UpdateWatch.compareSeen(lastSeen, addonVersion)
 

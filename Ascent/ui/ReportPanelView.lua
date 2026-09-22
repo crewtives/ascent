@@ -1,27 +1,18 @@
--- Ascent - the level report panel (tasks 11.1-11.5, 11.7; 6.1-6.9).
+-- Ascent - the level report panel.
 --
--- The panel used to build each tab as one string and hand it to a single
--- FontString. It now builds ROWS -- see ui/RowList.lua for why that is not a
--- cosmetic change -- and this file's job is to turn each tab's view-model into
--- a list of them.
+-- Turns each tab's view-model into rows for a RowList.
 --
--- WHAT A ROW SAYS AND WHAT IT DOES NOT. Two figures in the sources tab look like
--- one number and are not (design D36): the share of the LEVEL, which in a level
--- still in progress legitimately sums to less than a hundred, and the
--- composition of what was RECORDED, which sums to exactly a hundred. Both are
--- shown, in their own columns, with the composition labelled as what it is a
--- composition of. Printing one while calling it the other was the bug this tab
--- shipped with.
+-- The sources tab shows two figures that look alike: the share of the level,
+-- which sums to under a hundred while the level is in progress, and the
+-- composition of what was recorded, which sums to exactly a hundred. Each has
+-- its own column, and the composition is labelled as such.
 --
--- COLOUR IS NOT ALLOWED TO CARRY MEANING ALONE HERE, and for a reason specific
--- to this addon rather than a general principle: red and green already MEAN
--- creatures and exploration on every other surface, so a comparison that showed
--- "better" in green would collide with the one thing the panel exists to teach.
--- Differences carry a sign; the direction travels from the domain as a field.
+-- Colour never carries meaning alone: red and green already mean creatures and
+-- exploration, so a "better" in green would collide with them. Differences
+-- carry a sign, and the direction comes from the domain as a field.
 --
--- Like the bar, this view never touches SavedVariables: it is handed a resolved
--- `settings` table and a `saveSetting(key, value)` callback for the one thing it
--- persists on its own, its position and size.
+-- The view never touches SavedVariables: it gets a resolved `settings` table
+-- and a `saveSetting(key, value)` callback for its position and size.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
@@ -42,14 +33,19 @@ local KillXpEstimator = ns.core.KillXpEstimator
 local BorderKind = ns.core.BorderKind
 local TextStyle = ns.core.TextStyle
 local RowList = ns.ui.RowList
+local SpellIcon = ns.ui.SpellIcon
+-- The sentence for what a level was recorded without, shared with the bar and the
+-- chat summary so the three say it the same way.
+local UnavailableText = ns.core.UnavailableText
+local RecordedSource = ns.core.RecordedSource
 
--- Only the floor lives here now. The panel's default position and size are the
--- shape PANEL_POSITION's own default declares (core/constants/Settings.lua), so
--- a stored one always arrives complete and there is nothing left to fall back to.
+-- Only the floor lives here: the default position and size are the shape
+-- PANEL_POSITION's default declares (core/constants/Settings.lua), so a stored
+-- one always arrives complete.
 local MIN_WIDTH, MIN_HEIGHT = 300, 240
 
--- How much of the panel has to stay on screen for a player to be able to grab
--- it. Same reasoning and same number as the bar's (ui/XpBarView.lua).
+-- How much of the panel has to stay on screen to be grabbed; the same number
+-- as the bar's (ui/XpBarView.lua).
 local OFFSCREEN_MARGIN = 40
 
 -- The same style-to-font-flags mapping the bar and the rows use.
@@ -66,9 +62,8 @@ local SOURCE_LABEL = {
   [XpSource.UNKNOWN] = TextKey.SOURCE_UNCLASSIFIED,
 }
 
--- The palette key each source paints with, so a row's own colour matches the
--- segment it stands for on the bar. Same order, same colours, one source of
--- truth for both.
+-- The palette key each source paints with, so a row's colour matches its
+-- segment on the bar.
 local SOURCE_PALETTE = {
   [XpSource.MOB_KILL] = "MOB_KILL",
   [XpSource.QUEST_TURNIN] = "QUEST_TURNIN",
@@ -76,9 +71,8 @@ local SOURCE_PALETTE = {
   [XpSource.UNKNOWN] = "UNKNOWN",
 }
 
--- One noun per kind of place, so a row can say "Elwynn Forest (Dungeon)" without
--- the view knowing anything about what a dungeon is. Read defensively, like every
--- other map here: a kind this build does not know degrades to the raw value
+-- One noun per kind of place, so a row can say "Elwynn Forest (Dungeon)". Read
+-- defensively like every map here: an unknown kind degrades to the raw value
 -- rather than erroring inside a draw.
 local PLACE_LABEL = {
   [PlaceContext.WORLD] = TextKey.PLACE_WORLD,
@@ -98,27 +92,21 @@ local ORIGIN_LABEL = {
 local TABS = {
   { id = "breakdown", labelKey = TextKey.TAB_SOURCES },
   { id = "combat", labelKey = TextKey.TAB_COMBAT },
-  -- The only list whose rows carry an icon, and the list has to know: the room
-  -- for it is reserved once for every row, not per row (ui/RowList.lua).
+  -- The only list whose rows carry an icon; RowList reserves the room once for
+  -- every row, so it must be told.
   { id = "abilities", labelKey = TextKey.TAB_ABILITIES, icons = true },
   { id = "pending", labelKey = TextKey.TAB_PENDING },
   { id = "history", labelKey = TextKey.PANEL_TAB_HISTORY },
 }
 
--- One column layout per tab. A column with no width takes what is left, so the
--- shape every tab shares -- a name that stretches, then figures that line up --
--- needs no arithmetic here.
+-- One column layout per tab. A column with no width takes what is left, so a
+-- stretching name followed by aligned figures needs no arithmetic here.
 local COLUMNS = {
-  -- Four columns since the places block: name, experience, share, rate. The rate
-  -- only ever has a value on a place row, and it earns its column there because
-  -- the block exists to answer "what is this place worth an hour" -- folding it
-  -- into another cell would put two figures under one heading.
-  -- The third column is 58 and not 44 because it carries two different kinds of
-  -- answer: a percentage on a source or place row, and a COUNT on the rows under
-  -- "top quests" and "top creatures". "17 kills" fitted 44 by a hair and
-  -- "1 turn-in" did not, so a real report came back reading "1 turn-...". The
-  -- fourteen pixels come off the name column, which is the one that can lose
-  -- them: it is elastic, and a clipped quest name is still a quest name.
+  -- Name, experience, share, rate. Only place rows have a rate, and it gets
+  -- its own column rather than sharing a cell with another figure.
+  -- The third column holds a percentage on source and place rows and a count
+  -- ("1 turn-in", "17 kills") under the top quests and creatures, which needs
+  -- 58 pixels; they come off the elastic name column.
   breakdown = { {}, { width = 70, justify = "RIGHT" }, { width = 58, justify = "RIGHT" },
                 { width = 48, justify = "RIGHT" } },
   combat = { {}, { width = 140, justify = "RIGHT" } },
@@ -128,8 +116,8 @@ local COLUMNS = {
 }
 
 -- ---------------------------------------------------------------------------
--- Formatting. Mechanical, and the same reasoning as before: the sorting and the
--- arithmetic these read live in core/ and have their own suites.
+-- Formatting. Mechanical: the sorting and arithmetic these read live in core/
+-- and have their own suites.
 -- ---------------------------------------------------------------------------
 
 local function percentText(locale, fraction)
@@ -166,8 +154,7 @@ local function numberText(locale, value)
 end
 
 -- A difference, written so its sense survives without colour. The direction is
--- a field the domain computed (LevelHistoryViewModel), not something re-derived
--- from the sign here -- there is one definition of "up" and it lives in core.
+-- a field LevelHistoryViewModel computed, never re-derived from the sign here.
 local function deltaText(locale, direction, magnitude)
   if direction == "same" then
     return locale:get(TextKey.PANEL_DELTA_SAME)
@@ -177,9 +164,8 @@ local function deltaText(locale, direction, magnitude)
   return locale:get(TextKey.PANEL_DELTA_DOWN, magnitude)
 end
 
--- Zero and "not measured" are different answers and must read differently: a
--- place where the player spent time and earned nothing rates exactly zero, while
--- a place whose time was never sampled has no rate at all.
+-- Zero and "not measured" read differently: time spent earning nothing rates
+-- zero, while a place whose time was never sampled has no rate.
 local function ratePerHourText(locale, value)
   if value == nil then
     return locale:get(TextKey.NOT_AVAILABLE)
@@ -187,10 +173,9 @@ local function ratePerHourText(locale, value)
   return locale:get(TextKey.PANEL_PER_HOUR, math.floor(value + 0.5))
 end
 
--- How a quest is written: asked of the directory, never decided here. The bar's
--- popup asks the same thing of the same object, which is what keeps the two from
--- disagreeing about what one quest is called. Without a directory -- a view built
--- in isolation -- every quest keeps its number.
+-- How a quest is written: asked of the directory the bar's popup also asks, so
+-- both name a quest the same way. Without a directory every quest keeps its
+-- number.
 local function questLabel(view, questId)
   return QuestNames.labelOf(view.questNames, view.locale, questId)
 end
@@ -224,13 +209,17 @@ local function renderBreakdown(view, breakdown)
   end
 
   rows[#rows + 1] = row({ locale:get(TextKey.PANEL_BY_SOURCE) })
+  -- Above the rows, because it changes how they read: what the kill line would
+  -- have named is in Unclassified.
+  if breakdown.sourcesUnavailable ~= nil then
+    rows[#rows + 1] = row({ locale:get(UnavailableText[RecordedSource.XP_CHAT][breakdown.sourcesUnavailable]) })
+  end
   if #breakdown.sources == 0 then
     rows[#rows + 1] = row({ locale:get(TextKey.PANEL_NOTHING_YET) })
   end
   for _, source in ipairs(breakdown.sources) do
-    -- Indexed only once the key is known to exist: appearance.colors is a strict
-    -- proxy, so colors[nil] RAISES instead of returning nil, and a source this
-    -- version does not know about would take the whole tab down with it.
+    -- Indexed only once the key is known: appearance.colors is a strict proxy,
+    -- so colors[nil] raises, and an unknown source would break the whole tab.
     local paletteKey = SOURCE_PALETTE[source.source]
     local color = paletteKey ~= nil and view.appearance.colors[paletteKey] or nil
     rows[#rows + 1] = row({
@@ -239,9 +228,8 @@ local function renderBreakdown(view, breakdown)
       wholePercentText(locale, source.percent),
     }, {
       color = color,
-      -- The bar is the share of the LEVEL, matching what the player sees on the
-      -- experience bar itself -- not the composition percentage in the column
-      -- beside it, which is a different question with a different denominator.
+      -- The bar is the share of the level, as on the experience bar, not the
+      -- composition percentage in the column beside it.
       bar = { fraction = source.fraction, color = color },
     })
   end
@@ -249,10 +237,9 @@ local function renderBreakdown(view, breakdown)
   if breakdown.restedBonus.amount > 0 then
     rows[#rows + 1] = labelRow(locale, TextKey.PANEL_LBL_RESTED_BONUS, tostring(breakdown.restedBonus.amount))
   end
-  -- The group and raid annotations, alongside the rested one and read the same
-  -- way: a portion of what was already credited, never an addition to it. Shown
-  -- only when there is something to say, but the two are independent -- a level
-  -- can have both if the player moved between a group and a raid.
+  -- The group and raid annotations read like the rested one: a portion of what
+  -- was already credited, never an addition. Each is shown only when non-zero,
+  -- independently, since a level can have both.
   if breakdown.modifiers ~= nil then
     if breakdown.modifiers.groupBonus.amount > 0 then
       rows[#rows + 1] = labelRow(locale, TextKey.PANEL_LBL_GROUP_BONUS,
@@ -264,16 +251,12 @@ local function renderBreakdown(view, breakdown)
     end
   end
 
-  -- The second dimension, beside the sources and never instead of them. Guarded
-  -- the way the two rankings below are and NOT the way the sources block is: a
-  -- level recorded before places existed gets no header and no placeholder,
-  -- because "nothing recorded yet" would claim the addon looked and found
-  -- nothing, when the truth is that it never looked.
+  -- Places, beside the sources, never instead of them. Unlike the sources block,
+  -- a level recorded before places were tracked gets no header and no
+  -- placeholder: "nothing recorded yet" would claim the addon looked.
   if breakdown.places ~= nil then
     rows[#rows + 1] = row({ locale:get(TextKey.PANEL_BY_PLACE) })
-    -- Before the rows rather than after them: it qualifies the column the reader
-    -- is about to read, and an unqualified rate invites exactly the comparison it
-    -- cannot support.
+    -- Before the rows: it qualifies the rate column before it is read.
     rows[#rows + 1] = row({ locale:get(TextKey.PANEL_PLACE_RATE_NOTE) })
     if breakdown.placedTotal < breakdown.observedTotal then
       rows[#rows + 1] = row({
@@ -282,9 +265,8 @@ local function renderBreakdown(view, breakdown)
     end
     for _, place in ipairs(breakdown.places) do
       local name = place.place.name or locale:get(TextKey.PANEL_UNKNOWN_PLACE)
-      -- The kind AND the time, both in the name cell. The time is what the rate
-      -- beside it divides by, so a row that hides it cannot be checked -- and for
-      -- a place that earned nothing it is the only thing the row has to say.
+      -- The kind and the time in the name cell: the rate divides by the time,
+      -- and for a place that earned nothing the time is all the row has.
       name = name .. locale:get(TextKey.PANEL_PLACE_CONTEXT,
         locale:get(PLACE_LABEL[place.place.context] or place.place.context),
         durationText(locale, place.seconds))
@@ -294,9 +276,8 @@ local function renderBreakdown(view, breakdown)
         wholePercentText(locale, place.percent),
         ratePerHourText(locale, place.xpPerHour),
       }, {
-        -- Uncoloured on purpose. Red and green already mean creatures and
-        -- exploration in this tab, and a place is not a source; the grey default
-        -- keeps the bar readable as a proportion without claiming a meaning.
+        -- Uncoloured: red and green mean creatures and exploration here, and a
+        -- place is not a source. The grey default reads as a proportion only.
         bar = { fraction = place.fraction },
       })
     end
@@ -321,12 +302,10 @@ local function renderBreakdown(view, breakdown)
       if creatureLevel then
         name = name .. locale:get(TextKey.PANEL_CREATURE_LEVEL, creatureLevel)
       end
-      -- A row measured with a different number of people sharing the pay says so,
-      -- and one recorded before anybody counted says THAT instead of passing for
-      -- a solo measurement (D84). The row for the current group carries no mark:
-      -- it is the one that prices what the character is doing now, and marking
-      -- every row would make the marks worthless on the common screen where they
-      -- all read the same.
+      -- A row measured with a different number of people sharing the pay says
+      -- so, and one recorded before group size was counted says that rather than
+      -- passing for solo. The current group's row carries no mark, so marks stay
+      -- meaningful when every row would read the same.
       if not creature.current then
         name = name .. (creature.sharedBy ~= nil
           and locale:get(TextKey.PANEL_CREATURE_SHARED, creature.sharedBy)
@@ -352,7 +331,7 @@ local function renderCombat(view, combat)
     return locale:get(TextKey.PANEL_AVG_WORST, percentText(locale, pair.average), percentText(locale, pair.worst))
   end
 
-  return {
+  local rows = {
     labelRow(locale, TextKey.PANEL_LBL_HEALTH, avgWorst(combat.health)),
     labelRow(locale, TextKey.PANEL_LBL_RESOURCE, avgWorst(combat.power)),
     labelRow(locale, TextKey.PANEL_LBL_DEATHS, tostring(combat.deathCount)),
@@ -360,20 +339,27 @@ local function renderCombat(view, combat)
     labelRow(locale, TextKey.PANEL_LBL_TIME_COMBAT, durationText(locale, combat.time.combatSeconds)),
     labelRow(locale, TextKey.PANEL_LBL_TIME_RECOVER, durationText(locale, combat.time.recoverySeconds)),
     labelRow(locale, TextKey.PANEL_LBL_TIME_OUT, durationText(locale, combat.time.outOfCombatSeconds)),
-    labelRow(locale, TextKey.PANEL_LBL_DAMAGE_DEALT, tostring(combat.damage.dealt)),
-    labelRow(locale, TextKey.PANEL_LBL_DAMAGE_TAKEN, tostring(combat.damage.taken)),
-    labelRow(locale, TextKey.PANEL_LBL_HEALING, tostring(combat.damage.healingReceived)),
-    labelRow(locale, TextKey.PANEL_LBL_XP_PER_MINUTE, numberText(locale, combat.efficiency.xpPerCombatMinute)),
-    labelRow(locale, TextKey.PANEL_LBL_XP_PER_KILL, numberText(locale, combat.efficiency.averageXpPerKill)),
   }
+  -- One line in place of three figures on a level recorded without the combat
+  -- log: not zeros, which would read as measured, and not the part counted
+  -- before it stopped, which would read as the whole level.
+  if combat.damage.unavailable ~= nil then
+    rows[#rows + 1] = row({ locale:get(UnavailableText[RecordedSource.COMBAT_LOG][combat.damage.unavailable]) })
+  else
+    rows[#rows + 1] = labelRow(locale, TextKey.PANEL_LBL_DAMAGE_DEALT, tostring(combat.damage.dealt))
+    rows[#rows + 1] = labelRow(locale, TextKey.PANEL_LBL_DAMAGE_TAKEN, tostring(combat.damage.taken))
+    rows[#rows + 1] = labelRow(locale, TextKey.PANEL_LBL_HEALING, tostring(combat.damage.healingReceived))
+  end
+  rows[#rows + 1] = labelRow(locale, TextKey.PANEL_LBL_XP_PER_MINUTE,
+    numberText(locale, combat.efficiency.xpPerCombatMinute))
+  rows[#rows + 1] = labelRow(locale, TextKey.PANEL_LBL_XP_PER_KILL,
+    numberText(locale, combat.efficiency.averageXpPerKill))
+  return rows
 end
 
--- Which of the two reserved synthetic keys a row is, named. The keys are shared
--- with the pull plate through core/constants/Text.lua rather than duplicated,
--- for the same reason the four source names are: two surfaces must not learn to
--- call the same thing by two names. Until this existed both auto attacks were
--- labelled "Auto attack", so a melee swing and a ranged shot were
--- indistinguishable on the surface whose job is to say what you pressed.
+-- A label for each of the two reserved synthetic keys, so a melee swing and a
+-- ranged shot read differently. The keys are shared with the pull plate through
+-- core/constants/Text.lua, so both surfaces name them the same way.
 local AUTO_ATTACK_LABEL = {
   [ns.core.AbilityKey.MELEE_SWING] = TextKey.PANEL_AUTO_ATTACK,
   [ns.core.AbilityKey.RANGED_AUTO] = TextKey.PANEL_RANGED_ATTACK,
@@ -384,6 +370,11 @@ local function renderAbilities(view, abilities)
   if not abilities.active then
     return nil, locale:get(TextKey.PANEL_NO_LEVEL)
   end
+  -- Before "no abilities yet": not recorded and none used are different answers,
+  -- and on a level the combat log never reached only the first is true.
+  if abilities.unavailable ~= nil then
+    return nil, locale:get(UnavailableText[RecordedSource.COMBAT_LOG][abilities.unavailable])
+  end
   if #abilities.entries == 0 then
     return nil, locale:get(TextKey.PANEL_NO_ABILITIES)
   end
@@ -393,12 +384,13 @@ local function renderAbilities(view, abilities)
     local name = entry.name
       or (entry.isAutoAttack and locale:get(AUTO_ATTACK_LABEL[entry.key] or TextKey.PANEL_AUTO_ATTACK))
       or locale:get(TextKey.PANEL_SPELL, tostring(entry.key))
-    -- An icon the client cannot resolve is left out rather than replaced with a
-    -- question mark: a row with no icon reads as "no icon", a row with a
-    -- placeholder reads as "something is broken".
+    -- An icon the client cannot resolve is left out, not replaced with a
+    -- question mark, which would read as something broken. Looked up through
+    -- SpellIcon, like the plate: World of Warcraft: Forever has no bare
+    -- GetSpellTexture global.
     local icon
-    if not entry.isAutoAttack and GetSpellTexture ~= nil then
-      icon = GetSpellTexture(entry.key)
+    if not entry.isAutoAttack then
+      icon = SpellIcon.texture(entry.key)
     end
     rows[#rows + 1] = row({ name, tostring(entry.count), percentText(locale, entry.fraction) }, {
       icon = icon,
@@ -408,15 +400,13 @@ local function renderAbilities(view, abilities)
   return rows
 end
 
--- Never folded into the breakdown's total: this is a projection from the quest
--- log, not experience obtained -- the same separation the bar keeps between its
--- earned segments and its own pending channel.
+-- Never folded into the breakdown's total: a projection from the quest log,
+-- not experience obtained, as the bar keeps its pending channel apart.
 local function renderPending(view, pending)
   local locale = view.locale
-  -- The one view the level selector CANNOT follow, and it says so rather than
-  -- showing today's quest log under a level from last week. Pending experience
-  -- is read from the quest log as it stands now; it is not a property of a
-  -- level, so there is no past version of it to show.
+  -- The one tab that cannot follow the level selector, and it says so: pending
+  -- experience is read from the quest log as it is now, not stored per level,
+  -- so there is no past version to show.
   if view:isPinned() then
     return nil, locale:get(TextKey.PANEL_PENDING_IS_NOW)
   end
@@ -436,13 +426,12 @@ local function renderPending(view, pending)
   end
 
   rows[#rows + 1] = row({ locale:get(TextKey.PANEL_BY_QUEST) })
-  -- Printed once at the end if any row used it, rather than per row: the mark is
-  -- what the reader needs beside the figure, and the sentence explaining it is
-  -- what they need once.
+  -- The mark goes beside each figure; the sentence explaining it is printed
+  -- once at the end if any row used it.
   local rough, mixed = false, false
   for _, entry in ipairs(pending.entries) do
-    -- "Not recorded" and "zero" are different answers and must not share a
-    -- cell: a quest whose reward nobody has seen is unknown, not worthless.
+    -- "Not recorded" and "zero" must not look alike: a quest whose reward has
+    -- never been seen is unknown, not worthless.
     local amount = entry.isKnown and tostring(entry.adjustedReward) or locale:get(TextKey.NOT_AVAILABLE)
     local label = questLabel(view, entry.questId)
     if entry.complete then
@@ -451,9 +440,8 @@ local function renderPending(view, pending)
     rows[#rows + 1] = row({ label, amount, locale:get(ORIGIN_LABEL[entry.origin] or entry.origin) })
 
     -- What this quest still asks the player to kill, and what those kills are
-    -- worth. Under the quest and never added to it: the reward is paid on
-    -- turn-in and these are paid by killing, and they will be recorded as
-    -- creatures when they are (pending-detail design D2).
+    -- worth. Under the quest, never added to it: the reward is paid on turn-in,
+    -- the kills are paid on killing and will be recorded as creatures.
     for _, objective in ipairs(entry.objectives or {}) do
       local estimate
       if objective.estimate == nil then
@@ -462,11 +450,9 @@ local function renderPending(view, pending)
         rough = true
         estimate = locale:get(TextKey.PANEL_OBJ_ROUGH, objective.estimate)
       elseif objective.basis == KillXpEstimator.Basis.MIXED then
-        -- Its own mark and not the rough one: this figure came from this very
-        -- creature, which the rough one did not, but from kills taken before
-        -- anyone counted who shared them -- so it is neither a measurement of
-        -- the group the player is in now nor the level's blanket average (D83).
-        -- Passing it off as the former is what left it unmarked until now.
+        -- Its own mark, not the rough one: the figure comes from this creature,
+        -- but from kills recorded without their group size, so it is neither a
+        -- measurement for the current group nor the level's blanket average.
         mixed = true
         estimate = locale:get(TextKey.PANEL_OBJ_MIXED, objective.estimate)
       else
@@ -479,8 +465,8 @@ local function renderPending(view, pending)
     end
   end
 
-  -- The narrower mark first, so reading down goes from a real average of the
-  -- wrong population to no average of this creature at all.
+  -- The narrower mark first: from a real average of the wrong population down
+  -- to no average of this creature at all.
   if mixed then
     rows[#rows + 1] = row({ locale:get(TextKey.PANEL_OBJ_MIXED_FOOTNOTE) })
   end
@@ -516,12 +502,10 @@ local function renderHistory(view)
     rows[#rows + 1] = row({ label, duration, "" }, { selected = entry.selected, level = entry.level })
   end
 
-  -- The previous RECORDED level, which is the entry below this one in a list
-  -- already sorted descending -- not `selected - 1`. They differ exactly when
-  -- the history has a hole in it (the addon installed mid-levelling, a level
-  -- played with it disabled, a level dropped by retention), and in that case
-  -- asking for `selected - 1` finds nothing and the panel claims there is no
-  -- earlier level to compare against when there plainly is one.
+  -- The previous recorded level: the entry below this one in a list sorted
+  -- descending, not `selected - 1`. They differ when the history has a hole
+  -- (the addon installed mid-levelling, a level played with it disabled, a level
+  -- dropped by retention), where `selected - 1` would find nothing.
   local previousLevel
   for index, entry in ipairs(model.entries) do
     if entry.level == model.selected then
@@ -573,11 +557,10 @@ local RENDERERS = {
 local ReportPanelView = {}
 ReportPanelView.__index = ReportPanelView
 
--- Pulled back inside the visible screen, the same rule and the same margin the
--- bar applies to its own saved position (ui/XpBarView.lua). The panel needed it
--- just as much and did not have it: the position is re-applied on every login,
--- so a panel saved on a monitor that is no longer attached stayed unreachable,
--- and unlike the bar there is no chat command that puts it back.
+-- Pulled back inside the visible screen, with the bar's rule and margin
+-- (ui/XpBarView.lua): the position is re-applied on every login, so a panel
+-- saved on a detached monitor would stay unreachable, and no chat command
+-- resets the panel's position.
 function ReportPanelView:clampedPosition(position)
   local width, height = UIParent:GetWidth(), UIParent:GetHeight()
   if type(width) ~= "number" or type(height) ~= "number" or width <= 0 then
@@ -597,9 +580,8 @@ function ReportPanelView:applySavedPosition()
   local x, y = self:clampedPosition(position)
   self.frame:ClearAllPoints()
   self.frame:SetPoint(position.point, UIParent, position.point, x, y)
-  -- Clamped on the way in, not only on the way out: a size saved by a build
-  -- whose minimum never applied is already on disk, and re-applying it verbatim
-  -- would carry the bug forward forever.
+  -- Clamped on the way in as well as out: a size below the minimum may
+  -- already be on disk.
   self.frame:SetSize(
     math.max(position.width, MIN_WIDTH),
     math.max(position.height, MIN_HEIGHT)
@@ -614,9 +596,8 @@ function ReportPanelView:savePosition()
   })
 end
 
--- The panel wears the same skin as the bar (task 6.9). Not for tidiness: the
--- source colours have to be the same ones, or a player reading a row and then
--- glancing at the bar is matching two different palettes for the same thing.
+-- The panel wears the bar's skin, so the source colours match between a row
+-- and its segment on the bar.
 function ReportPanelView:resolveAppearance()
   return SkinResolver.resolve({
     skin = SkinResolver.skinFor(SkinCatalog, self.settings[SettingKey.BAR_SKIN], ns.core.DEFAULT_SKIN_ID),
@@ -631,9 +612,8 @@ function ReportPanelView:applyAppearance()
   self.appearance = self:resolveAppearance()
 
   local background = self.appearance.background
-  -- The panel is a reading surface, so it gets a floor the bar does not need: a
-  -- skin meant for a 24-pixel strip over the world can be nearly transparent,
-  -- and a page of numbers over the world at that alpha is unreadable.
+  -- An alpha floor the bar does not need: a skin meant for a thin strip can be
+  -- nearly transparent, which leaves a page of numbers unreadable over the world.
   local alpha = math.max(background.a or 0, 0.82)
   self.background:SetColorTexture(background.r, background.g, background.b, alpha)
 
@@ -647,12 +627,10 @@ function ReportPanelView:applyAppearance()
   return self
 end
 
--- The bar's own border rules, applied to the panel (ui/BarRenderer.lua's
--- applyBorder). The panel used to take only the colour, so a skin declaring a
--- three-pixel frame drew three pixels on the bar and one on the panel, and a
--- player who set the border to NONE lost it on the bar and kept it here. The
--- edges keep their two-corner anchoring rather than an explicit length, because
--- unlike the bar this frame is resizable and the length has to follow.
+-- The bar's border rules (BarRenderer's applyBorder) applied to the panel:
+-- kind, thickness and colour, so NONE and a thick frame match the bar. The edges
+-- keep two-corner anchoring rather than an explicit length, because this frame
+-- is resizable and the length must follow.
 function ReportPanelView:applyBorder(border)
   if border.kind == BorderKind.NONE or border.thickness <= 0 then
     for _, edge in ipairs(self.edges) do
@@ -664,15 +642,13 @@ function ReportPanelView:applyBorder(border)
   local color = border.color
   local light = border.kind == BorderKind.BEVEL
   for index, edge in ipairs(self.edges) do
-    -- 1 and 2 are the horizontal edges, 3 and 4 the vertical ones; see the
-    -- geometry they were built from in createFrame.
+    -- 1 and 2 are the horizontal edges, 3 and 4 the vertical ones (createFrame).
     if index <= 2 then
       edge:SetHeight(border.thickness)
     else
       edge:SetWidth(border.thickness)
     end
-    -- Top and left lit, bottom and right dimmed: the same depth cue, and the
-    -- same two indices, as the bar.
+    -- Top and left lit, bottom and right dimmed, with the bar's indices.
     local factor = 1
     if light then
       factor = (index == 1 or index == 3) and 1.25 or 0.6
@@ -685,11 +661,9 @@ function ReportPanelView:applyBorder(border)
   end
 end
 
--- The panel's own furniture -- its title, its tab buttons and the empty-state
--- message -- wearing the skin too. Without this the one thing a player sees on
--- an empty panel is the only element that does not match the skin they picked.
--- Every path comes from GetFont rather than a literal, for the same reason the
--- bar does it: a Latin font named here is invisible text on a Korean client.
+-- The panel's own title, tab buttons and empty-state message wear the skin too.
+-- Every path comes from GetFont, never a literal: a Latin font draws no glyphs
+-- on a Korean client.
 local function styleFontString(fontString, size, flags, color)
   if fontString == nil then
     return
@@ -715,32 +689,28 @@ function ReportPanelView:applyChromeFont(text)
   end
 end
 
--- WHICH LEVEL THE PANEL IS READING (task 6.7).
+-- Which level the panel is reading.
 --
--- `selectedLevel` nil does not mean "nothing selected": it means FOLLOW the
--- level in progress. That distinction is the whole of it. Storing the current
--- level's number the moment the player clicks its row would pin the panel to it
--- silently, and the next time the character levelled they would be reading a
--- finished level with nothing on screen saying so and no way back to the new
--- one except noticing.
+-- `selectedLevel` nil means follow the level in progress, not "nothing
+-- selected". Storing the current level's number when its row is clicked would
+-- silently pin the panel to it, and after the next level-up it would show a
+-- finished level with nothing saying so.
 function ReportPanelView:select(level)
-  -- nil and "the level in progress" are the same request: go back to following
-  -- the live level. nil is what the composition root passes after erasing the
-  -- character's history, when the level the panel was reading no longer exists.
+  -- nil and the level in progress both mean follow the live level. The
+  -- composition root passes nil after erasing the character's history.
   if level == nil or level == self.currentLevel() then
     self.selectedLevel = nil
   else
     self.selectedLevel = level
   end
   self.selectedRecord, self.selectedRecordLevel = nil, nil
-  -- Marked dirty, not just redrawn. The gate hands back nil for a panel that
-  -- has not changed, so without this the rebuild below never happens and every
-  -- tab but this one keeps the level it already had.
+  -- Marked dirty, not just redrawn: the gate returns nil for an unchanged
+  -- panel, and every other tab would keep its previous level.
   self:markDirty()
   self:refresh()
 end
 
--- Whether the panel is showing a level OTHER than the one in progress.
+-- Whether the panel is showing a level other than the one in progress.
 function ReportPanelView:isPinned()
   return self.selectedLevel ~= nil and self.selectedLevel ~= self.currentLevel()
 end
@@ -748,19 +718,15 @@ end
 -- The record every tab is built from: the selected level when there is one, and
 -- the level in progress otherwise.
 --
--- MEMOISED, and not as a micro-optimisation. `recordFor` reaches the store,
--- which rebuilds a whole LevelRecord out of saved data on every call
--- (core/service/RecordStore.lua's `completed`), and this runs on every rebuild
--- -- which is every experience gain while the panel is open. A panel left on a
--- past level would deserialize that level several times a second. A completed
--- level does not change, so resolving it once per selection is not a staleness
--- risk; the level in progress is never memoised, because it is the live object.
+-- Memoised per selection: `recordFor` rebuilds a whole LevelRecord from saved
+-- data on every call (RecordStore's `completed`), and this runs on every
+-- rebuild, i.e. every experience gain while the panel is open. A completed
+-- level never changes; the level in progress is the live object and is never
+-- memoised.
 --
--- A selection that stops resolving -- the level dropped by retention, the
--- history erased -- clears itself rather than leaving the panel half pinned:
--- LevelHistoryViewModel already falls the LIST back to the most recent entry,
--- and without this the rest of the panel would follow the live level while
--- `isPinned` still said otherwise.
+-- A selection that stops resolving (dropped by retention, history erased)
+-- clears itself: LevelHistoryViewModel already falls the list back to the most
+-- recent entry, and the rest of the panel must not stay half pinned.
 function ReportPanelView:viewedRecord()
   if self.selectedLevel ~= nil then
     if self.selectedRecordLevel ~= self.selectedLevel then
@@ -778,9 +744,8 @@ end
 function ReportPanelView:selectTab(tabId)
   self.activeTab = tabId
   for _, tab in ipairs(TABS) do
-    -- A locked highlight, not a disabled button. Greying a button out is the
-    -- client's own vocabulary for "you cannot use this", which is the opposite
-    -- of what the current tab means.
+    -- A locked highlight, not a disabled button: greyed out means "cannot use"
+    -- in the client's vocabulary, the opposite of the current tab.
     local button = self.tabButtons[tab.id]
     if tab.id == tabId then
       button:LockHighlight()
@@ -800,22 +765,17 @@ function ReportPanelView:renderActiveTab()
   local list = self.lists[self.activeTab]
 
   -- The history tab reads the store rather than the level's view-model, so it
-  -- has something to show even when there is no level in progress at all.
+  -- has something to show even with no level in progress.
   --
-  -- WHICH EMPTY STATE. There are two, and the panel used to pick between them on
-  -- `lastViewModel == nil` -- a condition that is only ever true in the moment
-  -- between construction and the first refresh, with the frame still hidden. So
-  -- the first-run message was unreachable, and a player installing the addon was
-  -- told they were at the maximum level or had experience turned off. What
-  -- actually separates the two states is whether anything has ever been
-  -- recorded, and the view already holds the seam that answers it.
+  -- The two empty states are told apart by whether anything was ever recorded,
+  -- not by `lastViewModel == nil`, which is only true between construction and
+  -- the first refresh, while the frame is still hidden.
   if (self.lastViewModel == nil or not self.lastViewModel.active) and self.activeTab ~= "history" then
     list:clear()
-    -- Three ways to have no level to show, and only one of them is a new
-    -- install. A character at the cap has nothing in progress and never will,
-    -- so promising that recording starts at their next point of experience is a
-    -- promise that cannot be kept -- which is what keying this on "nothing
-    -- completed" alone did to a level-60 Classic Era install.
+    -- Only one of the three ways to have no level is a new install. A character
+    -- at the cap, such as a fresh install on a level-60 Classic Era character,
+    -- will never gain experience, so it must not be told recording starts at
+    -- the next point.
     local firstRun = not self.atCap() and #self.completedLevels() == 0
     self.empty:SetText(self.locale:get(firstRun and TextKey.PANEL_FIRST_RUN or TextKey.PANEL_NO_LEVEL_MAX))
     self.empty:Show()
@@ -844,11 +804,9 @@ function ReportPanelView:createFrame()
   frame:SetResizable(true)
   frame:EnableMouse(true)
   frame:RegisterForDrag("LeftButton")
-  -- SetMinResize does not exist on these clients -- the guard below never fired,
-  -- which is why the panel could be dragged down to nothing and have that size
-  -- persisted and re-applied on the next login. SetResizeBounds is the one the
-  -- client actually has; the older name stays as a fallback rather than an
-  -- assumption.
+  -- SetMinResize does not exist on the supported clients; SetResizeBounds does.
+  -- The older name stays as a fallback. Without a minimum the panel could be
+  -- dragged down to nothing and that size persisted.
   if frame.SetResizeBounds then
     frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT)
   elseif frame.SetMinResize then
@@ -860,8 +818,8 @@ function ReportPanelView:createFrame()
   self.background = frame:CreateTexture(nil, "BACKGROUND")
   self.background:SetAllPoints(frame)
 
-  -- Four thin textures, the same border the bar draws, for the same reason: a
-  -- backdrop would need the frame built from a template and scales its edge art.
+  -- Four thin textures, the bar's border: a backdrop would need the frame built
+  -- from a template and scales its edge art.
   self.edges = {}
   local edgeGeometry = {
     { "TOPLEFT", "TOPRIGHT", 0, 1 },
@@ -885,16 +843,11 @@ function ReportPanelView:createFrame()
   close:SetPoint("TOPRIGHT", 0, 0)
   close:SetScript("OnClick", function() self:close() end)
 
-  -- A way into the settings from the surface the player is actually looking at.
-  -- The panel is where someone notices they want the bar to say something else,
-  -- and until now the only way there was remembering a slash command or walking
-  -- the client's own options tree -- two steps away from the thought that caused
-  -- it. It opens by the same path `/ascent options panel` takes, degrading the
-  -- same way on a client that has neither options API, rather than learning a
-  -- second way in that could drift from the first.
+  -- A way into the settings from the panel. It opens by the same path as
+  -- `/ascent options panel`, degrading the same way on a client with neither
+  -- options API, rather than a second way in that could drift.
   --
-  -- Optional, so the view stays instantiable without the seam -- which is what
-  -- keeps it testable at all.
+  -- Optional, so the view can be built without the seam.
   if self.onOpenOptions ~= nil then
     local options = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     options:SetSize(64, 20)
@@ -934,30 +887,27 @@ function ReportPanelView:createFrame()
     previousButton = button
   end
 
-  -- One list per tab rather than one list reconfigured on every switch: the
-  -- columns differ per tab, and a pool whose row layout changes underneath it
-  -- has to rebuild every row anyway.
+  -- One list per tab rather than one reconfigured on every switch: the columns
+  -- differ per tab, and a changed row layout would rebuild every row anyway.
   self.lists = {}
   for _, tab in ipairs(TABS) do
     local list = RowList.new({
       parent = frame,
-      -- Named, and named uniquely: see RowList.new's own header for why a nil
-      -- name here is a load-time failure and not a cosmetic omission.
+      -- Named uniquely: RowList.new requires a name (see its header).
       name = "AscentPanelList" .. tab.id,
       columns = COLUMNS[tab.id],
       icons = tab.icons,
       onSelect = tab.id == "history" and function(level) self:select(level) end or nil,
     })
-    -- Anchored to the frame, not to the last tab button: the row of tabs is
-    -- laid out left to right and its end moves when a tab is added, renamed or
-    -- translated into a longer word.
+    -- Anchored to the frame, not the last tab button, whose position moves when
+    -- a tab is added, renamed or translated into a longer word.
     list:setPoints("TOPLEFT", frame, "TOPLEFT", 12, -66)
     list:hide()
     self.lists[tab.id] = list
   end
 
   -- The empty state is a message, not an empty list: a blank panel reads as a
-  -- bug, and every one of these states is a normal thing to be in.
+  -- bug, and every empty state here is normal.
   self.empty = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   self.empty:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -72)
   self.empty:SetPoint("RIGHT", frame, "RIGHT", -12, 0)
@@ -1004,14 +954,12 @@ function ReportPanelView:layoutLists()
 end
 
 -- `options`: settings (already resolved), saveSetting(key, value),
--- currentRecord() -- a function returning the LevelRecord to build the panel
--- from -- questForecastService (read directly: it is core/'s own service, not an
--- adapter type), `questNames` (the same, and the single answer to what a quest is
--- called; without it every quest row falls back to its number), `locale` (every
+-- currentRecord() (returns the LevelRecord to build the panel from),
+-- questForecastService (core's own service, read directly), `questNames` (what
+-- a quest is called; without it quest rows show their number), `locale` (every
 -- player-visible string goes through it), and the three history seams:
--- completedLevels(), recordFor(level) and currentLevel().
--- The history ones are optional; without them that tab shows its empty state
--- rather than failing, which is what lets this view be built in isolation.
+-- completedLevels(), recordFor(level) and currentLevel(). The history seams are
+-- optional; without them that tab shows its empty state.
 function ReportPanelView.new(options)
   options = options or {}
   for _, required in ipairs({ "settings", "saveSetting", "currentRecord", "questForecastService", "locale" }) do
@@ -1024,11 +972,8 @@ function ReportPanelView.new(options)
     settings = options.settings,
     saveSetting = options.saveSetting,
     currentRecord = options.currentRecord,
-    -- How many are sharing the pay right now, asked fresh on every rebuild. A
-    -- seam and not a value for the same reason the record is one, and optional
-    -- because a panel built without it still draws: every row then reads as a
-    -- population that is not the current one, which is exactly what a panel that
-    -- cannot ask should claim.
+    -- How many are sharing the pay right now, asked on every rebuild like the
+    -- record. Optional: without it every row reads as not the current group.
     sharedBy = options.sharedBy or function() return nil end,
     questForecastService = options.questForecastService,
     questNames = options.questNames,
@@ -1036,13 +981,11 @@ function ReportPanelView.new(options)
     completedLevels = options.completedLevels or function() return {} end,
     recordFor = options.recordFor or function() return nil end,
     currentLevel = options.currentLevel or function() return nil end,
-    -- Whether the character can still gain a level at all. The panel cannot
-    -- work this out -- "no level in progress" looks the same at the cap, with
-    -- experience switched off and on a brand-new install -- and the three want
-    -- different sentences.
+    -- Whether the character can still gain a level at all. "No level in
+    -- progress" looks the same at the cap, with experience switched off and on
+    -- a new install, and the three want different sentences.
     atCap = options.atCap or function() return false end,
-    -- Optional, and its absence is the whole degraded path: a client where the
-    -- options never registered has nowhere to send the player, and no button.
+    -- Optional: where the options never registered there is no button.
     onOpenOptions = options.onOpenOptions,
     -- nil means "follow the level in progress", not "nothing selected".
     selectedLevel = nil,
@@ -1061,25 +1004,23 @@ function ReportPanelView.new(options)
 end
 
 -- Re-reads settings and reapplies what comes out of them, without rebuilding a
--- frame. Same contract as the bar's own applySettings.
+-- frame, like the bar's applySettings.
 function ReportPanelView:applySettings(settings)
   self.settings = settings or self.settings
   self:applyAppearance()
   self:applySavedPosition()
   self:layoutLists()
-  -- Not while it is closed. Bootstrap calls this from `saveSetting`, and the
-  -- options panel writes a setting on every slider release, so an unguarded
-  -- render here runs a whole tab's worth of rows into a hidden list for a panel
-  -- nobody is looking at. `open` draws what a closed panel missed.
+  -- Not while closed: Bootstrap calls this from `saveSetting`, which the
+  -- options panel calls on every slider release. `open` draws what a closed
+  -- panel missed.
   if self:isOpen() then
     self:renderActiveTab()
   end
   return self
 end
 
--- The title carries the level, because once the selector reaches every tab the
--- number is the only thing separating "the level I am in" from "a level I
--- finished a week ago" -- and the tabs themselves look identical either way.
+-- The title carries the level: the selector reaches every tab, and the number
+-- is what tells the level in progress from a finished one.
 function ReportPanelView:updateTitle()
   if self.viewedLevel ~= nil then
     self.title:SetText(self.locale:get(TextKey.PANEL_TITLE_LEVEL, self.viewedLevel))
@@ -1094,11 +1035,9 @@ end
 
 function ReportPanelView:open()
   self.frame:Show()
-  -- `refresh` draws when the gate had something new. When it did not, the tab
-  -- still has to be drawn -- what is on it may predate a settings change made
-  -- while the panel was closed, which is not redrawn then on purpose. Asking
-  -- refresh whether it drew is what keeps this from rendering every row twice
-  -- on every open that did have something new.
+  -- `refresh` draws when the gate had something new. Otherwise the tab is drawn
+  -- here, since it may predate a settings change made while closed. Asking
+  -- refresh whether it drew avoids rendering every row twice.
   if not self:refresh() then
     self:renderActiveTab()
   end
@@ -1106,9 +1045,8 @@ end
 
 function ReportPanelView:close()
   self.frame:Hide()
-  -- The selection is a reading position, not a setting. The spec's "Apertura
-  -- por comando" says the panel opens on the level in progress, so a level
-  -- pinned in one sitting must not still be pinned the next time it is opened.
+  -- The selection is a reading position, not a setting: the panel always opens
+  -- on the level in progress.
   self.selectedLevel, self.selectedRecord, self.selectedRecordLevel = nil, nil, nil
   self:markDirty()
 end
@@ -1121,19 +1059,17 @@ function ReportPanelView:toggle()
   end
 end
 
--- Marks the panel's own view-model stale. Bootstrap calls this on the same
--- topics that mark the bar's RedrawScheduler dirty (RECORD_UPDATED and
--- friends) -- this view just does not act on it until it is actually shown.
+-- Marks the panel's view-model stale. Bootstrap calls this on the topics that
+-- mark the bar's RedrawScheduler dirty (RECORD_UPDATED and others); the view
+-- does not act on it until it is shown.
 function ReportPanelView:markDirty()
   self.gate:markDirty()
 end
 
--- Called from Bootstrap's own ticker, same as the bar's redraw(). The gate
--- decides whether there is anything to do at all: closed, or open-but-
--- unchanged, both return without touching the record or rebuilding a single
--- table.
--- Returns whether it actually rebuilt and redrew, so `open` can tell a panel
--- that just repainted itself from one that did not and still needs to be.
+-- Called from Bootstrap's ticker, like the bar's redraw(). The gate decides
+-- whether there is anything to do: closed, or open but unchanged, returns
+-- without touching the record. Returns whether it rebuilt and redrew, for
+-- `open`.
 function ReportPanelView:refresh()
   local record
   local viewModel = self.gate:refresh(self:isOpen(), function()
@@ -1141,12 +1077,11 @@ function ReportPanelView:refresh()
     return ReportPanelViewModel.build(record, {
       questReport = self.questForecastService:report(),
       questEntries = self.questForecastService:entries(),
-      -- The level in progress, whatever level the panel is showing: the pending
-      -- tab is about now, and so are the kill rates its estimates are priced with.
+      -- The level in progress, whatever level is shown: the pending tab and the
+      -- kill rates its estimates use are about now.
       currentRecord = self.currentRecord(),
-      -- And the group of now, for the same reason: what a creature pays depends
-      -- on how many people are splitting it, so an estimate priced with another
-      -- group's average is the defect this seam exists to close.
+      -- And the current group size: what a creature pays depends on how many
+      -- share it, so estimates must not use another group's average.
       sharedBy = self.sharedBy(),
     })
   end)

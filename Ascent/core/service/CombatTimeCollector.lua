@@ -1,22 +1,20 @@
--- Ascent - metric collector: time in combat, and time spent recovering (6.5, D23).
+-- Ascent - metric collector: time in combat, and time spent recovering.
 --
 -- Two accumulators only: combatSeconds and recoverySeconds. Out-of-combat time is
--- deliberately NOT accumulated here -- LevelRecord derives it as playedSeconds
--- minus combatSeconds, which is what keeps "combat + out-of-combat = played" true
--- by construction instead of by two independent counters staying in sync.
+-- not accumulated here: LevelRecord derives it as playedSeconds minus
+-- combatSeconds, so "combat + out-of-combat = played" holds by construction
+-- rather than by two independent counters staying in sync.
 --
 -- recoverySeconds and DeathCollector's timeLostToDeath both live inside
--- out-of-combat time but never overlap: this collector tracks its own `dead` flag
+-- out-of-combat time but never overlap: this collector keeps its own `dead` flag
 -- from the same PLAYER_DIED/PLAYER_REVIVED topics DeathCollector reacts to, and
--- refuses to accrue recovery time while it is set. The two collectors share no
--- state; each derives its own from the same events on purpose (see DeathCollector's
--- header) so that one being unregistered never leaves the other half-fed.
+-- accrues no recovery time while it is set. The two collectors share no state, so
+-- unregistering one never leaves the other half-fed.
 --
--- WoW has no event for "health crossed the recovery threshold" (D23), so recovery
--- is measured by sampling: `observe()` is called from the composition root's own
--- 5Hz ticker, not from the bus, with the player's current health/power fractions.
--- Everything else here reacts to bus topics through `collect()`, same as every
--- other collector; `observe()` is the one addition specific to this one.
+-- The client has no event for "health crossed the recovery threshold", so
+-- recovery is sampled: `observe()` is called from the composition root's 5Hz
+-- ticker, not from the bus, with the player's current health/power fractions.
+-- Everything else reacts to bus topics through `collect()`.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -71,9 +69,9 @@ end
 -- Credits whatever interval was open up to `now` to `record` -- combat time if
 -- `inCombat`, recovery time if `recovering` and not `dead`, nothing otherwise (a
 -- death, or plain out-of-combat time with nothing to recover from) -- then starts a
--- fresh mark. `record` is whichever level is current AT THIS INSTANT, which is
--- what makes a stretch that crosses a level-up land on the level it actually
--- happened in (6.8) rather than the one open when the stretch began.
+-- fresh mark. `record` is whichever level is current at this instant, so a
+-- stretch that crosses a level-up lands on the level it happened in rather than
+-- the one open when the stretch began.
 function CombatTimeCollector:closeInterval(record, now)
   if self.mark ~= nil and self.sessionActive and record ~= nil then
     local elapsed = now - self.mark
@@ -120,23 +118,19 @@ function CombatTimeCollector:collect(record, _, topic)
   end
 end
 
--- The sampled half of D23, called on Bootstrap's own 5Hz ticker regardless of
--- whether anything changed. Two jobs, not one:
+-- The sampled half of recovery tracking, called on Bootstrap's 5Hz ticker
+-- whether or not anything changed. Two jobs:
 --
---   * ALWAYS closes whatever interval is open, the same as collect() does on a
---     bus event. This is what makes 6.8 (level-crossing attribution) actually
---     true for combat time, not just recovery time: a level-up landing in the
---     MIDDLE of a continuous fight fires no COMBAT_STARTED/ENDED at all, so
---     without a periodic close here the whole fight -- head and tail alike --
---     would land on whichever level happens to be current when the fight
---     finally ends. Ticking every 0.2s instead bounds the misattributed slice
---     to at most one tick's worth, the same order of latency D21 already
---     accepts elsewhere.
+--   * It always closes the open interval, as collect() does on a bus event. A
+--     level-up in the middle of a continuous fight fires no COMBAT_STARTED/ENDED,
+--     so without a periodic close the whole fight would land on whichever level
+--     is current when it ends; ticking every 0.2s bounds the misattributed slice
+--     to at most one tick.
 --   * Only while `recovering` (and not in combat, not dead) does it also check
 --     whether health/power have crossed the threshold, clearing the flag.
 --
--- A no-op call (no level open, or the session is paused) stays cheap: it returns
--- before touching the clock or the record at all.
+-- A no-op call (no level open, or the session is paused) returns before touching
+-- the clock or the record.
 function CombatTimeCollector:observe(record, healthFraction, powerFraction)
   if record == nil or not self.sessionActive then
     return

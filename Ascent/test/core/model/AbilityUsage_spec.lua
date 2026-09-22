@@ -26,8 +26,8 @@ describe("AbilityUsage", function()
     assert.equal(5, usage.count)
   end)
 
-  -- Swings arrive with no spell attached. Reserved keys keep the domain from ever
-  -- meeting a nil identifier, which is the first of many nil checks avoided.
+  -- Swings arrive with no spell attached; the reserved keys keep a nil
+  -- identifier out of the domain.
   it("counts auto attacks under reserved keys and flags them", function()
     local melee = AbilityUsage.new(AbilityKey.MELEE_SWING)
     local ranged = AbilityUsage.new(AbilityKey.RANGED_AUTO)

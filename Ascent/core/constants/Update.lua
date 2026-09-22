@@ -1,16 +1,13 @@
 -- Ascent - the version channel's contract.
 --
--- A WoW addon cannot make a network request, so "is there a newer version?" has
--- exactly one answerable form: ask the people who are already here. Everything in
--- this file is a number the client imposes or a number chosen against one, and
--- none of it is a preference.
+-- A WoW addon cannot make a network request, so a newer version can only be
+-- learned from other players running the addon. Every number in this file is a
+-- client limit or a value chosen against one, not a preference.
 --
--- The client's budget is the reason most of these exist: each registered prefix
--- gets 10 messages back at one per second, and sending past that returns
--- AddonMessageThrottle -- and, with several prefixes at once, can DISCONNECT the
--- player. An addon that spends its allowance on saying hello is an addon that
--- costs someone a wipe, so the numbers below stay far below the ceiling rather
--- than near it.
+-- The client's budget shapes most of them: each registered prefix gets 10 messages
+-- back at one per second, and sending past that returns AddonMessageThrottle and,
+-- with several prefixes at once, can disconnect the player. The numbers below stay
+-- far below that ceiling.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -22,8 +19,7 @@ local Frozen = ns.core.Frozen
 -- whose traffic they are looking at.
 ns.core.UPDATE_PREFIX = "Ascent"
 
--- Hard client limits, spelled out because the tests assert against them rather
--- than against a remembered number.
+-- Hard client limits, named so the tests assert against them.
 ns.core.UpdateLimit = Frozen.enum("UpdateLimit", {
   PREFIX = 16,
   MESSAGE = 255,
@@ -33,8 +29,7 @@ ns.core.UpdateLimit = Frozen.enum("UpdateLimit", {
 -- share activity with the player.
 --
 -- Deliberately absent: WHISPER (an unsolicited message to one person), and SAY
--- and YELL -- which do carry addon messages in Classic, and are exactly the
--- noise that gets an addon uninstalled.
+-- and YELL, which do carry addon messages in Classic but reach strangers nearby.
 ns.core.UpdateChannel = Frozen.enum("UpdateChannel", {
   GUILD         = "GUILD",
   PARTY         = "PARTY",
@@ -42,23 +37,21 @@ ns.core.UpdateChannel = Frozen.enum("UpdateChannel", {
   INSTANCE_CHAT = "INSTANCE_CHAT",
 })
 
--- How many DISTINCT players have to announce the same newer version before the
+-- How many distinct players have to announce the same newer version before the
 -- addon repeats it to its own player.
 --
--- The content of an addon message is written by someone else's client: it is
--- arbitrary text and nothing signs it. At a threshold of one, anybody running a
--- modified client could announce 99.0.0 and send a whole guild looking for a
--- version that does not exist. Three is what DBM requires, for the same reason:
--- it does not make lying impossible, it makes it cost three accounts.
+-- An addon message is arbitrary text written by someone else's client, and
+-- nothing signs it: at a threshold of one, a single modified client could announce
+-- a version that does not exist to a whole guild. Three, as DBM uses, makes a false
+-- announcement cost three accounts.
 ns.core.UPDATE_PEER_THRESHOLD = 3
 
 -- The addon's own sending allowance, deliberately poorer than the client's.
 --
 -- Two announcements in reserve instead of ten, refilled every fifteen seconds
--- instead of every second. A player zoning in and out of a group repeatedly is
--- the ordinary case this protects: at the client's own rate that is a stream of
--- messages, and at this rate it is two and then silence. A dropped announcement
--- costs nothing -- somebody else's client will say the same thing a minute later.
+-- instead of every second, so a player zoning in and out of a group repeatedly
+-- sends two messages and then nothing. A dropped announcement costs nothing:
+-- another player's client will repeat it.
 ns.core.UpdateBudget = Frozen.enum("UpdateBudget", {
   CAPACITY = 2,
   REFILL_SECONDS = 15,

@@ -1,16 +1,14 @@
--- Every token has two faces worth testing: the value it prints when there is one,
--- and the not-available marker it prints when there is not. The two must never be
--- confused with a real zero, which is why zero gets its own cases below rather than
--- being assumed to behave like "no data" by association.
+-- Every token has two faces: the value it prints when there is one, and the
+-- not-available marker when there is not. Neither may be confused with a real
+-- zero, so zero has its own cases.
 
 describe("XpBarText", function()
   local ns, XpBarText, TextToken, TextKey, locale
 
-  -- A stub rather than the real tables: the cases below are about which key each
-  -- token reads and when, not about what enUS happens to say. The texts are copied
-  -- from locale/enUS.lua so the assertions still read as the player sees them, and
-  -- a key the module asks for that is not here fails outright instead of falling
-  -- back -- which is what keeps a forgotten literal from passing unnoticed.
+  -- A stub, not the real tables: the cases are about which key each token reads
+  -- and when. The texts are copied from locale/enUS.lua so assertions read as the
+  -- player sees them, and a key missing here fails outright instead of falling
+  -- back, so a forgotten literal cannot pass unnoticed.
   local function stubLocale(texts)
     texts = texts or {
       [TextKey.NOT_AVAILABLE]   = "n/a",

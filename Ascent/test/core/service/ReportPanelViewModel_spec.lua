@@ -1,6 +1,5 @@
--- ReportPanelViewModel is pure composition: the three tabs already have their
--- own full test suites, so this only has to prove the bundling is correct, not
--- re-prove each tab's own rules.
+-- Pure composition: each tab has its own suite, so this proves only that the
+-- bundling is correct.
 
 describe("ReportPanelViewModel", function()
   local ns, ReportPanelViewModel, XpLedger, LevelRecord, XpGain, XpSource
@@ -49,10 +48,10 @@ describe("ReportPanelViewModel", function()
     assert.equal(300, viewModel.pending.total)
   end)
 
-  -- 2.4: the group of now has to reach BOTH tabs that price a creature, and the
-  -- bundling is the only place that can hand it to them. A size that reached one
-  -- of the two would put a panel on screen whose per-creature rows and whose
-  -- pending estimates disagreed about which character they were describing.
+  -- The group of now has to reach both tabs that price a creature, and the
+  -- bundling is the only place that can hand it to them; otherwise the
+  -- per-creature rows and the pending estimates would describe different
+  -- groups.
   it("hands both tabs the group of now", function()
     local record = LevelRecord.new(10, 0)
     record.xpRequired = 1000

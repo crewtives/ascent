@@ -1,24 +1,14 @@
--- Ascent - the one function that paints a bar (tasks 3.4, 3.5, 3.6, 3.7).
+-- Ascent - the one function that paints a bar.
 --
--- Everything about how the bar LOOKS happens here, and nothing here knows the
--- name of a single skin (design D27). It is handed a resolved appearance -- a
--- table of tokens, colours and numbers -- and a boundary vector, and it paints
--- them. Add a skin and this file does not change; that is the whole arrangement.
+-- Paints a resolved appearance (tokens, colours, numbers) and a boundary
+-- vector, and knows no skin by name: adding a skin does not change this file.
+-- It has no drag, saved position, scale, tooltip or hiding, so it can be built
+-- twice: the real bar and the options panel's live preview.
 --
--- It is also deliberately ignorant of everything else the bar does. No dragging,
--- no saved position, no scale, no tooltip, no hiding itself because the player
--- is at max level. That is what makes it instantiable TWICE (D34): once as the
--- real bar, once as the live preview in the options panel, which must be able to
--- show a skin without the real bar moving or disappearing underneath it.
---
--- Textures are created once and reused forever, hidden rather than destroyed.
--- The worst case is fixed and small: one background, six channel fills, one
--- gloss band, five separators and four border edges.
---
--- On client differences: every call that is not as old as the game itself is
--- guarded and has a written fallback (D38). A gradient fill degrades to a flat
--- one, which is a skin that looks slightly plainer -- not a bar that fails to
--- draw. Nothing here ever leaves the player without a bar.
+-- Textures are created once and hidden, never destroyed: one background, six
+-- channel fills, one gloss band, five separators, four border edges. Every
+-- call newer than the original client is guarded with a fallback; a gradient
+-- degrades to a flat fill, never to a missing bar.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
@@ -44,9 +34,9 @@ local function paint(texture, color, alpha)
 end
 
 -- A vertical gradient over an already-coloured texture, when the client can do
--- it. Both the method and CreateColor are checked: the gradient signature
--- changed across versions and BC Classic is not verifiable from here, so the
--- flat fill underneath is the answer when anything is missing (D38, spike 0.4).
+-- it. Texture:SetGradient and CreateColor are both checked: the signature
+-- changed across versions and is unverified on Burning Crusade Classic, so the
+-- flat fill underneath stays when anything is missing.
 local function gradient(texture, color, alpha, lighterAtTop)
   if texture.SetGradient == nil or CreateColor == nil then
     return false
@@ -65,8 +55,8 @@ local function gradient(texture, color, alpha, lighterAtTop)
   if not lighterAtTop then
     top, bottom = bottom, top
   end
-  -- pcall because this is the one call whose exact shape is not verified on both
-  -- clients: a failure here must cost a gradient, not the frame.
+  -- pcall: this call's exact shape is unverified on both clients, and a failure
+  -- must cost the gradient, not the frame.
   return pcall(texture.SetGradient, texture, "VERTICAL", bottom, top)
 end
 
@@ -96,9 +86,8 @@ function BarRenderer.new(options)
     background = createTexture(frame, "BACKGROUND"),
     gloss = createTexture(frame, "ARTWORK", 2),
     flash = createTexture(frame, "ARTWORK", 3),
-    -- Where the EARNED progress ends, in pixels. Kept from the last draw so the
-    -- flash can cover exactly that and not the rested reserve or the pending
-    -- projection, neither of which the player just earned.
+    -- Where the earned progress ends, in pixels, from the last draw: the flash
+    -- covers exactly that, not the rested reserve or the pending projection.
     progressEdge = 0,
     fills = {},
     separators = {},
@@ -106,10 +95,9 @@ function BarRenderer.new(options)
     channels = {},
   }, BarRenderer)
 
-  -- Frozen copies list-shaped constants plain rather than proxying them (see
-  -- Frozen.lua's header), so ipairs walks BarChannel directly. Copied into the
-  -- instance anyway: this is read on every redraw, and the copy makes that a
-  -- local lookup rather than a global one.
+  -- Frozen copies list-shaped constants plain rather than proxying them, so
+  -- ipairs walks BarChannel directly. Copied into the instance because every
+  -- redraw reads it.
   for _, channel in ipairs(BarChannel) do
     self.channels[#self.channels + 1] = channel
   end
@@ -131,7 +119,7 @@ function BarRenderer.new(options)
 end
 
 -- ---------------------------------------------------------------------------
--- Appearance (3.4, 3.5, 3.7)
+-- Appearance
 -- ---------------------------------------------------------------------------
 
 function BarRenderer:setSize(width, height)
@@ -150,9 +138,9 @@ function BarRenderer:applyBorder(border)
     return
   end
 
-  -- Four thin textures rather than a backdrop: a backdrop needs the frame to
-  -- have been created from a template, which would make the renderer's parent
-  -- its business, and it scales its edge art in ways a one-pixel line must not.
+  -- Four thin textures rather than a backdrop: a backdrop needs the parent
+  -- frame built from a template, and it scales its edge art in ways a
+  -- one-pixel line must not.
   local thickness = border.thickness
   local color = border.color
   local light = border.kind == BorderKind.BEVEL
@@ -169,8 +157,8 @@ function BarRenderer:applyBorder(border)
     edge:ClearAllPoints()
     edge:SetPoint(spec[1], self.frame, spec[1], 0, 0)
     edge:SetSize(spec[3], spec[4])
-    -- A bevel is the same four edges with the top lit and the bottom dimmed --
-    -- the cheapest depth cue there is, and the one the client's own frames use.
+    -- A bevel is the same four edges with the top and left lit and the bottom
+    -- and right dimmed, as the client's own frames do.
     local factor = 1
     if light then
       factor = (index == 1 or index == 3) and 1.25 or 0.6
@@ -185,9 +173,8 @@ end
 
 function BarRenderer:applyText(text)
   local fontString = self.text
-  -- GetFont, not a hard-coded path: the client's default font differs by
-  -- locale, and naming a Latin font here is invisible text on a Russian,
-  -- Korean or Chinese client.
+  -- GetFont, not a hard-coded path: the default font differs by locale, and a
+  -- Latin font draws no glyphs on a Russian, Korean or Chinese client.
   local path = fontString:GetFont()
   local flags = ""
   if text.style == TextStyle.OUTLINE then
@@ -200,7 +187,7 @@ function BarRenderer:applyText(text)
   end
   fontString:SetTextColor(text.color.r, text.color.g, text.color.b, text.color.a or 1)
 
-  -- A shadow only where there is no thick outline to carry the job already.
+  -- A shadow only where there is no outline.
   if text.style == TextStyle.PLAIN then
     fontString:SetShadowColor(0, 0, 0, 0.85)
     fontString:SetShadowOffset(1, -1)
@@ -245,8 +232,8 @@ function BarRenderer:applyAppearance(appearance)
     self.gloss:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 0, 0)
     self.gloss:SetSize(self.width, self.height * appearance.fill.glossHeight)
     self.gloss:SetColorTexture(1, 1, 1, gloss)
-    -- Additive, so the gloss brightens whatever colour is underneath instead of
-    -- washing all six channels towards the same white.
+    -- Additive, so the gloss brightens each colour underneath instead of
+    -- washing all six channels towards white.
     self.gloss:SetBlendMode("ADD")
     self.gloss:Show()
   else
@@ -257,12 +244,11 @@ function BarRenderer:applyAppearance(appearance)
 end
 
 -- ---------------------------------------------------------------------------
--- Drawing (3.4, 3.5)
+-- Drawing
 -- ---------------------------------------------------------------------------
 
--- `boundaries` is the cumulative vector BarTween maintains, in the channel order
--- BarChannel declares. Nothing else is needed: the widths, the separators and
--- the seams all come out of it.
+-- `boundaries` is the cumulative vector BarTween maintains, in BarChannel
+-- order; widths, separators and seams all derive from it.
 function BarRenderer:draw(boundaries)
   local appearance = self.appearance
   if appearance == nil then
@@ -296,12 +282,12 @@ function BarRenderer:draw(boundaries)
     left = edges[index]
   end
 
-  -- The earned progress ends where the last SOURCE channel does -- before the
-  -- rested reserve and the pending projection, which are not progress.
+  -- Earned progress ends where the last source channel does, before the rested
+  -- reserve and the pending projection, which are the last two channels.
   self.progressEdge = edges[#self.channels - 2] or 0
 
-  -- Separators are drawn ON the boundary, never as a gap: a gap would take width
-  -- from a segment, and a segment's width is the level's percentage.
+  -- Separators are drawn on the boundary, never as a gap: a gap would take
+  -- width from a segment, and a segment's width is its share of the level.
   for index = 1, #self.separators do
     local mark = self.separators[index]
     local visible = separator.kind ~= SeparatorKind.NONE
@@ -315,7 +301,7 @@ function BarRenderer:draw(boundaries)
         height = self.height * NOTCH_FRACTION
       end
       mark:ClearAllPoints()
-      -- Centred on the seam so that neither neighbour loses more than the other.
+      -- Centred on the seam so both neighbours lose the same width.
       mark:SetPoint("TOPLEFT", self.frame, "TOPLEFT", edges[index] - thickness / 2, 0)
       mark:SetSize(thickness, height)
       paint(mark, separator.color, 1)
@@ -326,19 +312,17 @@ function BarRenderer:draw(boundaries)
   return self
 end
 
--- How wide `value` would be in the bar's own font. Used to decide whether the
--- composed text fits inside the bar (task 3.8). Measuring means setting it, so
--- the caller is expected to set the text it settles on afterwards -- which is
--- exactly what composeText does.
+-- How wide `value` would be in the bar's own font, to decide whether the
+-- composed text fits inside the bar. Measuring sets the text, so the caller
+-- must set the text it settles on afterwards, as composeText does.
 function BarRenderer:widthOf(value)
   self.text:SetText(value or "")
   return self.text:GetStringWidth() or 0
 end
 
--- An additive white wash over the earned progress, at `alpha`. Additive rather
--- than opaque so it BRIGHTENS the four channel colours underneath instead of
--- flattening all of them to the same white -- the segments have to stay
--- distinguishable during the flash, since that is the whole point of the bar.
+-- An additive white wash over the earned progress, at `alpha`. Additive so it
+-- brightens the channel colours underneath instead of flattening them to white:
+-- the segments stay distinguishable during the flash.
 function BarRenderer:setFlash(alpha)
   if alpha == nil or alpha <= 0 or self.progressEdge <= 0 then
     self.flash:Hide()

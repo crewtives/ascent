@@ -1,38 +1,20 @@
--- Ascent - pace and projection estimates for the level in progress (group 7).
+-- Ascent - pace and projection estimates for the level in progress.
 --
--- A pure function of a LevelRecord plus a small bag of numbers the record does not
--- carry itself -- the rested reserve and the session's own time/xp live on the
--- player and on the addon's own lifetime, not on the level -- the same shape
--- XpBarViewModel already uses for the same reason (D7: testable without a client).
+-- A pure function of a LevelRecord plus the numbers the record does not carry
+-- (the rested reserve, the session's time and experience), like XpBarViewModel.
 --
--- Two figures worth reading before the rest:
+--   restProjectedPercent   how far the level would be if the rested reserve were
+--                          spent on kills; never above 100%.
+--   averageXpPerRecentKill the per-creature average behind the creature-count
+--                          estimates. A recent window, not the level's running
+--                          average, so a bonus starting or ending shows within a
+--                          few kills.
 --
---   restProjectedPercent  how far the level would be if the rested reserve were
---                          spent killing creatures. It is a projection of muertes,
---                          never of progress by any means, and it never exceeds
---                          100% -- the same rule XpBarViewModel.buildRested already
---                          applies to the bar's own rested segment, extended here
---                          to a plain percentage instead of a bar fraction.
---   averageXpPerRecentKill the per-creature average the two creature-count
---                          estimates below are built from. It is deliberately a
---                          RECENT window (the last few kills), not the level's
---                          running average: the spec's own requirement
---                          ("Estimaciones basadas en lo observado") ties windowing
---                          specifically to this figure so a temporary bonus shows
---                          up within a handful of kills instead of being diluted
---                          by the whole level's history.
+-- The xp/hour figures (level and session) are flat averages over played time,
+-- not windowed; the time to level uses the level's xp/hour.
 --
--- The plain xp/hour figures (level and session) are NOT windowed: their own
--- requirement text asks only for "tiempo jugado dentro del nivel" / "de la
--- sesión", a flat average over real observed play -- which already satisfies
--- "no valores nominales" without needing a recent slice. The estimated time to
--- next level reuses the level's own live pace ("el ritmo reciente" of 7.4 is this
--- continuously-recomputed figure, contrasted against a static table -- not a
--- second, separately-windowed rate).
---
--- Every estimate that depends on samples nil rather than errors, divides by zero
--- or reports a fabricated number when the level has none yet (7.5) -- nil is
--- this module's only vocabulary for "not available".
+-- An estimate without samples is nil, never an error, a division by zero or a
+-- made-up number: nil is this module's only "not available".
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -41,16 +23,12 @@ local XpSource = ns.core.XpSource
 
 local ProgressEstimator = {}
 
--- How many of the most recent creature kills feed the recent-window average.
--- Small on purpose ("de modo que un cambio de bonificación se refleje en pocas
--- muestras", the spec's own words) -- enough to smooth out one unlucky or lucky
--- kill without taking so long to react that a bonus starting or ending goes
--- unnoticed for several minutes of play.
+-- How many of the most recent creature kills feed the recent average: enough to
+-- smooth out one odd kill, few enough that a bonus change shows within minutes.
 local RECENT_KILL_WINDOW = 8
 
--- The last N mob-kill gains, most recent first in traversal but returned as a
--- plain sum/count: record.gains is chronological (oldest first, RetentionPolicy
--- trims the oldest), so the recent window is the tail of the list.
+-- Average of the last N mob-kill gains. record.gains is chronological (oldest
+-- first, RetentionPolicy trims the oldest), so the window is the list's tail.
 local function recentKillAverage(gains)
   local total, count = 0, 0
   for index = #gains, 1, -1 do
@@ -69,9 +47,9 @@ local function recentKillAverage(gains)
   return total / count
 end
 
--- 7.1: how far the level would be with the rested reserve spent, capped at 100%
--- and never less than the real percent complete. Mirrors XpBarViewModel.buildRested's
--- own treatment of restedXp as directly additive against xpRequired.
+-- How far the level would be with the rested reserve spent, capped at 100% and
+-- never below the real percent. restedXp adds directly against xpRequired, as in
+-- XpBarViewModel.buildRested.
 local function restProjectedPercent(percentComplete, restedXp, xpRequired)
   if restedXp == nil or restedXp <= 0 then
     return percentComplete
@@ -79,10 +57,9 @@ local function restProjectedPercent(percentComplete, restedXp, xpRequired)
   return math.min(1, percentComplete + restedXp / xpRequired)
 end
 
--- 7.3: creatures until the rested reserve runs out. Zero (not nil) when there is
--- a known average but no reserve left -- the reserve being empty is itself an
--- answer, not a missing one. Nil only when there is nothing to average, per the
--- spec's own "sin muertes registradas -> no disponible".
+-- Creatures until the rested reserve runs out. Zero, not nil, with an average
+-- and no reserve: an empty reserve is an answer. Nil only with no kills to
+-- average.
 local function restReachCreatures(restedXp, averageXpPerKill)
   if averageXpPerKill == nil or averageXpPerKill <= 0 then
     return nil
@@ -93,7 +70,7 @@ local function restReachCreatures(restedXp, averageXpPerKill)
   return restedXp / averageXpPerKill
 end
 
--- 7.3: creatures until the level fills, from the same recent average.
+-- Creatures until the level fills, from the same recent average.
 local function creaturesRemaining(xpRemaining, averageXpPerKill)
   if averageXpPerKill == nil or averageXpPerKill <= 0 then
     return nil
@@ -104,10 +81,9 @@ local function creaturesRemaining(xpRemaining, averageXpPerKill)
   return xpRemaining / averageXpPerKill
 end
 
--- 7.2: experience per hour from an amount gained over a played-seconds figure
--- that already excludes offline time (LevelTracker:playedSeconds() for the level,
--- the session tracker's own elapsed seconds for the session) -- this function
--- never has to know which one it was handed.
+-- Experience per hour over a played-seconds figure that already excludes
+-- offline time (LevelTracker:playedSeconds() for the level, the session
+-- tracker's elapsed seconds for the session).
 local function perHour(amount, seconds)
   if seconds == nil or seconds <= 0 or amount == nil then
     return nil
@@ -115,9 +91,8 @@ local function perHour(amount, seconds)
   return amount / (seconds / 3600)
 end
 
--- 7.4: seconds until the level fills, from what is missing and the level's own
--- live pace. Nil with a zero or unavailable pace instead of an infinite or
--- undefined result ("ritmo nulo -> no disponible").
+-- Seconds until the level fills at the level's pace. Nil with a zero or unknown
+-- pace rather than an infinite result.
 local function timeToLevel(xpRemaining, xpPerHourLevel)
   if xpPerHourLevel == nil or xpPerHourLevel <= 0 then
     return nil
@@ -128,9 +103,9 @@ local function timeToLevel(xpRemaining, xpPerHourLevel)
   return xpRemaining / (xpPerHourLevel / 3600)
 end
 
--- params: playedSeconds (time on this level, offline time already excluded),
--- restedXp, sessionSeconds, sessionXpGained. Every one of them is nilable, and a
--- nil simply makes the estimates that need it come back nil too.
+-- params: playedSeconds (time on this level, offline time excluded), restedXp,
+-- sessionSeconds, sessionXpGained. All nilable; a nil makes the estimates that
+-- need it nil.
 function ProgressEstimator.build(record, params)
   if record == nil or record.xpRequired == nil or record.xpRequired <= 0 then
     return { active = false }

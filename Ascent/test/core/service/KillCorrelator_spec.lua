@@ -1,5 +1,6 @@
--- The join the client refuses to make. Everything here is about what happens when
--- it cannot be made cleanly, because that is the common case in the open world.
+-- Matches an experience hint, which only names the creature, to the death that
+-- gives its type and level: the client does not link the two. Most cases here
+-- are the ones where the match is not clean, the common case in the open world.
 
 describe("KillCorrelator", function()
   local ns, KillCorrelator, correlator
@@ -60,8 +61,8 @@ describe("KillCorrelator", function()
   end)
 
   -- Ambiguous by construction when several creatures of a name die together. The
-  -- design accepts the error and confines it to attribution by type; what must not
-  -- happen is one death paying for two hints.
+  -- error is accepted and confined to attribution by type; one death must never
+  -- pay for two hints.
   describe("the same name twice", function()
     it("claims the oldest unmatched death first, and never claims one twice", function()
       death("Kobold Miner", 10.0, 5644, 6)
@@ -114,10 +115,10 @@ describe("KillCorrelator", function()
       assert.equal(0, correlator:pending())
     end)
 
-    -- Retention is three windows, not one. The hint that claims a death can arrive a
-    -- whole window late, the experience paying for that hint a window after it, and
-    -- the attribution settles a window after that. Evicting at the matching window is
-    -- what makes a kill worth 44 experience get reported as one that paid nothing.
+    -- Retention is three windows: the hint claiming a death can arrive a window
+    -- late, the experience paying for that hint a window after it, and the
+    -- attribution settles a window after that. Evicting at the matching window
+    -- would report a kill worth 44 experience as one that paid nothing.
     it("outlives the window it can be matched in, by a wide margin", function()
       assert.equal(correlator.window * 4, correlator.retention)
 
@@ -199,8 +200,7 @@ describe("KillCorrelator", function()
 
   -- Live tracing on top of the diagnostics() counters: which death matched which
   -- hint, and why an ambiguous match went the way it did. Optional, like every
-  -- logger in this addon (see WowEventRouter's own "diagnostics (optional logger)")
-  -- -- nothing above this point needed one, and nothing below changes that.
+  -- logger in this addon.
   describe("debug logging (optional)", function()
     local function fakeLogger()
       local messages = {}

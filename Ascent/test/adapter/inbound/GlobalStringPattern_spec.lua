@@ -1,7 +1,6 @@
--- Fixtures modelled on the shape D5 describes for COMBATLOG_XPGAIN_FIRSTPERSON --
--- name, total, parenthetical amount, state word -- across four locales, two of
--- which (ruRU, koKR) reorder the specifiers the way D5 says those two do. The
--- wording is illustrative, not verified client text: only the specifier shapes
+-- Fixtures in the shape of COMBATLOG_XPGAIN_FIRSTPERSON (name, total, parenthetical
+-- amount, state word) across four locales; ruRU and koKR reorder the specifiers.
+-- The wording is illustrative, not verified client text: only the specifier shapes
 -- and the non-ASCII bytes matter here.
 local FIXTURES = {
   {
@@ -40,9 +39,8 @@ describe("GlobalStringPattern", function()
     GlobalStringPattern = ns.adapter.GlobalStringPattern
   end)
 
-  -- Reconstructs fields by ORIGINAL placeholder number rather than by capture
-  -- position, which is the whole point: a locale that reorders the specifiers
-  -- also reorders where each field lands in the captures a match returns.
+  -- Reconstructs fields by original placeholder number, not capture position: a
+  -- locale that reorders the specifiers also reorders the captures a match returns.
   local function captureFields(template, line)
     local pattern, order = GlobalStringPattern.compile(template)
     local results = { line:match(pattern) }
@@ -101,15 +99,15 @@ describe("GlobalStringPattern", function()
       end
     end)
 
-    it("lists exactly the globals D5 names, once each", function()
+    it("lists exactly the experience templates it builds patterns from, once each", function()
       local expected = {
         "COMBATLOG_XPGAIN_FIRSTPERSON", "COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED",
         "COMBATLOG_XPGAIN_FIRSTPERSON_GROUP", "COMBATLOG_XPGAIN_FIRSTPERSON_RAID",
         "COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED_GROUP", "COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED_RAID",
         "COMBATLOG_XPGAIN_QUEST", "COMBATLOG_XPGAIN_EXHAUSTION1", "COMBATLOG_XPGAIN_EXHAUSTION2",
         "COMBATLOG_XPGAIN_EXHAUSTION4", "COMBATLOG_XPGAIN_EXHAUSTION5",
-        -- The eight rested-AND-grouped templates, which nobody had counted: the
-        -- normal case of levelling rested with a friend.
+        -- The eight rested-and-grouped templates: the normal case of levelling
+        -- rested with a friend.
         "COMBATLOG_XPGAIN_EXHAUSTION1_GROUP", "COMBATLOG_XPGAIN_EXHAUSTION1_RAID",
         "COMBATLOG_XPGAIN_EXHAUSTION2_GROUP", "COMBATLOG_XPGAIN_EXHAUSTION2_RAID",
         "COMBATLOG_XPGAIN_EXHAUSTION4_GROUP", "COMBATLOG_XPGAIN_EXHAUSTION4_RAID",
@@ -130,15 +128,10 @@ describe("GlobalStringPattern", function()
   end)
 end)
 
--- The experience family, with the client's real templates. These are not
--- illustrative like the fixtures above: they are the verbatim values read from
--- the client's own string table for the two builds this addon targets, and the
--- whole point of this block is that the family is matched by SPECIFICITY.
---
--- The plain kill template is a strict prefix of every other one in the family,
--- so an unanchored match in declaration order silently swallows the modifier and
--- records a group kill as an ordinary one. That is not hypothetical: it is what
--- the addon did until this suite existed.
+-- The experience family with the client's real templates, verbatim from the string
+-- tables of both target builds. The family is matched by specificity: the plain
+-- kill template is a strict prefix of every other one, so an unanchored match in
+-- declaration order would swallow the modifier and record a group kill as plain.
 
 describe("the experience template family", function()
   local ns, GlobalStringPattern
@@ -148,7 +141,7 @@ describe("the experience template family", function()
     GlobalStringPattern = ns.adapter.GlobalStringPattern
   end)
 
-  -- Verbatim from the client's string table, enUS, identical on both targets.
+  -- enUS, identical on Classic Era and Burning Crusade Classic.
   local EN = {
     COMBATLOG_XPGAIN_FIRSTPERSON = "%s dies, you gain %d experience.",
     COMBATLOG_XPGAIN_FIRSTPERSON_GROUP = "%s dies, you gain %d experience. (+%d group bonus)",
@@ -179,9 +172,9 @@ describe("the experience template family", function()
       "%s dies, you gain %d experience. (%s exp %s penalty, -%d raid penalty)",
   }
 
-  -- esES on the 2.5.6 client. Kept because the Spanish templates DIFFER between
-  -- the two supported clients while the English ones do not -- which is the
-  -- proof that no translated literal may ever be written into this addon.
+  -- esES on the 2.5.6 (Burning Crusade Classic) client. The Spanish templates
+  -- differ between the two supported clients while the English ones do not, which
+  -- is why no translated literal may be written into this addon.
   local ES = {
     COMBATLOG_XPGAIN_FIRSTPERSON = "%s muere, obtienes %d p. de experiencia.",
     COMBATLOG_XPGAIN_FIRSTPERSON_GROUP = "%s muere, obtienes %d p. de experiencia. (+%d bonus de grupo)",
@@ -275,9 +268,8 @@ describe("the experience template family", function()
         values = { "Boar", 120, "+10%", "rested", 18 },
         expect = "EXHAUSTION1_GROUP", creature = "Boar", amount = 120,
         modifier = "group", modifierAmount = 18 },
-      -- The dangerous one. Without specificity ordering this also matches the
-      -- FATIGUE template, and a raid penalty would be recorded as a fatigue
-      -- penalty -- a different thing entirely, and wrong in a way nothing fails.
+      -- Without specificity ordering this also matches the fatigue template, and a
+      -- raid penalty would be recorded, silently, as a fatigue penalty.
       { template = "COMBATLOG_XPGAIN_EXHAUSTION1_RAID",
         values = { "Boar", 120, "+10%", "rested", 42 },
         expect = "EXHAUSTION1_RAID", creature = "Boar", amount = 120,
@@ -314,10 +306,9 @@ describe("the experience template family", function()
       assert.is_nil(matched.modifierAmount)
     end)
 
-    -- The parenthetical of a rested kill, which is the ONLY reading of the bonus
-    -- anchored to the kill that announced it. The reserve diff is not: the client
-    -- prints the line before it applies the gain, so a reserve sampled here belongs
-    -- to the previous kill. These figures are transcribed from a real session.
+    -- The parenthetical is the only reading of the rested bonus tied to the kill
+    -- that announced it: the client prints the line before it applies the gain, so
+    -- a reserve sampled here belongs to the previous kill. The figures are real.
     it("reads the rested magnitude off the parenthetical", function()
       local family = GlobalStringPattern.compileXpFamily(lookup(EN))
       local matched = GlobalStringPattern.matchXp(family,

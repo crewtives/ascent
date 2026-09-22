@@ -1,25 +1,16 @@
--- Ascent - a bar to look at, without playing (tasks 5.1, 5.2, 7.3).
+-- Ascent - a bar to look at, without playing.
 --
--- More than a dozen skins times a dozen visual states is not something anyone is
--- going to verify by levelling a character. This drives the bar through every
--- state a requirement of this change names -- a source appearing for the first
--- time, experience being reclassified, a level-up -- on demand, from a synthetic
--- level that never touches the player's own data.
+-- Drives the bar on demand through every visual state (a source appearing, a
+-- reclassification, a level-up) from a synthetic level that never touches the
+-- player's data. It lives in app/: core/ may not hold test doubles, ui/ only
+-- draws what it is given, and only the composition root can suspend the real
+-- redraw while the demo is on screen, or the next 5 Hz tick would paint the
+-- player's level over it.
 --
--- It lives in app/ and nowhere else (design D37). core/ is the domain, not
--- scenery for the interface, and the layer rule forbids test doubles in there at
--- all; ui/ draws what it is given and should not be able to invent input. The
--- composition root is the only place that legitimately knows both the real
--- record and the fake one, and it is the place that can suspend the real redraw
--- while the fake one is on screen -- without that, the next 5 Hz tick would
--- paint the player's actual level straight over the demo.
---
--- The synthetic record is built by writing the model's fields directly, which is
--- the one liberty taken here: there is no public "put 3000 experience of this
--- source into this level" on LevelRecord, because nothing in the real addon ever
--- wants one -- experience arrives through attribution. Every step keeps the
--- invariant the model exposes (`sourcesAddUp`) and asserts it, so a demo that
--- drifts fails loudly here rather than showing a bar that could not happen.
+-- The synthetic record writes LevelRecord's fields directly, since the model has
+-- no public way to add experience outside attribution. Every step asserts
+-- `sourcesAddUp`, so a drifting demo fails here instead of drawing a bar that
+-- could not happen.
 
 local _, ns = ...
 ns.app = ns.app or {}
@@ -32,13 +23,10 @@ local PlaceContext = ns.core.PlaceContext
 local XP_REQUIRED = 25000
 local START_LEVEL = 23
 
--- Each step states the experience held by each source AFTER it, plus the two
--- channels that are not earned experience. Absolute rather than incremental so
--- that every step is independently readable, and so that stepping backwards one
--- day is a matter of walking the list the other way.
---
--- The order is a script: it walks a plausible stretch of levelling, and every
--- transition in it is one that a requirement of this change names.
+-- Each step states the experience held by each source after it, plus the two
+-- channels that are not earned experience (rested, pending). Absolute rather
+-- than incremental, so every step reads on its own and the list can be walked
+-- either way. The order is a script: a plausible stretch of levelling.
 local STEPS = {
   {
     name = "fresh level",
@@ -75,12 +63,10 @@ local STEPS = {
   {
     -- Experience the client confirmed but attribution has not settled yet.
     --
-    -- Also the step the options panel previews (7.3): it is the one that has
-    -- all four sources in clearly different proportions, a rested reserve and a
-    -- pending projection all at once, which is exactly what a bar being
-    -- configured has to show. Deliberately not a round half of the level --
-    -- a preview sitting on a tidy number hides the rounding and seam problems a
-    -- preview is for.
+    -- Also the step the options panel previews: all four sources in clearly
+    -- different proportions, a rested reserve and a pending projection at once.
+    -- Not a round half of the level, because a tidy number hides the rounding
+    -- and seam problems a preview is for.
     name = "unclassified gain",
     preview = true,
     xp = {
@@ -90,8 +76,8 @@ local STEPS = {
     rested = 2400, pending = 5200,
   },
   {
-    -- D21 settling: the same total, moved from unclassified to where it really
-    -- came from. The right-hand edge of the progress must not move at all.
+    -- Settling: the same total, moved from unclassified to where it really came
+    -- from. The right-hand edge of the progress must not move at all.
     name = "reclassified",
     xp = {
       [XpSource.MOB_KILL] = 5200, [XpSource.QUEST_TURNIN] = 4300,
@@ -125,16 +111,13 @@ local STEPS = {
   },
 }
 
--- The same experience, seen from where it was earned. Split across two places
--- plus a stretch the client could not name, because the bar's crossed reading
--- only has anything to show when there is a place split behind it.
+-- The same experience, seen from where it was earned: split across two places
+-- plus a zone crossed with none, because the bar's crossed reading only has
+-- something to show when there is a place split behind it.
 --
--- This covers the BAR and nothing else. The demo record reaches the bar and only
--- the bar -- the report panel is built around the live tracker, not around this
--- -- so the panel's own per-place block is exercised by the smoke harness seeding
--- the record in progress instead (test/smoke.lua). Worth stating because the
--- comment that used to be here claimed otherwise, and a claim like that is what
--- keeps anybody from checking.
+-- This covers the bar only. The report panel is built around the live tracker,
+-- so its per-place block is exercised by the smoke harness seeding the record in
+-- progress instead (test/smoke.lua).
 local function placeRecord(record, total)
   if total <= 0 then
     return
@@ -145,8 +128,8 @@ local function placeRecord(record, total)
   local shares = {
     { key = PlaceKey.new(PlaceContext.DUNGEON, 389, "Ragefire Chasm"), amount = underground, seconds = 900 },
     { key = PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), amount = outside, seconds = 1200 },
-    -- No experience at all: the zone crossed on the way, which is the row the
-    -- rates of the other two are only believable next to.
+    -- No experience at all: the zone crossed on the way. The other two rates
+    -- are only believable next to a row like this.
     { key = PlaceKey.new(PlaceContext.WORLD, 1433, "Westfall"), amount = 0, seconds = 300 },
   }
 
@@ -189,9 +172,8 @@ local function buildRecord(level, step)
   end
   record.xpTotal = total
 
-  -- The model can check itself, so it does. A demo that quietly broke the
-  -- addon's central invariant would be showing a bar the real code can never
-  -- produce, which makes it worse than no demo at all.
+  -- A demo that broke the central invariant would show a bar the real code can
+  -- never produce.
   if not record:sourcesAddUp() then
     error("DemoDriver built a level whose sources do not add up: " .. step.name)
   end
@@ -204,12 +186,10 @@ end
 local DemoDriver = {}
 DemoDriver.__index = DemoDriver
 
--- One step of the script, built and handed out whole, for a caller that wants a
--- representative level without driving anything (7.3: the options panel's live
--- preview). The point of it being HERE is that there is then one synthetic level
--- in the addon rather than two -- a second one grown inside ui/ would have to be
--- kept level with this one by hand, and would drift the first time this script
--- changed.
+-- One step of the script, built whole, for a caller that wants a representative
+-- level without driving anything (the options panel's live preview). Kept here
+-- so the addon has one synthetic level; a second one inside ui/ would drift from
+-- this script.
 function DemoDriver.sample()
   for _, step in ipairs(STEPS) do
     if step.preview then

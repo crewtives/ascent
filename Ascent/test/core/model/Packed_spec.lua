@@ -16,8 +16,8 @@ describe("Packed", function()
       assert.same({ "44", "mob_kill", "1234.5" }, Packed.split("44,mob_kill,1234.5"))
     end)
 
-    -- Where most of the saving is: a gain carries nine fields and usually fills
-    -- three. Only TRAILING empties go, because position is identity.
+    -- Most of the saving: a gain carries nine fields and usually fills three.
+    -- Only trailing empties go, because position is identity.
     it("drops trailing empties and keeps the ones in the middle", function()
       assert.equal("44,mob_kill", Packed.join({ 44, "mob_kill", false, false }))
       assert.equal("44,,1234.5", Packed.join({ 44, false, 1234.5 }))
@@ -41,9 +41,9 @@ describe("Packed", function()
     end)
 
     -- An empty field comes back as false rather than nil so that the sequence has no
-    -- holes in it. A table with a hole has no defined length in 5.1, and re-joining
-    -- one would drop every field after the first gap -- a quest id written in field
-    -- nine would simply not come back.
+    -- holes in it. A table with a hole has no defined length in Lua 5.1, and
+    -- re-joining one would drop every field after the first gap: a quest id
+    -- written in field nine would not come back.
     it("survives being split and joined again", function()
       for _, record in ipairs({
         "250,quest_turnin,20.0,,,,,,1234",
@@ -71,8 +71,6 @@ describe("Packed", function()
   end)
 
   describe("values that contain a separator", function()
-    -- A creature called "Grunt, the Loyal" is not something to find out about from a
-    -- player's corrupted history.
     it("survives a comma in a name", function()
       local record = Packed.join({ 5644, 6, "Grunt, the Loyal" })
 

@@ -176,8 +176,8 @@ describe("EventBus", function()
       assert.equal(0, #isolated.subscribers[EventTopic.COMBAT_ENDED])
     end)
 
-    -- `error()` raises nil. Using nil as the "no failure" sentinel would swallow
-    -- precisely that, against what the header promises.
+    -- `error()` raises nil, so nil cannot be the "no failure" sentinel: it
+    -- would swallow exactly that.
     it("surfaces a handler that raised nothing at all", function()
       bus:subscribe(EventTopic.RECORD_UPDATED, function() error() end)
 
@@ -186,10 +186,10 @@ describe("EventBus", function()
   end)
 
   describe("housekeeping", function()
-    -- The shape this addon actually has: an adapter publishes, and a service
-    -- publishes a second topic from inside that handler. With a single global
-    -- in-flight counter, that second topic would never compact and its dead
-    -- subscriptions would pile up for the whole session.
+    -- An adapter publishes, and a service publishes a second topic from inside
+    -- that handler. With a single global in-flight counter, that second topic
+    -- would never compact and its dead subscriptions would pile up for the
+    -- whole session.
     it("compacts a topic that is only ever published from inside another handler", function()
       bus:subscribe(EventTopic.XP_DELTA_OBSERVED, function(payload)
         bus:publish(EventTopic.XP_ATTRIBUTED, payload)

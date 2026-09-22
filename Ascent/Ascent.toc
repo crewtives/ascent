@@ -56,6 +56,7 @@ core/port/Repository.lua
 core/port/EventBus.lua
 core/port/Logger.lua
 core/port/Locale.lua
+core/port/QuestLog.lua
 
 # --- core: registries ------------------------------------------------------
 core/registry/SkinCatalog.lua
@@ -110,13 +111,16 @@ core/service/PlateLayout.lua
 core/service/CopyReport.lua
 
 # --- adapter: compat -------------------------------------------------------
+# First of the layer, and before anything that reads the client: every other
+# adapter binds its guard at load time.
+adapter/compat/Readable.lua
 adapter/compat/Compat.lua
 adapter/compat/Capabilities.lua
 adapter/compat/ClientXpBar.lua
 
-# Out of its own group on purpose: it is a dependency-free string utility that
-# both the inbound routers and the outbound quest log reader bind at load time,
-# and the client has no require() -- a file listed after its dependency binds nil.
+# Outside its own group: it is a dependency-free string utility that both the
+# inbound routers and the outbound quest log reader bind at load time, and the
+# client has no require(), so a file listed before its dependency binds nil.
 adapter/inbound/GlobalStringPattern.lua
 
 # --- adapter: outbound -----------------------------------------------------
@@ -124,6 +128,10 @@ adapter/outbound/SavedVariablesRepository.lua
 adapter/outbound/WowClock.lua
 adapter/outbound/WowPlayerState.lua
 adapter/outbound/ChatLogger.lua
+adapter/outbound/QuestLogShape.lua
+adapter/outbound/ClassicQuestLogReader.lua
+adapter/outbound/ModernQuestLogReader.lua
+# Last of the three: it is the one that picks between the other two.
 adapter/outbound/QuestLogReader.lua
 
 # --- adapter: inbound ------------------------------------------------------
@@ -140,6 +148,7 @@ ui/BarRenderer.lua
 ui/XpBarView.lua
 ui/BarPreview.lua
 ui/RowList.lua
+ui/SpellIcon.lua
 ui/PullPlateView.lua
 ui/ReportPanelView.lua
 ui/CopyDialog.lua

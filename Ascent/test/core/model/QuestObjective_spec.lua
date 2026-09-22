@@ -29,7 +29,7 @@ describe("QuestObjective", function()
   end)
 
   -- A client reporting more done than needed would otherwise make `remaining`
-  -- negative, and a negative remaining would SUBTRACT experience downstream.
+  -- negative, and a negative remaining would subtract experience downstream.
   it("never has fewer than none left, whatever the client says", function()
     local murlocs = objective({ creature = "Grimscale Murloc", done = 9, needed = 6 })
 

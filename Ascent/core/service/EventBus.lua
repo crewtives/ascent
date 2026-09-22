@@ -4,7 +4,7 @@
 -- react, and neither side can reach the other. It is the seam that lets a view be
 -- added without touching the tracker.
 --
--- Three details that look like over-thinking until they bite:
+-- Three details:
 --
 --   * Topics are validated against EventTopic. A publish to a topic nobody listens
 --     to is indistinguishable from a typo, and both are silent.
@@ -12,7 +12,7 @@
 --     an update), so subscriptions are marked dead and compacted afterwards rather
 --     than removed mid-iteration. Delivery also walks a fixed count, so a handler
 --     that subscribes does not get called in the round that created it. The
---     in-flight counter is kept PER TOPIC: a single global one never returns to
+--     in-flight counter is kept per topic: a single global one never returns to
 --     zero for a topic that is only ever published from inside another handler,
 --     which is the shape this addon actually has (adapter publishes, a service
 --     publishes from that handler), and its dead entries would pile up forever.

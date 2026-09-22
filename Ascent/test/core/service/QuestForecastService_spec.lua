@@ -1,7 +1,6 @@
--- The three guarantees group 8 exists to keep, in one place: what is stored is
--- always the nominal reward (never reduced twice), an unknown reward is
--- reported as unknown rather than estimated, and the total collapses to zero
--- at the cap or with experience disabled.
+-- What is stored is always the nominal reward (never reduced twice), an unknown
+-- reward is reported as unknown rather than estimated, and the total collapses
+-- to zero at the cap or with experience disabled.
 
 describe("QuestForecastService", function()
   local ns, QuestForecastService, QuestForecast, QuestXpOrigin
@@ -292,13 +291,10 @@ describe("QuestForecastService", function()
     end)
 
     it("a calibrated quest is not reduced a second time on the next report", function()
-      -- Realistic order: the client's own number was untrustworthy (UNKNOWN,
-      -- not CLIENT -- CLIENT always outranks a calibrated LEARNED value, so
-      -- this scenario only means something when the client was never the
-      -- source of truth to begin with) at 10 levels below the character, the
-      -- turn-in actually pays 30 (10% of the true nominal, 300), and a later
-      -- report of a similarly-levelled quest at the corrected nominal must
-      -- read 30 again, not 300 reduced a second time down to 3.
+      -- The client offers no number (UNKNOWN; CLIENT would outrank a calibrated
+      -- LEARNED value). Ten levels below the character the turn-in pays 30, 10%
+      -- of the true nominal 300, and a later report of a similar quest must read
+      -- 30 again, not 300 reduced a second time down to 3.
       local svc = service({ scanResult = { forecast(1, 10, nil) }, player = { level = 20 } })
       svc:tick()
       svc:calibrate(1, 30)
@@ -424,11 +420,8 @@ describe("QuestForecastService", function()
       assert.is_true(found)
     end)
 
-    -- The line used to compare the payout against what the dialogue had just
-    -- taught the addon, and only when the quest was already in `learned`. Both
-    -- halves were wrong for the question it exists to answer: the comparison worth
-    -- logging is the figure the PANEL was showing, and a quest whose reward came
-    -- from the client and was never learned produced no line at all.
+    -- The line compares the payout with the figure the panel was showing, and a
+    -- quest whose reward came from the client and was never learned gets one too.
     it("logs what was shown against what was paid", function()
       local messages = {}
       local logger = { debug = function(_, msg) table.insert(messages, msg) end }
@@ -461,9 +454,8 @@ describe("QuestForecastService", function()
     end)
   end)
 
-  -- Task 8.7 asks for twenty real turn-ins compared against what was forecast.
-  -- Until this record existed there was nothing to compare: the service logged a
-  -- number it had just derived from the payout, against the payout.
+  -- Each real turn-in, recorded against what was forecast for it: the payout has
+  -- to be compared with the forecast, not with a number derived from the payout.
   describe("the calibration record (8.7)", function()
     it("carries what was shown, where it came from, and what was paid", function()
       local svc = service({ player = { level = 20 } })
@@ -491,7 +483,7 @@ describe("QuestForecastService", function()
     end)
 
     -- A client-reported zero is a real answer on some builds, not a missing one,
-    -- and coercing it away would hide the case the spike is looking for.
+    -- and coercing it away would hide exactly that case.
     it("passes a reported zero through as zero", function()
       local svc = service({ player = { level = 20 } })
 
@@ -509,8 +501,8 @@ describe("QuestForecastService", function()
         player = { level = 20 },
       })
       svc:tick()
-      -- The quest log changed and the ticker rescanned before the reward landed,
-      -- which is the whole of the race: 8.3's cadence only rescans after markDirty.
+      -- The quest log changed and the ticker rescanned before the reward landed;
+      -- the ticker only rescans after markDirty.
       svc.scan = function() return {} end
       svc:markDirty()
       svc:tick()

@@ -1,13 +1,11 @@
--- Ascent - metric collector: damage dealt, damage taken, healing received (6.6).
+-- Ascent - metric collector: damage dealt, damage taken, healing received.
 --
--- CombatLogRouter's early filter (D6) already restricts
--- DAMAGE_DEALT/DAMAGE_TAKEN/HEALING_RECEIVED to the player and their pet -- other
--- party members' damage in the same fight never reaches this topic at all -- so
--- the only state this collector needs of its own is `enabled`: the player's own
--- opt-out (SettingKey.COLLECT_DAMAGE), read live through a function rather than a
--- value captured once at construction, so toggling the option in the options
--- panel takes effect the same tick without rebuilding the collector or the
--- registry it is registered in.
+-- CombatLogRouter's early filter already restricts
+-- DAMAGE_DEALT/DAMAGE_TAKEN/HEALING_RECEIVED to the player and their pet (other
+-- party members' damage never reaches these topics), so the only state this
+-- collector needs is `enabled`: the player's opt-out (SettingKey.COLLECT_DAMAGE),
+-- read live through a function so toggling it in the options panel takes effect
+-- on the same tick without rebuilding the collector or its registry.
 local _, ns = ...
 ns.core = ns.core or {}
 
@@ -21,7 +19,7 @@ DamageCollector.id = MetricId.DAMAGE
 DamageCollector.topics = { EventTopic.DAMAGE_DEALT, EventTopic.DAMAGE_TAKEN, EventTopic.HEALING_RECEIVED }
 
 -- options.enabled: optional function() -> boolean. Absent (or nil-returning) means
--- always enabled, which is what every existing caller (and every test) gets.
+-- always enabled.
 function DamageCollector.new(options)
   options = options or {}
   return setmetatable({ enabled = options.enabled }, DamageCollector)

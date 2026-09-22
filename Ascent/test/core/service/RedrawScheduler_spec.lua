@@ -1,8 +1,7 @@
--- The scheduler is the pure half of D7's dirty-flag redraw: no frame, no client,
--- just whether a redraw is due. The rule under test throughout is that a burst of
--- dirty marks is never "more dirty" than a single one -- it still costs at most one
--- redraw per cycle -- and that the cycle is measured from the last real redraw, not
--- from when the scheduler happened to be built.
+-- The pure half of the dirty-flag redraw: whether a redraw is due, with no frame
+-- and no client. A burst of dirty marks costs at most one redraw per cycle, like
+-- a single one, and the cycle is measured from the last real redraw, not from
+-- when the scheduler was built.
 
 describe("RedrawScheduler", function()
   local ns, RedrawScheduler, clock, scheduler

@@ -1,6 +1,6 @@
--- The client gives each prefix ten messages back at one a second, and overspending
--- can disconnect the player. This is the piece that makes sure the addon never
--- gets close, so the assertions are about what it REFUSES.
+-- The client gives each prefix ten messages back at one a second, and
+-- overspending can disconnect the player, so the assertions are about what the
+-- budget refuses.
 
 describe("SendBudget", function()
   local ns, clock, budget

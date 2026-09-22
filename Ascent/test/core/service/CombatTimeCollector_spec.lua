@@ -136,12 +136,10 @@ describe("CombatTimeCollector", function()
   end)
 
   describe("level crossing (6.8)", function()
-    -- A level-up mid-fight fires no COMBAT_STARTED/ENDED of its own -- nothing
-    -- marks the crossing explicitly. What actually splits the fight is the same
-    -- 5Hz observe() ticker Bootstrap already calls for recovery sampling: each
-    -- tick closes the interval against whichever record is current AT THAT TICK,
-    -- so the slice before the crossing lands on the old level and the slice
-    -- after lands on the new one, bounded by one tick's worth of imprecision.
+    -- A level-up mid-fight fires no COMBAT_STARTED/ENDED of its own. The 5Hz
+    -- observe() ticker splits the fight: each tick closes the interval against
+    -- the record current at that tick, so each side lands on its own level, off
+    -- by at most one tick.
     it("splits a fight that crosses a level-up between the two levels at the nearest tick", function()
       local closingLevel = record
       local nextLevel = ns.core.LevelRecord.new(6, 0)

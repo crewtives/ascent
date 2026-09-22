@@ -1,11 +1,9 @@
 -- Ascent - the changelog as one block of text.
 --
--- The entries themselves are generated from CHANGELOG.md at build time
--- (tools/changelog.lua), already rendered to plain lines: a player's client has
--- no business parsing markdown. What is left is putting them in order and
--- deciding what happens when there is nothing to show -- which is the case worth
--- having a function for, because "no changelog" must read as a sentence and not
--- as an empty window.
+-- The entries are generated from CHANGELOG.md at build time
+-- (tools/changelog.lua) and arrive rendered to plain lines, so the client never
+-- parses markdown. What is left is the order, and the empty case: "no changelog"
+-- must read as a sentence, not as an empty window.
 
 local _, ns = ...
 ns.core = ns.core or {}
@@ -13,8 +11,8 @@ ns.core = ns.core or {}
 local ChangelogText = {}
 
 -- The version being played goes first even when the embedded list is ordered
--- newest-first and it is not the newest -- someone running an older build, or a
--- development one, is reading this to find out about the build in their hands.
+-- newest-first and it is not the newest: someone running an older build, or a
+-- development one, is reading about the build in their hands.
 local function ordered(entries, currentVersion)
   local head, rest = {}, {}
   for _, entry in ipairs(entries) do
@@ -32,8 +30,7 @@ local function ordered(entries, currentVersion)
 end
 
 -- One string, or nil when the build carries no changelog at all. nil rather than
--- an empty string: the caller has a sentence for that case and cannot tell the
--- difference between "nothing to say" and "a blank window" otherwise.
+-- an empty string, so the caller can tell that case apart and show its sentence.
 function ChangelogText.build(entries, currentVersion)
   if type(entries) ~= "table" or #entries == 0 then
     return nil

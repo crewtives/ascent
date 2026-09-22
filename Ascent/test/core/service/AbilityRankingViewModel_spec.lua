@@ -1,7 +1,6 @@
--- The panel's ranking has to read the same story `record.abilities` already
--- tells: who was used the most, and what share of every use in the level that
--- is -- with auto attacks folded into one shared total and one shared ranking,
--- but still tagged apart so the UI can treat them differently if it wants to.
+-- The ranking reads `record.abilities`: what was used the most and its share of
+-- every use in the level, with auto attacks in the same total and ranking but
+-- tagged apart so the UI can treat them differently.
 
 describe("AbilityRankingViewModel", function()
   local ns, AbilityRankingViewModel, LevelRecord, AbilityUsage, AbilityKey
@@ -102,9 +101,9 @@ describe("AbilityRankingViewModel", function()
     assert.equal(111, viewModel.entries[1].key)
   end)
 
-  -- Every rank of a spell is its own spell id in these clients, and a real level
-  -- report came back with two rows both reading "Lesser Heal" and nothing to
-  -- tell them apart. One button, one row.
+  -- Every rank of a spell is its own spell id in Classic Era and Burning
+  -- Crusade Classic, so a level could report two rows both reading "Lesser
+  -- Heal". One button, one row.
   describe("ranks of one spell", function()
     it("folds two ranks of the same spell into one row", function()
       local record = level()
@@ -169,6 +168,25 @@ describe("AbilityRankingViewModel", function()
       assert.equal(2, #viewModel.entries)
       assert.equal("Ranged attack", viewModel.entries[1].name)
       assert.is_true(viewModel.entries[1].isAutoAttack)
+    end)
+  end)
+
+  -- The ranking is one of the three metrics the combat log feeds. Not recorded
+  -- is not "none used", and part of a level is not the level.
+  describe("a level recorded without the combat log", function()
+    it("ranks nothing and says why, even with uses counted before it closed", function()
+      local record = ns.core.LevelRecord.new(10, 0)
+      local fireball = ns.core.AbilityUsage.new(133, "Fireball")
+      fireball.count = 12
+      record.abilities[133] = fireball
+      record:markUnavailable(ns.core.RecordedSource.COMBAT_LOG, "unreadable")
+
+      local viewModel = ns.core.AbilityRankingViewModel.build(record)
+
+      assert.is_true(viewModel.active)
+      assert.equal("unreadable", viewModel.unavailable)
+      assert.same({}, viewModel.entries)
+      assert.is_nil(viewModel.totalUses)
     end)
   end)
 end)

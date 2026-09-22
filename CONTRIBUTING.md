@@ -18,6 +18,13 @@ before you paste it, so you decide what goes.
 
 ## Before you open a pull request
 
+Once per clone, install the commit-message hook, so that a message is checked when you write it rather than
+when someone reviews it:
+
+```sh
+./dev.sh hooks
+```
+
 Three gates, the same ones CI runs. All three green, or the pull request cannot merge:
 
 ```sh
@@ -57,12 +64,88 @@ Two house rules that are not negotiable, because they are what the addon is:
 ## Style
 
 - **Code, comments and player-facing text are in English.**
-- Comments explain **why**, not what. The code already says what it does; what it cannot say is the
-  reason it is shaped that way, or which failure it is guarding against.
-- Commit subjects and pull request titles are a short imperative sentence saying what changes and why
-  it matters — *"Say nothing on a bar too thin to be read"*, not *"fix bar"* and not `fix:`. This
-  project does not use Conventional Commits.
+- Commit messages, the changelog and comments follow the writing conventions below.
 - Keep the diff to what the change needs. Unrelated reformatting makes a review about the wrong thing.
+
+## Writing conventions
+
+One rule covers everything public: **it describes the addon, never the process that built it.** No
+decision or task numbers from planning notes, no names of internal documents, no account of how a change was
+worked out, and no attribution to the tools used to write it. `./dev.sh lint` rejects the recognisable forms
+of this (the rules are in `tools/public-text.patterns`), and review catches the rest.
+
+### Commit messages
+
+[Conventional Commits 1.0](https://www.conventionalcommits.org/en/v1.0.0/), checked by the hook:
+
+```
+fix(plate): keep the summary up while a creature hits a shield
+
+The summary hid while a pull had no kills and no damage yet, which is
+what fighting an absorb shield looks like.
+```
+
+- **Type**: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `build`, `ci`, `chore`, `revert` or `style`.
+- **Scope**: optional, and one of the areas in `.githooks/scopes`. A new area adds its scope there in the
+  commit that first uses it.
+- **Header**: at most 72 characters. The summary is imperative, starts in lowercase, has no final period, and
+  says literally what changes: *"add an options page for the combat summary"*, not *"the combat summary
+  answers to the player now"*.
+- **Body**: optional, after a blank line, wrapped at 72. What changes and why, in plain terms.
+- **Breaking**: `!` after the scope and a `BREAKING CHANGE:` footer when an earlier version can no longer read
+  the saved history, or a command or setting goes away.
+- **Credit** a co-author with `Co-Authored-By: Name <email>`. No assistant attribution, no session links.
+- A pull request title follows the same format, because it becomes the commit.
+
+### Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog 1.1](https://keepachangelog.com/en/1.1.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). The addon shows it in the game, so it is written
+for players:
+
+- **One entry, one sentence**: what changes for the player, at most 160 characters once formatting is
+  removed. A change too big for that is several entries.
+- A version may open with **one status line** of at most 200 characters (for example, why it is a beta).
+- **Only what a player can notice.** Refactoring, tests and tooling stay out.
+- **Client tags** go first when an entry does not apply to every client: `[Era]`, `[TBC]`, `[Forever]`,
+  several in a row if needed. No tag means every client.
+- **Saved data** is described by its effect: *"Your saved history is upgraded automatically; earlier
+  versions cannot read it."*, not by a schema number.
+- **Contributions** are credited at the end of their entry: *"— thanks @name"*.
+
+`luajit tools/changelog.lua` regenerates the in-game copy and refuses an entry over its limit or a tag it does
+not know. `./dev.sh lint` fails if you forget to run it.
+
+### Release notes
+
+A release's notes are its section of `CHANGELOG.md`, word for word, on GitHub and on CurseForge alike, and its
+title is `Ascent <version>`. `tools/release-notes.sh` extracts them; nothing is written for a release that is
+not already in the changelog.
+
+### Issues
+
+The title states the symptom in a sentence — *"Sources tab total disagrees with the bar's tooltip"*, not *"bug"*.
+Pick the client in the form, and paste what `/ascent copy` gives you.
+
+### Code comments
+
+- Every addon file outside `test/` opens with `-- Ascent - <what this file is>`, followed, where it helps, by
+  up to six lines on its role and the constraint that shapes it.
+- A comment says **why**, or the constraint the code cannot state: an invariant, a unit, an ordering, the
+  failure it guards against. When a client lacks an API or behaves oddly, name the API and the client.
+- Keep it to about four lines. It is written in the present tense and says nothing about how the code came to
+  be — git already has that. No dialogue, no headings in capitals, and no pointers to documents that are not
+  in this repository.
+- In a test, the `describe` and `it` texts are the documentation. A comment is for set-up that cannot be
+  understood without one.
+- A commit that only rewrites comments can prove it: `./dev.sh same-code` compares the compiled code of every
+  changed `.lua` file with `HEAD` and names any file whose code is not the same.
+
+### Text in the game
+
+Clients are named **Classic Era**, **Burning Crusade Classic** and **World of Warcraft: Forever**. Text a
+player reads does not expose the addon's internals, such as schema versions or the names of layers and
+buckets; the diagnostics that `/ascent copy` produces for a report are the exception.
 
 ## What happens to your pull request
 

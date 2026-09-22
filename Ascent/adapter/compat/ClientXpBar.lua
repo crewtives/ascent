@@ -1,27 +1,21 @@
 -- Ascent - the client's own experience bar, as a place to stand.
 --
--- Two jobs, and they are not the same one. The first is to hand the view a frame
--- to anchor to, so that "same length, same position" is a property of the anchor
--- rather than two copies of a geometry somebody has to keep in step (D47). The
--- second is to make the client's bar stop being seen without ever calling
--- anything the client protects.
+-- Two jobs. The first is to hand the view a frame to anchor to, so "same length,
+-- same position" is a property of the anchor rather than two copies of a geometry
+-- to keep in step. The second is to make the client's bar stop being seen without
+-- calling anything the client protects.
 --
--- WHY NOT HIDE IT: hiding is protected on a child of the main bar, so it fails in
--- combat -- precisely when the player cannot read the error. Alpha is not
--- protected. And a frame left shown keeps a geometry that means something, which
--- is what the anchor hangs off; a hidden one would still have a size, but then the
--- addon would be inheriting position from a frame the client shows and hides on
--- its own schedule (at maximum level, for one). This module takes position and
--- size from it and never its visibility (D48).
+-- The bar is quieted with alpha, never hidden: hiding is protected on a child of
+-- the main bar, so it fails in combat, and alpha is not. A frame left shown also
+-- keeps a meaningful geometry for the anchor, whereas the client shows and hides
+-- the bar on its own schedule (at maximum level, for one). This module takes
+-- position and size from it, never its visibility.
 --
--- WHY THE NAMES ARE DATA: every name below is a string looked up in _G at call
--- time, not a global this file binds to. Two reasons. The design only has it
--- verified that 1.12.1 and 2.4.3 expose MainMenuExpBar and that 1.15.9 drives it
--- through an ExpBarMixin -- whether the tree around it is the same on both
--- supported flavours is exactly what spike 0.2 is for, so these names are a
--- hypothesis with one edit site, not an API this code is entitled to. And a name
--- that is absent is an ordinary Tuesday here: another addon may have taken the
--- bar away, and that has to degrade rather than error (D49).
+-- Every name below is a string looked up in _G at call time, not a bound global.
+-- Only that 1.12.1 and 2.4.3 expose MainMenuExpBar and that 1.15.9 drives it
+-- through an ExpBarMixin is verified; the tree around it on each supported flavour
+-- is a hypothesis with one edit site. And an absent name is ordinary -- another
+-- addon may have taken the bar away -- and has to degrade rather than error.
 
 local _, ns = ...
 ns.adapter = ns.adapter or {}
@@ -29,11 +23,11 @@ ns.adapter = ns.adapter or {}
 local BarSlotPolicy = ns.core.BarSlotPolicy
 local BarSlot = ns.core.BarSlot
 
--- The frame the addon's bar anchors to, in the order it is looked for. There are
--- two different clients behind this list, and spike 0.2 is what found the second
--- one: the Anniversary Burning Crusade client has NO MainMenuExpBar and none of
--- its readouts -- the whole classic tree is absent -- and keeps its experience bar
--- in the modern status-tracking system instead. Measured there:
+-- The frame the addon's bar anchors to, in the order it is looked for. Two
+-- different clients are behind this list: the Anniversary Burning Crusade client
+-- has no MainMenuExpBar and none of its readouts -- the whole classic tree is
+-- absent -- and keeps its experience bar in the modern status-tracking system.
+-- Measured there:
 --
 --   MainStatusTrackingBarContainer  1024x12   <- the strip the bar occupies
 --   StatusTrackingBarManager        1024x23   <- the manager above it
@@ -57,22 +51,21 @@ local READOUT_NAMES = {
   "ExhaustionLevelFillBar",
 }
 
--- The art the client draws AROUND the bar. Left alone in the inset slot -- that is
--- the whole difference between the two -- and quieted in the replace slot.
+-- The art the client draws around the bar: left alone in the inset slot and
+-- quieted in the replace slot, which is the whole difference between the two.
 --
 -- Classic-tree names only. On the modern system that art is a child of the
--- container rather than a global, so there is nothing here to reach: the two
--- slots look the same on that client, and the honest place to say so is here.
+-- container rather than a global, so there is nothing here to reach and the two
+-- slots look the same on that client.
 local FRAME_NAMES = {
   "MainMenuXPBarTextureLeftCap",
   "MainMenuXPBarTextureRightCap",
   "MainMenuXPBarTextureMid",
 }
 
--- Names this module does NOT use, probed only so the diagnostic can say what the
--- client has instead when the ones above are not there. Spike 0.2 is a question
--- about a client nobody here can open, and a player can answer it from a chat
--- window in one line -- but only if the addon asks it out loud.
+-- Names this module does not use, probed only so the diagnostic can say what the
+-- client has instead when the ones above are not there: on a client the addon
+-- does not know, a player can report it from a chat window in one line.
 local CANDIDATE_NAMES = {
   "MainMenuBar",
   "MainMenuExpBar1",
@@ -120,7 +113,7 @@ local function quiet(object)
 end
 
 -- Puts back exactly what was there, including the case that matters: a piece that
--- was ALREADY invisible before Ascent existed -- another addon's doing, or the
+-- was already invisible before Ascent existed -- another addon's doing, or the
 -- client's -- must be left invisible, not turned on because this addon assumed
 -- full opacity was the natural state.
 local function giveBack(prior)
@@ -161,7 +154,7 @@ end
 -- The slot the addon can actually honour right now. A player who chose a slot on a
 -- client that has the bar, and then installs something that takes the bar away,
 -- gets their free bar back -- and keeps their choice on disk, so uninstalling that
--- addon brings the slot back without them having to find the setting again (D49).
+-- addon brings the slot back without them having to find the setting again.
 function ClientXpBar:effectiveSlot(chosen)
   if not self:present() then
     return BarSlot.OFF
@@ -169,12 +162,6 @@ function ClientXpBar:effectiveSlot(chosen)
   return chosen
 end
 
--- Converge on a desired set of quiet objects: give back anything that should be
--- seen again, quiet anything that should not, and leave the rest alone. Written as
--- a convergence rather than a silence/restore pair because the player can switch
--- between the two active slots without passing through off, and because it makes
--- re-application idempotent -- calling it again never records alpha zero as the
--- value to give back later.
 -- An entry is either a global's name, or a pair of a key and the object itself.
 -- The second form exists because the modern client's experience bar has no global
 -- name of its own: it is a child of the container, reachable only by walking
@@ -186,6 +173,12 @@ local function resolve(entry)
   return entry, _G[entry]
 end
 
+-- Converge on a desired set of quiet objects: give back anything that should be
+-- seen again, quiet anything that should not, and leave the rest alone. A
+-- convergence rather than a silence/restore pair because the player can switch
+-- between the two active slots without passing through off, and because it makes
+-- re-application idempotent: calling it again never records alpha zero as the
+-- value to give back later.
 function ClientXpBar:applyQuiet(entries)
   local wanted = {}
   for _, entry in ipairs(entries) do
@@ -201,15 +194,11 @@ function ClientXpBar:applyQuiet(entries)
 
   for _, entry in ipairs(entries) do
     local name, object = resolve(entry)
-    -- Only what is actually visible. A piece that was already invisible when this
-    -- addon arrived is already quiet, and there is nothing here to do -- while
-    -- recording it would be recording somebody else's state as ours to give back.
-    --
-    -- That distinction is not academic. The client hides pieces of its own bar
-    -- during a loading screen, and other addons hide them on purpose; capture one
-    -- of those transients and "giving it back" means setting it invisible again,
-    -- for good. The native bar frame left hidden is what that looks like from
-    -- the outside.
+    -- Only what is actually visible. A piece already invisible when this addon
+    -- arrived is already quiet, and recording it would record somebody else's
+    -- state as ours to give back. The client hides pieces of its own bar during a
+    -- loading screen and other addons hide them on purpose; capturing one of those
+    -- would "give it back" invisible, leaving the native bar hidden for good.
     if type(object) == "table" and (self.quieted[name] ~= nil or visible(object)) then
       if self.quieted[name] == nil then
         self.quieted[name] = capture(object)
@@ -219,24 +208,18 @@ function ClientXpBar:applyQuiet(entries)
   end
 end
 
--- What the slot the player chose means for the client's bar. Safe to call on every
--- settings change and on every event the client's bar reacts to: it is the same
--- convergence either way, which is what keeps the alpha applied if the client's
--- own code puts it back (the risk spike 0.3 measures).
 -- How deep to look for the bar inside the anchor. Two: on the modern client the
 -- container holds a bar frame, and the bar frame holds the StatusBar.
 local BARS_DEPTH = 2
 
 -- The status bars living inside a frame, as key/object pairs. Empty for a client
--- whose anchor IS the bar rather than a container around one.
+-- whose anchor is the bar rather than a container around one.
 --
--- This is what makes the inset slot possible on the modern client, and its
--- absence is the defect the owner reported as "I change the appearance and the
--- native bars disappear". The anchor there is MainStatusTrackingBarContainer, and
--- the art of the frame is its CHILD -- so quieting the anchor, which is what both
--- slots did, took the frame with it. Inset promises the opposite: the client's
--- frame stays and the bar sits inside it. Reaching the status bar itself and
--- leaving everything around it is the only way to keep that promise.
+-- This is what makes the inset slot possible on the modern client. The anchor
+-- there is MainStatusTrackingBarContainer and the frame's art is its child, so
+-- quieting the anchor would take the frame with it. Inset promises that the
+-- client's frame stays and the bar sits inside it, so it reaches the status bar
+-- itself and leaves everything around it.
 --
 -- Recognised by GetStatusBarTexture rather than by name, because on that client
 -- the bar has no global name to look up -- it is only reachable by walking here.
@@ -270,6 +253,10 @@ function ClientXpBar:barsInside(frame)
   return found
 end
 
+-- What the slot the player chose means for the client's bar. Safe to call on every
+-- settings change and on every event the client's bar reacts to: it is the same
+-- convergence either way, which keeps the alpha applied if the client's own code
+-- puts it back.
 function ClientXpBar:applySlot(slot)
   if not BarSlotPolicy.active(slot) then
     return self:applyQuiet({})
@@ -281,7 +268,7 @@ function ClientXpBar:applySlot(slot)
 
   -- In the inset slot, reach past the anchor to the bar inside it when there is
   -- one: quieting the anchor there would take the client's frame down with it,
-  -- which is the other slot's job. With no bar inside, the anchor IS the bar
+  -- which is the other slot's job. With no bar inside, the anchor is the bar
   -- (the classic tree) and quieting it is exactly right.
   local inside = BarSlotPolicy.keepsClientFrame(slot) and self:barsInside(self:frame()) or {}
   if #inside > 0 then
@@ -308,9 +295,8 @@ function ClientXpBar:restore()
   self:applyQuiet({})
 end
 
--- One row per name: what the client has under it, and how big it is. The
--- instrument for spike 0.2 and, in the same reading, for 0.4 -- the height it
--- reports is what decides whether the text has to leave the bar (D52).
+-- One row per name: what the client has under it, and how big it is. The height
+-- it reports decides whether the text has to leave the bar.
 --
 -- Kept in the adapter because the names are here. A row is data, not a sentence:
 -- who prints it and how is the composition root's business.
@@ -330,9 +316,8 @@ function ClientXpBar:inventory()
     end
     -- Where in the drawing order it sits, which only a frame can answer -- a
     -- texture or a font string has no level of its own. It is the number the bar
-    -- takes its own depth from (core BarSlotPolicy.depth), and printing both is
-    -- what lets "the bar is painting over the client's frame" be read rather than
-    -- photographed.
+    -- takes its own depth from (core BarSlotPolicy.depth), and printing both lets
+    -- "the bar is painting over the client's frame" be read from the report.
     if row.present and object.GetFrameLevel ~= nil and object.GetFrameStrata ~= nil then
       row.strata, row.level = object:GetFrameStrata(), object:GetFrameLevel()
     end
@@ -344,15 +329,10 @@ function ClientXpBar:inventory()
   for _, name in ipairs(FRAME_NAMES) do add(name, true) end
   for _, name in ipairs(CANDIDATE_NAMES) do add(name, false) end
 
-  -- What this addon is holding: the value it will give back, and what the piece
-  -- reads now. Two numbers that should differ while a slot is active and match
-  -- once it is not -- and a piece quieted with nothing recorded, or recorded as
-  -- already invisible, is the shape of the bug where the client's bar is left
-  -- hidden after the slot is turned off.
   -- Anything quieted that no fixed list names: the bars reached inside the
   -- anchor. They have no global name, so without this the diagnostic would show
-  -- the container untouched and say nothing about what was actually silenced --
-  -- which is precisely the question "did inset keep the client's frame?".
+  -- the container untouched and say nothing about what was silenced, which is
+  -- exactly the question of whether inset kept the client's frame.
   local named = {}
   for _, row in ipairs(rows) do
     named[row.name] = true
@@ -363,6 +343,10 @@ function ClientXpBar:inventory()
     end
   end
 
+  -- What this addon is holding: the value it will give back, and what the piece
+  -- reads now. They differ while a slot is active and match once it is not; a
+  -- piece quieted with nothing recorded, or recorded as already invisible, is how
+  -- a client bar left hidden after the slot is turned off shows up.
   for _, row in ipairs(rows) do
     local held = self.quieted[row.name]
     if held ~= nil then

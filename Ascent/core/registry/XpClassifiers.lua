@@ -1,8 +1,7 @@
--- Ascent - the classifiers v1 ships with.
+-- Ascent - the built-in experience classifiers.
 --
--- Each one owns two decisions about its channel: whether a hint came from it, and
--- what that channel is able to say. The second is the part worth reading, because
--- the five channels are not equivalent:
+-- Each one decides whether a hint came from its channel and what that channel is
+-- able to say. The five channels are not equivalent:
 --
 --   quest_turn_in     QUEST_TURNED_IN(questID, xpReward). No parsing, and the only
 --                     channel that carries the quest id. Highest priority so that
@@ -66,8 +65,8 @@ XpClassifiers.MOB_KILL = {
     return {
       creatureName = hint.creatureName,
       restedRaw = hint.restedRaw,       -- the parenthetical, read per RestedReading
-      -- Whether the sentence mentioned the reserve at all: false says the absence of
-      -- a magnitude IS the answer, nil says nobody read a sentence.
+      -- Whether the sentence mentioned the reserve at all: false means it was read
+      -- and announced no rested bonus, nil means no sentence was read.
       restedAnnounced = hint.restedAnnounced,
       restedBefore = hint.restedBefore, -- the reserve around the kill, for the cross-check
       restedAfter = hint.restedAfter,
@@ -77,17 +76,15 @@ XpClassifiers.MOB_KILL = {
   end,
 }
 
--- No classify function on purpose, and the registry enforces its absence: this
--- channel is produced by quests, probably by discoveries, and is read as a kill by
--- at least one addon in the wild. It contributes an amount and an instant, and the
--- source comes from whichever hint claims it inside the window.
+-- No classify function, and the registry forbids one: quests and probably
+-- discoveries produce this line, and at least one addon misreads it as a kill. It
+-- contributes an amount and an instant; the source comes from whichever hint
+-- claims it inside the window.
 --
--- It does carry a payload, though, and that is not a contradiction: naming no
--- SOURCE is not the same as naming nothing. The group and raid templates of this
--- family print "(+18 group bonus)" beside an amount and no creature, and that
--- annotation is a fact about the announcement rather than about where the
--- experience came from. Only those two fields: the rested parenthetical is read
--- per kill (RestedReading) and means nothing without one.
+-- It still carries a payload: the group and raid variants of the line print
+-- "(+18 group bonus)" beside an amount and no creature, a fact about the
+-- announcement rather than the source. Only those two fields: the rested
+-- parenthetical is read per kill (RestedReading) and means nothing without one.
 XpClassifiers.ANONYMOUS_LINE = {
   id = "anonymous_line",
   priority = 100,

@@ -1,23 +1,20 @@
--- Ascent - the vocabulary of appearance (tasks 2.1, 2.2).
+-- Ascent - the vocabulary of appearance.
 --
--- A skin is DATA, never code (design D27). Nothing in here draws anything, and
--- nothing downstream branches on a skin's name: ui/ is handed a resolved table
--- of these tokens and paints it. That is what makes a seventh skin a row in a
--- table rather than a seventh code path.
+-- A skin is data, never code. Nothing in here draws anything, and nothing
+-- downstream branches on a skin's name: ui/ is handed a resolved table of these
+-- tokens and paints it, so a new skin is a row in a table, not a code path.
 --
--- Two shapes live here and they are not the same thing:
+-- Two shapes live here:
 --
---   * The ENUMS (FillKind, BorderKind, ...) are the closed sets of choices an
+--   * The enums (FillKind, BorderKind, ...) are the closed sets of choices an
 --     axis offers. A typo in one fails at load, like every other constant in
 --     this addon.
---   * SKIN_SHAPE is the COMPLETE form a skin must have by the time anything
---     reads it. It exists because of a specific hazard: Frozen.enum builds
---     strict proxies, so reading a key that is not there RAISES rather than
---     returning nil (see Frozen.lua). A skin that omitted an optional field
---     would not degrade -- it would interrupt a redraw with the player looking
---     at it. So nothing is optional: SkinResolver.normalize fills every field
---     from here before anything is frozen, and the catalogue only ever states
---     what it means to change.
+--   * SkinShape is the complete form a skin must have by the time anything
+--     reads it. Frozen.enum builds strict proxies, so reading a key that is not
+--     there raises rather than returning nil (see Frozen.lua), and a skin that
+--     omitted an optional field would interrupt a redraw. So nothing is
+--     optional: SkinResolver.normalize fills every field from here before
+--     anything is frozen, and the catalogue only states what it changes.
 --
 -- Colours are plain {r, g, b, a} tables in 0..1, the same convention
 -- core/constants/Interface.lua's Palette already uses.
@@ -30,7 +27,7 @@ local XpSource = ns.core.XpSource
 
 -- How the earned portion of a segment is painted. ART is the one that needs a
 -- packaged file; every other value is primitives only and always available,
--- which is why FLAT is the floor the others fall back to (design D30).
+-- which is why FLAT is the floor the others fall back to.
 ns.core.FillKind = Frozen.enum("FillKind", {
   FLAT        = "flat",
   GRADIENT_UP = "gradient_up",   -- darker at the bottom, lighter at the top
@@ -45,9 +42,9 @@ ns.core.BorderKind = Frozen.enum("BorderKind", {
   FRAME    = "frame",     -- a real frame with its own thickness
 })
 
--- How two abutting segments are told apart. Every one of these is drawn ON the
--- boundary and none of them takes width from either side -- the widths are the
--- level's percentage and that is verified by tests older than this file.
+-- How two abutting segments are told apart. Every one of these is drawn on the
+-- boundary and none of them takes width from either side: the widths are the
+-- level's percentages, and tests hold them to that.
 ns.core.SeparatorKind = Frozen.enum("SeparatorKind", {
   NONE     = "none",
   HAIRLINE = "hairline",
@@ -55,12 +52,11 @@ ns.core.SeparatorKind = Frozen.enum("SeparatorKind", {
 })
 
 -- ---------------------------------------------------------------------------
--- Effects: the vocabulary of things that happen ONCE, as opposed to the fields
+-- Effects: the vocabulary of things that happen once, as opposed to the fields
 -- above, which describe how something looks while it sits still.
 --
--- Reverse-engineered from LS: Toasts rather than copied from it. Strip that
--- addon's assets away and its whole visual signature reduces to three moves,
--- none of which needs a packaged file:
+-- Modelled on the visual signature of the LS: Toasts addon without its assets,
+-- which reduces to three moves, none of which needs a packaged file:
 --
 --   * an additive wash over the frame that swells and fades (its .Glow)
 --   * a bright band that travels across the frame exactly once (its .Shine)
@@ -68,11 +64,10 @@ ns.core.SeparatorKind = Frozen.enum("SeparatorKind", {
 --     which is what reads as "particles" and is really five textures with
 --     different start delays (its .Arrow1..5)
 --
--- They live in the skin, next to the border and the fill, because they are the
--- same kind of statement: a skin says what Ascent looks like, and now also what
--- it looks like at the moment something happens. The pull plate is the first
--- surface to draw them; the bar and the report panel can ask for the same three
--- without any of this changing.
+-- They live in the skin, next to the border and the fill: a skin says what Ascent
+-- looks like, including at the moment something happens. The pull plate draws
+-- them; the bar and the report panel can ask for the same three without any of
+-- this changing.
 --
 -- NONE is a real member of each, not an absence, for the same reason
 -- ColorMode.SEMANTIC is a tint of zero: one code path, not two.
@@ -108,8 +103,7 @@ ns.core.TextAnchor = Frozen.enum("TextAnchor", {
 
 -- What a skin is allowed to do to the six semantic colours. SEMANTIC is not a
 -- "no tint" special case handled elsewhere -- it is a tint whose amount is
--- zero, so there is one code path, not two (the same reasoning as D33's motion
--- scalar).
+-- zero, so there is one code path, not two (as with the motion scale).
 ns.core.ColorMode = Frozen.enum("ColorMode", {
   SEMANTIC = "semantic",   -- the palette exactly as the domain defines it
   MODULATED = "modulated", -- the skin's own saturation/brightness/tint applied
@@ -133,9 +127,8 @@ ns.core.BarChannel = Frozen.enum("BarChannel", {
 })
 
 -- The order text fields are given up in when the bar is too narrow to hold them
--- all (task 3.8). Stated as data, and stated once: the bar has to shed fields in
--- a predictable order, and "whatever fits" is not an order a player can learn.
--- Read back to front -- the LAST one is dropped first, so the level and the
+-- all. Stated as data, and once, so the bar sheds fields in an order a player can
+-- learn. Read back to front: the last one is dropped first, so the level and the
 -- percentage are the two that survive a very narrow bar.
 ns.core.TEXT_PRIORITY = Frozen.enum("TEXT_PRIORITY", {
   ns.core.TextToken.LEVEL,
@@ -187,9 +180,9 @@ ns.core.SkinShape = Frozen.enum("SkinShape", {
   -- its identity in. Never by a segment's fill: that is the palette's job.
   accent = { r = 0.55, g = 0.55, b = 0.58, a = 1 },
 
-  -- The modulation a skin applies to the semantic palette (design D29). It is
-  -- applied evenly to all six channels, so the RELATIONS between them survive
-  -- even when every one of them shifts.
+  -- The modulation a skin applies to the semantic palette. It is applied evenly
+  -- to all six channels, so the relations between them survive even when every
+  -- one of them shifts.
   tint = {
     mode = ns.core.ColorMode.SEMANTIC,
     saturation = 1,   -- 1 keeps it, 0 is greyscale, above 1 deepens
@@ -201,7 +194,7 @@ ns.core.SkinShape = Frozen.enum("SkinShape", {
   -- What the skin does at the instant something lands. Every duration here is
   -- multiplied by the player's motion scalar before it reaches a frame, so a
   -- scalar of zero means these have a duration of zero -- the same code path,
-  -- arriving instantly (D33). Off by default: a skin opts in.
+  -- arriving instantly. Off by default: a skin opts in.
   effects = {
     glow = {
       kind = ns.core.GlowKind.NONE,

@@ -1,20 +1,17 @@
--- Ascent - the pattern generator behind D5: turning the client's own GlobalStrings
--- into a match pattern, in any locale, without translating anything by hand.
+-- Ascent - turns the client's own GlobalStrings into match patterns, in any
+-- locale, without translating anything by hand.
 --
 -- A GlobalString like "%s dies, you gain %d experience." uses two kinds of format
--- specifier. Most locales use them in the order they appear, the way English does;
--- a few -- Russian and Korean among the sources this addon reads (D5) -- use the
--- numbered form (%1$s, %2$d, ...) to reorder them in translation. `compile` handles
--- both: every %s/%d becomes a capture, and the returned `order` says which original
--- placeholder number each capture in the PATTERN corresponds to, in the order
--- captures come back from a match -- which is the pattern's own physical order, not
--- necessarily 1, 2, 3, 4. A caller that wants "the amount" (placeholder 2)
--- regardless of locale looks up where 2 sits in `order`, not `captures[2]`.
+-- specifier. Most locales use them in the order they appear, as English does; a
+-- few -- Russian and Korean among them -- use the numbered form (%1$s, %2$d, ...)
+-- to reorder them. `compile` handles both: every %s/%d becomes a capture, and the
+-- returned `order` gives the original placeholder number of each capture, in the
+-- pattern's own physical order (not necessarily 1, 2, 3, 4). A caller that wants
+-- "the amount" (placeholder 2) looks up where 2 sits in `order`, not `captures[2]`.
 --
--- The characters Lua's own pattern matching gives special meaning to --
--- ( ) . % + - * ? [ ] ^ $ -- are escaped everywhere except inside a recognised
--- specifier, so a literal "." or "(" in the client's own text is never read back
--- as pattern syntax.
+-- Lua's pattern magic characters -- ( ) . % + - * ? [ ] ^ $ -- are escaped
+-- everywhere except inside a recognised specifier, so a literal "." or "(" in the
+-- client's text is never read as pattern syntax.
 
 local _, ns = ...
 ns.adapter = ns.adapter or {}
@@ -62,41 +59,36 @@ local function compile(template)
 end
 
 -- ---------------------------------------------------------------------------
--- The experience family, in the order it must be tried (tasks 1.1, 1.3)
+-- The experience family, in the order it must be tried
 -- ---------------------------------------------------------------------------
 --
--- THE ORDER IS THE POINT. The client announces a kill with one of thirteen
--- templates, and the plain one is a strict PREFIX of every other:
+-- The client announces a kill with one of the templates below, and the plain one
+-- is a strict prefix of every other:
 --
 --   "%s dies, you gain %d experience."
 --   "%s dies, you gain %d experience. (+%d group bonus)"
 --   "%s dies, you gain %d experience. (%s exp %s bonus, -%d raid penalty)"
 --
--- Unanchored, the first pattern matches all three and the trailing text is
--- ignored -- which is exactly how the group bonus went missing for months while
--- the amount was recorded correctly. So: most specific first, and anchored at
--- the point of use (design D40).
+-- Unanchored, the first pattern matches all three and ignores the trailing text,
+-- losing the group bonus while the amount is still recorded correctly. So: most
+-- specific first, and anchored at the point of use.
 --
--- Two collisions survive the anchoring and are the reason specificity is an
--- explicit order rather than a hope. Rested+group also matches plain rested, and
--- rested+raid also matches the FATIGUE template -- and that second one would
--- record a raid penalty as a fatigue penalty, which is a different thing
--- entirely.
+-- Two collisions survive the anchoring, which is why specificity is an explicit
+-- order: rested+group also matches plain rested, and rested+raid also matches the
+-- fatigue template, which would record a raid penalty as a fatigue penalty.
 --
--- `creature`, `amount`, `modifierAmount` and `restedAmount` are ORIGINAL PLACEHOLDER
--- NUMBERS, not
--- capture positions: a locale that reorders the text with numbered specifiers
--- changes where each capture lands but not what each placeholder means. That is
--- what `order` from compile() is for.
+-- `creature`, `amount`, `modifierAmount` and `restedAmount` are original
+-- placeholder numbers, not capture positions: a locale that reorders the text
+-- with numbered specifiers changes where each capture lands, not what each
+-- placeholder means. `order` from compile() maps one to the other.
 --
--- `rested` and `restedAmount` are not the same fact and only one of them can be
--- trusted to a template. `rested` says the client was announcing a rested state;
--- `restedAmount` says WHERE in that sentence the magnitude sits, and only the
--- EXHAUSTION1/2 family carries a rested BONUS. EXHAUSTION4/5 are the fatigue
--- templates -- "(%s exp %s penalty)", a deduction and not a bonus -- so they name
--- no restedAmount and nothing downstream can mistake a penalty for a reserve
--- being spent. A missing restedAmount is the honest default: the reader falls
--- back to the reserve rather than reading a number that means something else.
+-- `rested` says the client was announcing a rested state; `restedAmount` says
+-- where in that sentence the magnitude sits, and only the EXHAUSTION1/2 family
+-- carries a rested bonus. EXHAUSTION4/5 are the fatigue templates -- "(%s exp %s
+-- penalty)", a deduction -- so they name no restedAmount and nothing downstream
+-- can mistake a penalty for a reserve being spent. Without a restedAmount the
+-- reader falls back to the reserve rather than reading a number that means
+-- something else.
 --
 -- The sign is never captured. It is literal text in the template, so `%d` always
 -- yields a magnitude; which template matched is what says whether that magnitude
@@ -144,7 +136,7 @@ local XP_TEMPLATES = {
   { name = "FIRSTPERSON", global = "COMBATLOG_XPGAIN_FIRSTPERSON",
     creature = 1, amount = 2 },
 
-  -- Anonymous lines. QUEST is misleadingly named: it is the anonymous line WITH a
+  -- Anonymous lines. QUEST is misleadingly named: it is the anonymous line with a
   -- bonus parenthetical, the same shape as the rested templates but with no
   -- creature. It must be tried before the plain anonymous one for the same
   -- prefix reason.
@@ -160,12 +152,11 @@ local XP_TEMPLATES = {
 -- Compiles the family in order, anchored, skipping templates the client does not
 -- have and templates whose text another one already produced.
 --
--- The de-duplication is not tidiness: several of these templates are BYTE
--- IDENTICAL to each other in every locale checked -- the rested states they name
--- are indistinguishable from the message alone, which is precisely why the
--- rested state is read from the client API and never from this text. Keeping
--- both would mean the second could never match, and a diagnostic counting hits
--- per template would report a template that is structurally unreachable.
+-- Several of these templates are byte-identical in every locale checked: the
+-- rested states they name cannot be told apart from the message alone, which is
+-- why the rested state is read from the client API, never from this text. A
+-- duplicate could never match, and a per-template hit count would report a
+-- structurally unreachable template.
 --
 -- `text` is a function from a global's name to its value, so the caller decides
 -- how to reach the client's globals and this stays testable without any.
@@ -179,10 +170,10 @@ local function compileXpFamily(text)
         seen[pattern] = true
         compiled[#compiled + 1] = {
           name = template.name,
-          -- Anchored HERE and not inside compile(): the same compiler serves the
+          -- Anchored here, not inside compile(): the same compiler serves the
           -- zone-discovery and quest-reward messages, which arrive on another
-          -- channel, work today, and where a prefix or suffix the client adds
-          -- would break an anchor nobody has tested (design D40).
+          -- channel where a prefix or suffix the client adds would break an
+          -- untested anchor.
           pattern = "^" .. pattern .. "$",
           order = order,
           creature = template.creature,
@@ -205,9 +196,9 @@ end
 -- Returns nil when nothing matches, which is a normal outcome: the client
 -- announces plenty on this channel that is not a kill.
 --
--- The caller gets `template` too, so a diagnostic can count hits per template.
--- That counter is what turns "we believe the parenthetical is included in the
--- total" into something a real session answers (design D45).
+-- The caller gets `template` too, so a diagnostic can count hits per template:
+-- that count is how a session shows whether the parenthetical bonus is included
+-- in the total.
 local function matchXp(compiled, line)
   if type(line) ~= "string" then
     return nil
@@ -216,7 +207,7 @@ local function matchXp(compiled, line)
   for _, entry in ipairs(compiled) do
     local captures = { line:match(entry.pattern) }
     if #captures > 0 then
-      -- Keyed by ORIGINAL placeholder number, so a locale that reorders the
+      -- Keyed by original placeholder number, so a locale that reorders the
       -- sentence does not reorder what each field means.
       local fields = {}
       for index, placeholder in ipairs(entry.order) do
@@ -230,8 +221,8 @@ local function matchXp(compiled, line)
           modifierAmount = tonumber(fields[entry.modifierAmount])
         end
         -- The rested magnitude lands in a %s, not a %d: the client wraps it with
-        -- its own sign, and at least one locale was believed to put a percentage
-        -- there instead of a figure. tonumber does the deciding -- "+147" reads as
+        -- its own sign, and at least one locale may put a percentage there
+        -- instead of a figure. tonumber does the deciding -- "+147" reads as
         -- 147 and anything that is not a number reads as nil -- so a client whose
         -- parenthetical does not name an absolute amount degrades to the reserve
         -- reading instead of recording a percentage as experience.
@@ -255,7 +246,7 @@ local function matchXp(compiled, line)
   return nil
 end
 
--- The explicit list D5 asks for. `COMBATLOG_XPGAIN` itself ("%s gains %d
+-- The explicit list of sources. `COMBATLOG_XPGAIN` itself ("%s gains %d
 -- experience.", third person) is deliberately absent: it would match another
 -- player's gain, and the twenty-odd COMBATLOG_XPGAIN_* globals are not safe to
 -- sweep blindly for exactly that reason.
