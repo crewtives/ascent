@@ -87,13 +87,47 @@ describe("TimePlayedSync", function()
       assert.is_false(chatFrames[2].registered)
     end)
 
-    it("re-registers it on every chat frame once the response arrives", function()
+    -- This used to assert that the first answer released them, and that
+    -- assertion WAS the defect (D77): restoring here re-registers the frames
+    -- inside the client's own dispatch, so the two to four repetitions that
+    -- follow print. The silence is held until the window closes.
+    it("keeps them silenced when the first response arrives, and releases them after", function()
       sync:request()
 
       sync:onTimePlayedMsg(0, 100)
+      assert.is_false(chatFrames[1].registered)
+      assert.is_false(chatFrames[2].registered)
+
+      fireTimeout() -- the settle window closing
 
       assert.is_true(chatFrames[1].registered)
       assert.is_true(chatFrames[2].registered)
+    end)
+
+    -- The case the whole change exists for. The count is not known -- two to
+    -- four seen in BC Classic, never measured in Era -- so this asserts the
+    -- property that does not depend on it: however many arrive, none is on
+    -- screen.
+    it("keeps them silenced through every repetition, whatever their number", function()
+      sync:request()
+
+      for _ = 1, 6 do
+        sync:onTimePlayedMsg(0, 100)
+        assert.is_false(chatFrames[1].registered)
+        assert.is_false(chatFrames[2].registered)
+      end
+
+      fireTimeout()
+
+      assert.is_true(chatFrames[1].registered)
+    end)
+
+    it("publishes the figure once, not once per repetition", function()
+      sync:request()
+
+      for _ = 1, 4 do sync:onTimePlayedMsg(0, 450) end
+
+      assert.equal(1, bus:countOf(EventTopic.TIME_PLAYED_SYNCED))
     end)
 
     it("does not silence a second time for a request the cadence already refused", function()
@@ -164,12 +198,30 @@ describe("TimePlayedSync", function()
       assert.is_false(sync:request())
     end)
 
-    it("does nothing if the response already arrived -- a stale generation, not a second restore", function()
+    -- Holding the silence past the first answer opened a second way to be stuck
+    -- silenced: if the window's own timer never ran, nothing else would release
+    -- the frames. This timer is what promises that cannot happen, so it has to
+    -- know about the new state as well as the old one.
+    it("releases the chat frames if the window's own timer never ran", function()
       sync:request()
+      local safetyTimer = #timers
       sync:onTimePlayedMsg(0, 100)
+      assert.is_false(chatFrames[1].registered)
+
+      fireTimeout(safetyTimer) -- the settle timer never fires
+
+      assert.is_true(chatFrames[1].registered)
+      assert.is_true(chatFrames[2].registered)
+    end)
+
+    it("does nothing if the response already arrived and its window closed", function()
+      sync:request()
+      local safetyTimer = #timers
+      sync:onTimePlayedMsg(0, 100)
+      fireTimeout() -- the settle window closes, releasing them properly
       chatFrames[1].registered = false -- as if something else had silenced it again since
 
-      fireTimeout()
+      fireTimeout(safetyTimer) -- the safety timer, arriving with nothing left to do
 
       assert.is_false(chatFrames[1].registered)
     end)
@@ -245,6 +297,27 @@ describe("TimePlayedSync", function()
       assert.is_true(chatFrames[1].registered)
       assert.is_true(chatFrames[2].registered)
       assert.is_false(sync.inFlight)
+      _G.CreateFrame = nil
+    end)
+
+    -- The same promise one state later. Between the first answer and the window
+    -- closing the frames are still silenced, and this frame is the only thing
+    -- that could ever release them -- so stopping there without restoring would
+    -- leave the player muted with nobody left to undo it.
+    it("restores the chat frames if stopped while the window is still open", function()
+      local frame = stubFrame()
+      _G.CreateFrame = function() return frame end
+
+      sync:start()
+      frame.onEvent(frame, "PLAYER_ENTERING_WORLD")
+      frame.onEvent(frame, "TIME_PLAYED_MSG", 0, 100) -- answered; window now open
+      assert.is_false(chatFrames[1].registered)
+
+      sync:stop()
+
+      assert.is_true(chatFrames[1].registered)
+      assert.is_true(chatFrames[2].registered)
+      assert.is_false(sync.settling)
       _G.CreateFrame = nil
     end)
 
@@ -363,6 +436,63 @@ describe("TimePlayedSync", function()
       assert.equal("timePlayedRequested", samples[1].kind)
       assert.is_true(samples[2].requested)
       assert.equal(1, bus:countOf(EventTopic.TIME_PLAYED_SYNCED))
+    end)
+
+    -- Counting one answer per request while the client sends four is how "what
+    -- the player sees in the chat" ended up unmeasured. Every one is counted
+    -- now, and the repetitions are marked as such so the file can say how many
+    -- a single request really produces -- which is the number spike 0.1 goes
+    -- looking for in Classic Era.
+    it("counts every repetition, not just the first, and marks them as repeats", function()
+      local record, samples = recorder()
+      local asking = ns.adapter.TimePlayedSync.new({ bus = bus, clock = clock, recordEvidence = record })
+
+      asking:request()
+      for _ = 1, 4 do asking:onTimePlayedMsg(nil, 4200) end
+
+      local received = 0
+      local repeats = 0
+      for _, sample in ipairs(samples) do
+        if sample.kind == "timePlayedReceived" then
+          received = received + 1
+          assert.is_true(sample.requested)
+          if sample.repeated then repeats = repeats + 1 end
+        end
+      end
+      assert.equal(4, received)
+      assert.equal(3, repeats)
+    end)
+
+    -- The mitigation D77 owes for holding the silence on a timer instead of on a
+    -- count: if the window is too short on some client, the straggler that got
+    -- through has to leave a trace. Without this counter that failure would look
+    -- exactly like the player typing /played, and nobody would ever find it.
+    it("counts an answer that arrives just after the window as late, not as unrequested", function()
+      local record, samples = recorder()
+      local asking = ns.adapter.TimePlayedSync.new({ bus = bus, clock = clock, recordEvidence = record })
+
+      asking:request()
+      asking:onTimePlayedMsg(nil, 4200)
+      fireTimeout() -- the window closes
+      clock:advance(2)
+      asking:onTimePlayedMsg(nil, 4200)
+
+      assert.equal("timePlayedLate", samples[#samples].kind)
+    end)
+
+    it("counts an answer long after the window as unrequested -- the player's own /played", function()
+      local record, samples = recorder()
+      local asking = ns.adapter.TimePlayedSync.new({ bus = bus, clock = clock, recordEvidence = record })
+
+      asking:request()
+      asking:onTimePlayedMsg(nil, 4200)
+      fireTimeout()
+      clock:advance(600)
+      asking:onTimePlayedMsg(nil, 4200)
+
+      assert.equal("timePlayedUnrequested", samples[#samples].kind)
+      -- On screen, which is correct: nothing here asked for it.
+      assert.is_true(chatFrames[1].registered)
     end)
 
     -- The pin: suppression is opt-in, and a recorder is optional.

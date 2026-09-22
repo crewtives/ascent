@@ -156,8 +156,8 @@ end
 -- Intake
 -- ---------------------------------------------------------------------------
 
--- payload: { amount, at, place }. The amount is the authoritative difference, with
--- any level crossing already folded into it by the adapter.
+-- payload: { amount, at, place, sharedBy }. The amount is the authoritative
+-- difference, with any level crossing already folded into it by the adapter.
 --
 -- The place rides with the DELTA and not with the hint, which is D43 and is the
 -- whole of it: the delta is the authoritative event, the hint can arrive up to a
@@ -166,6 +166,11 @@ end
 -- happened to catch. Carried through untouched, including nil -- a caller that
 -- knows no place is not the same as one that read the reserved entry, and only the
 -- ledger gets to decide what "nobody said" means.
+--
+-- The group size rides with the delta for the same reason and is carried the same
+-- way, nil included (D81). A delta is settled two windows after it arrives, so a
+-- size read here is the one the server split this payment between and a size read
+-- at settling time is whatever the character joined in the meantime.
 function XpAttribution:observeDelta(payload)
   local amount = Guard.nonNegativeInteger(payload.amount, "XP delta amount")
   local at = Guard.number(payload.at, "XP delta at")
@@ -177,6 +182,7 @@ function XpAttribution:observeDelta(payload)
   if amount > 0 then
     self.deltas[#self.deltas + 1] = {
       at = at, amount = amount, remaining = amount, claims = {}, place = payload.place,
+      sharedBy = payload.sharedBy,
     }
   end
 
@@ -451,7 +457,7 @@ function XpAttribution:emit(delta)
   for index = 1, #delta.claims do
     local claim = delta.claims[index]
     if claim.amount > 0 then
-      local gain = self:gainFor(claim.hint, claim.amount)
+      local gain = self:gainFor(claim.hint, claim.amount, delta.sharedBy)
       if self.logger ~= nil then
         self.logger:debug(("delta at %.3f settled: source=%s amount=%d")
           :format(delta.at, tostring(gain.source), claim.amount))
@@ -478,7 +484,7 @@ function XpAttribution:emit(delta)
     local group, raid = self:modifiersForRemainder(delta)
     local gain = XpGain.new({
       amount = delta.remaining, source = XpSource.UNKNOWN, at = delta.at,
-      groupBonus = group, raidPenalty = raid,
+      groupBonus = group, raidPenalty = raid, sharedBy = delta.sharedBy,
     })
     delta.remaining = 0
     self.bus:publish(EventTopic.XP_ATTRIBUTED, { gain = gain, place = delta.place })
@@ -583,8 +589,12 @@ end
 -- the whole announcement -- the bounded case -- the gain is split and the head kept,
 -- which divides every modifier by the rule the model already tests rather than by a
 -- second, subtly different one here.
-function XpAttribution:gainFor(hint, amount)
-  local full = self:fullGainFor(hint)
+--
+-- `sharedBy` comes from the delta and not from the hint, which is the same argument
+-- as the place above: the delta is the authoritative event and the hint is a claim
+-- that can be a window and a half away from it.
+function XpAttribution:gainFor(hint, amount, sharedBy)
+  local full = self:fullGainFor(hint, sharedBy)
   if amount >= full.amount then
     return full
   end
@@ -593,7 +603,7 @@ function XpAttribution:gainFor(hint, amount)
   return head
 end
 
-function XpAttribution:fullGainFor(hint)
+function XpAttribution:fullGainFor(hint, sharedBy)
   local payload = hint.payload
   if payload == nil then
     payload = {}
@@ -613,6 +623,7 @@ function XpAttribution:fullGainFor(hint)
     raidPenalty = payload.raidPenalty or 0,
     creature = creature,
     questId = payload.questId,
+    sharedBy = sharedBy,
   })
 end
 

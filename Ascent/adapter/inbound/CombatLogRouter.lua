@@ -298,6 +298,16 @@ local ENGAGING = {
   [CombatLogSubevent.SPELL_PERIODIC_DAMAGE] = true,
   [CombatLogSubevent.SPELL_MISSED]          = true,
   [CombatLogSubevent.SPELL_AURA_APPLIED]    = true,
+  -- No entry in DISPATCH, on purpose. The owner reported that an absorbed hit did
+  -- not count, and it could not: a subevent with no handler was dropped three
+  -- lines into the handler, before enrolment was ever reached.
+  [CombatLogSubevent.SPELL_ABSORBED]        = true,
+  -- Same risk SPELL_AURA_APPLIED already carries and the same answer: it does not
+  -- say whether the caster is hostile, so a friendly NPC casting something on the
+  -- player would enrol. Accepted because the alternative -- waiting for the spell
+  -- to land -- is the defect this whole group exists to remove, and a stray
+  -- friendly shows up as one odd row rather than as a wrong number.
+  [CombatLogSubevent.SPELL_CAST_START]      = true,
 }
 
 local DISPATCH = {
@@ -338,6 +348,7 @@ function CombatLogRouter.new(options)
     clock = options.clock,
     playerState = options.playerState,
     logger = options.logger,
+    recordEvidence = options.recordEvidence,
     lastDeathGuid = nil,
     lastDeathAt = nil,
     -- Spell ids this character has been seen to cast. Bounded by the size of a
@@ -359,8 +370,26 @@ function CombatLogRouter:handleCombatLogEvent()
   local _, subevent, _, sourceGUID, sourceName, _, _, destGUID, destName, _, _,
     a1, a2, a3, a4, a5, a6, a7, a8, a9 = readCurrentEvent()
 
+  -- Being ENGAGING is enough on its own. It used to require a handler as well,
+  -- because the lookup above returned before the enrolment below ever ran, so a
+  -- subevent could sit in ENGAGING and never enrol anybody -- and adding a line
+  -- that only answers "who is fighting me" silently required remembering to give
+  -- it a do-nothing handler too. `onInteractionOnly` exists for exactly that, so
+  -- the trap was known; it just was not the kind of thing anyone re-reads.
   local handler = DISPATCH[subevent]
-  if handler == nil then
+  local engaging = ENGAGING[subevent]
+  if handler == nil and not engaging then
+    -- A census of what is being thrown away, taken only while the recorder is on
+    -- and only for lines this character is actually in. The owner reported that
+    -- absorbed hits do not count, and the honest answer is that nobody knows
+    -- which lines this client writes for them -- SPELL_ABSORBED is not in the
+    -- vocabulary below at all, and neither are half a dozen others that mean a
+    -- creature is fighting you. One session with this on names them instead of
+    -- guessing.
+    if self.recordEvidence ~= nil and subevent ~= nil
+      and (isPlayerSide(self, sourceGUID) or isPlayerSide(self, destGUID)) then
+      self.recordEvidence("subevent." .. tostring(subevent))
+    end
     return
   end
 
@@ -388,7 +417,7 @@ function CombatLogRouter:handleCombatLogEvent()
   -- ENGAGING and not "every line that got this far", because two of them are not a
   -- fight: a creature that HEALS the player is a friendly NPC, and enrolling it
   -- would put a quest giver in the pull and count experience for killing it.
-  if ENGAGING[subevent] and playerSource ~= playerDest then
+  if engaging and playerSource ~= playerDest then
     local guid, name
     if playerSource then
       guid, name = destGUID, destName
@@ -396,12 +425,16 @@ function CombatLogRouter:handleCombatLogEvent()
       guid, name = sourceGUID, sourceName
     end
     if CreatureGuid.isCreature(guid) and name ~= nil then
-      self.bus:publish(EventTopic.ENEMY_ENGAGED, { guid = guid, name = name })
+      self.bus:publish(EventTopic.ENEMY_ENGAGED, { guid = guid, name = name, from = "combatlog" })
     end
   end
 
-  handler(self, playerSource, playerDest, destGUID, destName, sourceGUID, sourceName,
-    a1, a2, a3, a4, a5, a6, a7, a8, a9)
+  -- Nil for a line that only answers who is fighting whom: it enrolled above and
+  -- has nothing else to do here.
+  if handler ~= nil then
+    handler(self, playerSource, playerDest, destGUID, destName, sourceGUID, sourceName,
+      a1, a2, a3, a4, a5, a6, a7, a8, a9)
+  end
 end
 
 function CombatLogRouter:start()

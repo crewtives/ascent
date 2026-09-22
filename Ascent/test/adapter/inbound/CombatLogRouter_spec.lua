@@ -416,4 +416,74 @@ describe("CombatLogRouter", function()
       _G.CreateFrame = nil
     end)
   end)
+  -- Enrolment used to sit BELOW the handler lookup, so a subevent with no handler
+  -- was dropped three lines in and never reached it. That made "this line only
+  -- answers who is fighting me" impossible to express without also remembering a
+  -- do-nothing handler -- and the owner's report that an absorbed hit does not
+  -- count was exactly that trap, from the outside.
+  describe("a line that only says who is fighting whom", function()
+    local CREATURE = "Creature-0-1-1-1-15636-0000000001"
+
+    it("enrols on a subevent that has no handler at all", function()
+      emit(CombatLogSubevent.SPELL_ABSORBED, CREATURE, PLAYER_GUID, "Tester")
+
+      assert.equal(1, bus:countOf(EventTopic.ENEMY_ENGAGED))
+      assert.equal("combatlog", bus:lastOn(EventTopic.ENEMY_ENGAGED).from)
+    end)
+
+    it("enrols the same way when the player is the one being shielded from", function()
+      emit(CombatLogSubevent.SPELL_ABSORBED, PLAYER_GUID, CREATURE, "Withered Green Keeper")
+
+      assert.equal("Withered Green Keeper", bus:lastOn(EventTopic.ENEMY_ENGAGED).name)
+    end)
+
+    it("enrols on a cast this character has not been hit by yet", function()
+      emit(CombatLogSubevent.SPELL_CAST_START, CREATURE, PLAYER_GUID, "Tester")
+
+      assert.equal(1, bus:countOf(EventTopic.ENEMY_ENGAGED))
+      assert.equal("combatlog", bus:lastOn(EventTopic.ENEMY_ENGAGED).from)
+    end)
+
+    it("still enrols on a miss, which never moved a health bar either", function()
+      emit(CombatLogSubevent.SWING_MISSED, CREATURE, PLAYER_GUID, "Tester")
+
+      assert.equal(1, bus:countOf(EventTopic.ENEMY_ENGAGED))
+    end)
+  end)
+
+  -- Which lines are being thrown away, named by the client rather than guessed at
+  -- here. SPELL_ABSORBED was not in this addon's vocabulary at all, and neither
+  -- were half a dozen others that mean a creature is fighting you; one session
+  -- with the recorder on ends the guessing.
+  describe("the census of what it does not handle", function()
+    local CREATURE = "Creature-0-1-1-1-15636-0000000001"
+    local kinds
+
+    before_each(function()
+      kinds = {}
+      router = ns.adapter.CombatLogRouter.new({
+        bus = bus, clock = clock, playerState = player,
+        recordEvidence = function(kind) kinds[#kinds + 1] = kind end,
+      })
+    end)
+
+    it("counts an unhandled line this character is in", function()
+      emit("SPELL_INTERRUPT", CREATURE, PLAYER_GUID, "Tester")
+
+      assert.same({ "subevent.SPELL_INTERRUPT" }, kinds)
+    end)
+
+    it("says nothing about a fight between two other people", function()
+      emit("SPELL_INTERRUPT", CREATURE, "Creature-0-1-1-1-15637-0000000002", "Other")
+
+      assert.same({}, kinds)
+    end)
+
+    it("says nothing about a line it already handles", function()
+      emit(CombatLogSubevent.SWING_MISSED, CREATURE, PLAYER_GUID, "Tester")
+
+      assert.same({}, kinds)
+    end)
+  end)
+
 end)

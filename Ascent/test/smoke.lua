@@ -8,7 +8,12 @@
 -- does catch is every ordinary Lua fault -- a nil index, a missing field, a
 -- method that does not exist on our OWN objects, a load-order mistake.
 
-local ROOT = (...) or "Ascent"
+-- Which client to pretend to be. The default is the classic tree this harness has
+-- always modelled; "forever" turns it into the modern client at the bottom of the
+-- file, where the two differ. See the change add-ascent-forever-support (D102).
+local ROOT, PROFILE = ...
+ROOT = ROOT or "Ascent"
+PROFILE = PROFILE or "classic"
 
 local frames = {}
 
@@ -315,6 +320,11 @@ IsResting = function() return false end
 IsXPUserDisabled = function() return false end
 GetMaxPlayerLevel = function() return 70 end
 
+-- The interface number the client declares, which is what tells the flavours apart
+-- (D95) now that two supported clients cap at the same level. The classic profile
+-- reports Burning Crusade's, to agree with the maximum level just above it.
+GetBuildInfo = function() return "2.5.6", "45745", "Jan 09 2026", 20506 end
+
 -- The client's own experience bar and the pieces around it, thin and wide the way
 -- the real one is. Present before the addon loads because the capability probe
 -- runs inside the composition root, not after it.
@@ -500,6 +510,137 @@ AscentDB = {
 }
 AscentCharDB = nil
 
+-- ---------------------------------------------------------------------------
+-- The second client (D102).
+--
+-- Everything above models a classic client. This turns it into Forever, and it
+-- only ever takes things away or swaps them for their modern namespace: a name
+-- is absent below ONLY because the client's own API dump says it is absent there
+-- (build 69913, see the change's design appendix). Nothing here is invented, and
+-- nothing is removed on a hunch -- the frames of the client's own experience bar
+-- stay exactly as the classic profile has them, because the dump carries no
+-- frames at all and so says nothing either way about them.
+--
+-- A SECRET VALUE, and what this cannot model. In the real client a guarded read
+-- returns a value that is present, has a type, and RAISES when tainted code
+-- compares it or does arithmetic on it. Lua 5.1 only dispatches __eq and __lt
+-- between two operands of the same type, so `secret == true` here answers false
+-- instead of raising, the way it would in the client. Everything else does
+-- raise: arithmetic, concatenation, indexing, calling, and comparing against a
+-- number or another secret. So this profile catches a read that is USED, but it
+-- cannot catch one that is only compared against a boolean -- which is exactly
+-- the shape NameplateWatch is full of, and exactly why 3.2 converts those to go
+-- through the guard rather than trusting this harness to find them.
+-- ---------------------------------------------------------------------------
+
+local SECRET = {}
+
+-- One shared raise, not one per secret: Lua 5.1 only dispatches __eq when both
+-- tables carry the SAME function, so a closure built per value would make
+-- `secretA == secretB` answer false instead of raising.
+local function raise() error("attempt to operate on a secret value", 2) end
+
+function makeSecret(value)
+  return setmetatable({ [SECRET] = value }, {
+    __index = raise, __newindex = raise, __call = raise, __concat = raise,
+    __add = raise, __sub = raise, __mul = raise, __div = raise, __mod = raise,
+    __pow = raise, __unm = raise, __lt = raise, __le = raise, __eq = raise,
+    __tostring = function() return "<secret>" end,
+  })
+end
+
+local function isSecret(value)
+  return type(value) == "table" and rawget(value, SECRET) ~= nil
+end
+
+-- Make the reads a collector does during a fight answer with secrets, for the
+-- span of one call, and put them back afterwards. Opt-in on purpose: switched on
+-- globally it would take the rest of the harness down with it, and what a caller
+-- wants to know is whether ONE path survives a guarded client.
+local COMBAT_READS = {
+  "UnitIsTapDenied", "UnitIsUnit", "UnitCanAttack", "UnitIsDead",
+  "UnitAffectingCombat", "UnitGUID", "UnitName", "UnitLevel",
+  "UnitHealth", "UnitHealthMax", "UnitPower", "UnitPowerMax",
+}
+
+function withSecretCombatReads(fn)
+  local saved = {}
+  for _, name in ipairs(COMBAT_READS) do
+    saved[name] = _G[name]
+    _G[name] = function() return makeSecret(saved[name] and saved[name]()) end
+  end
+  local savedEvent = C_CombatLog.GetCurrentEventInfo
+  C_CombatLog.GetCurrentEventInfo = function() return makeSecret("SWING_DAMAGE") end
+
+  local ok, err = pcall(fn)
+
+  for _, name in ipairs(COMBAT_READS) do _G[name] = saved[name] end
+  C_CombatLog.GetCurrentEventInfo = savedEvent
+  if not ok then error(err, 0) end
+end
+
+if PROFILE == "forever" then
+  -- Present in the dump, and the mechanism the guard of 3.1 is built on. Absent
+  -- on the classic clients, which is why they only exist in this profile.
+  issecretvalue = isSecret
+  canaccessvalue = function(value) return not isSecret(value) end
+
+  GetBuildInfo = function() return "1.60.1", "69913", "Sep 17 2026", 16001 end
+  GetMaxPlayerLevel = function() return 60 end
+
+  -- Gone from the dump. Every one of these is a call the addon makes today.
+  GetQuestLogTitle = nil
+  GetNumQuestLogEntries = nil
+  SelectQuestLogEntry = nil
+  GetQuestLogSelection = nil
+  GetSpellTexture = nil
+  GetSpellInfo = nil
+  GetAddOnMetadata = nil
+  GetNamePlates = nil
+  CombatLogGetCurrentEventInfo = nil
+
+  -- What it has instead.
+  C_Spell = { GetSpellTexture = function() return "Interface\\Icons\\INV_Misc_QuestionMark" end }
+  C_QuestLog = {
+    GetNumQuestLogEntries = function() return #QUEST_LOG, #QUEST_LOG end,
+    GetInfo = function(index)
+      local entry = QUEST_LOG[index]
+      if entry == nil then return nil end
+      return {
+        title = entry.title, level = entry.level, questID = entry.questId,
+        isHeader = false, isComplete = entry.isComplete,
+      }
+    end,
+    GetQuestIDForLogIndex = function(index)
+      local entry = QUEST_LOG[index]
+      return entry and entry.questId or 0
+    end,
+    IsComplete = function(questId)
+      for _, entry in ipairs(QUEST_LOG) do
+        if entry.questId == questId then return entry.isComplete == true end
+      end
+      return false
+    end,
+    GetQuestObjectives = function(questId)
+      for _, entry in ipairs(QUEST_LOG) do
+        if entry.questId == questId then
+          local out = {}
+          for _, objective in ipairs(entry.objectives or {}) do
+            out[#out + 1] = { text = objective.text, type = objective.kind, finished = false }
+          end
+          return out
+        end
+      end
+      return {}
+    end,
+    -- Recorded rather than ignored: the modern reader must never move the
+    -- player's selection, and a harness that swallowed the call could not tell.
+    selections = 0,
+    GetSelectedQuest = function() return 0 end,
+    SetSelectedQuest = function() C_QuestLog.selections = C_QuestLog.selections + 1 end,
+  }
+end
+
 -- Load every file the TOC declares, in TOC order, exactly as the client would.
 local toc = assert(io.open(ROOT .. "/Ascent.toc"))
 local files = {}
@@ -566,6 +707,37 @@ local function step(what, fn)
     failures = failures + 1
     print("  FAIL " .. what .. ": " .. tostring(err))
   end
+end
+
+-- The harness checking its own stand-in before anything is built on it. A secret
+-- that quietly behaved like an ordinary value would make every later assertion
+-- about degrading meaningless -- it would pass by never having been tested.
+if PROFILE == "forever" then
+  step("a secret value is recognised as one, and raises when it is used", function()
+    local secret = makeSecret(true)
+
+    if issecretvalue(secret) ~= true then error("issecretvalue does not recognise a secret", 0) end
+    if issecretvalue(true) ~= false then error("issecretvalue claims a plain value is secret", 0) end
+    if canaccessvalue(secret) ~= false then error("canaccessvalue allows a secret", 0) end
+    if canaccessvalue(true) ~= true then error("canaccessvalue denies a plain value", 0) end
+
+    for what, use in pairs({
+      ["ordering against a number"] = function() return secret < 5 end,
+      ["equality against another secret"] = function() return secret == makeSecret(true) end,
+      ["arithmetic"] = function() return secret + 1 end,
+      ["concatenation"] = function() return secret .. "" end,
+      ["indexing"] = function() return secret.field end,
+      ["calling"] = function() return secret() end,
+    }) do
+      if pcall(use) then error(what .. " did not raise on a secret", 0) end
+    end
+
+    -- The one shape this stand-in CANNOT reproduce, asserted so that it stays a
+    -- known limit instead of becoming a false sense of cover: Lua 5.1 only
+    -- dispatches __eq between two tables, so this answers false where the real
+    -- client raises. It is the shape NameplateWatch uses throughout (3.2).
+    if (secret == true) ~= false then error("Lua 5.1 stopped short-circuiting mixed __eq", 0) end
+  end)
 end
 
 local bar, panel = context.bar, context.panel
@@ -809,7 +981,8 @@ step("every tab has something to draw", function()
   -- posting would fill it and ask the harness for the next one. Two kills at 42
   -- give the objectives below an average of this creature's own.
   local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
-  record.creatures[lynx:id()] = { key = lynx, kills = 2, xpTotal = 84 }
+  record.creatures[ns.core.LevelRecord.creatureId(lynx, nil)] =
+    { key = lynx, kills = 2, xpTotal = 84 }
   -- The level's own per-kill average needs a count of kills that paid; without
   -- one there is no fallback rate at all, and the marked-estimate path below
   -- would go unexercised while the step still passed.
@@ -1335,34 +1508,57 @@ step("the popup is three blocks: a zone named once, and pending broken down", fu
   forecast.entries = everything
 end)
 
--- pending-detail 4.1: the detail the popup deliberately does not carry. What can
--- only be checked here is that the two kinds of estimate are told apart on screen
--- -- one priced with the creature's own average, one with the level's.
+-- pending-detail 4.1 and group-aware-rates 3.1: the detail the popup deliberately
+-- does not carry. What can only be checked here is that the THREE kinds of
+-- estimate are told apart on screen -- one priced with this creature's average
+-- measured in the group of now, one with its average over kills nobody counted,
+-- and one with the level's blanket per-kill mean.
 step("the pending tab prices what each quest still asks the player to kill", function()
   local TextKey = ns.core.TextKey
   panel:selectTab("pending")
   local list = panel.lists.pending
-  local texts = textsOf(list)
 
   local function drawnRow(needle)
-    for _, text in ipairs(texts) do
+    for _, text in ipairs(textsOf(list)) do
       if text:find(needle, 1, true) then return true end
     end
     return false
   end
-
-  -- Three left of a creature this level has killed twice for 42 each.
-  if not drawnRow(context.locale:get(TextKey.PANEL_OBJECTIVE, "Springpaw Lynx", 3, 6)) then
-    error("the pending tab does not say what is left to kill: " .. table.concat(texts, " | "))
+  -- Exact rather than a substring, and that is the whole point of having it:
+  -- "~126 xp" is a PREFIX of the marked "~126 xp+", so a find() would report an
+  -- unmarked estimate as drawn on every screen that only ever drew a marked one.
+  local function drawnExactly(needle)
+    for _, text in ipairs(textsOf(list)) do
+      if text == needle then return true end
+    end
+    return false
   end
-  if not drawnRow(context.locale:get(TextKey.PANEL_OBJ_ESTIMATE, 126)) then
-    error("the objective was not priced with the creature's own average: " .. table.concat(texts, " | "))
+  local function shown()
+    return table.concat(textsOf(list), " | ")
+  end
+
+  -- Three left of a creature this level has killed twice for 42 each -- but those
+  -- two kills were banked before anything counted who shared the pay, so 126 is
+  -- this creature's own average over a population nobody can name. Marked, and
+  -- not with the level's mark: it came from the right creature and the wrong
+  -- context, which is a different kind of wrong.
+  if not drawnRow(context.locale:get(TextKey.PANEL_OBJECTIVE, "Springpaw Lynx", 3, 6)) then
+    error("the pending tab does not say what is left to kill: " .. shown())
+  end
+  if not drawnExactly(context.locale:get(TextKey.PANEL_OBJ_MIXED, 126)) then
+    error("the objective priced from kills nobody counted was not marked as such: " .. shown())
+  end
+  if drawnExactly(context.locale:get(TextKey.PANEL_OBJ_ESTIMATE, 126)) then
+    error("a mixed estimate was drawn exactly like one measured in this group: " .. shown())
+  end
+  if not drawnRow(context.locale:get(TextKey.PANEL_OBJ_MIXED_FOOTNOTE)) then
+    error("a mixed estimate was printed with nothing explaining its mark")
   end
   -- And one it has never killed, priced with the level's average and MARKED.
   local levelRate = ns.core.KillXpEstimator.levelRate(context.tracker:current())
   local fallback = math.floor(4 * levelRate + 0.5)
   if not drawnRow(context.locale:get(TextKey.PANEL_OBJ_ROUGH, fallback)) then
-    error("the fallback estimate is missing or unmarked: " .. table.concat(texts, " | "))
+    error("the fallback estimate is missing or unmarked: " .. shown())
   end
   if not drawnRow(context.locale:get(TextKey.PANEL_OBJ_FOOTNOTE)) then
     error("a marked estimate was printed with nothing explaining the mark")
@@ -1371,11 +1567,82 @@ step("the pending tab prices what each quest still asks the player to kill", fun
   -- A quest with no objectives gains no rows: the tab lists five quests and only
   -- one of them asks for kills.
   local rows = 0
-  for _, text in ipairs(texts) do
+  for _, text in ipairs(textsOf(list)) do
     if text:find("slain", 1, true) then rows = rows + 1 end
   end
   if rows > 0 then
     error("an objective row leaked the client's own sentence instead of the panel's")
+  end
+
+  -- The third state, and the one that makes the other two claims rather than
+  -- decoration: give the same creature two kills taken with as many sharing the
+  -- pay as there are right now, and the figure does not move while the mark goes
+  -- away. Same 126, drawn two ways, because only its provenance changed.
+  local record = context.tracker:current()
+  local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
+  local measuredId = ns.core.LevelRecord.creatureId(lynx, 1)
+  record.creatures[measuredId] = { key = lynx, sharedBy = 1, kills = 2, xpTotal = 84 }
+  panel:markDirty()
+  panel:refresh()
+  panel:selectTab("pending")
+
+  if not drawnExactly(context.locale:get(TextKey.PANEL_OBJ_ESTIMATE, 126)) then
+    error("an estimate measured in the group of now was still marked: " .. shown())
+  end
+  if drawnRow(context.locale:get(TextKey.PANEL_OBJ_MIXED_FOOTNOTE)) then
+    error("the mixed footnote outlived the only row that carried its mark: " .. shown())
+  end
+
+  -- Left as it was found. Nothing above touched the level's kill counters, so
+  -- dropping the bucket restores the record exactly for the steps that follow.
+  record.creatures[measuredId] = nil
+  panel:markDirty()
+  panel:refresh()
+end)
+
+-- group-aware-rates 2.4: the only place the wiring itself can be checked. The
+-- panel asks the client, through the port, how many are sharing the pay right
+-- now, and the per-creature rows use that answer to say which of them describes
+-- the character's current situation. A seam left unwired in the composition root
+-- looks exactly like a client playing alone, and nothing in the domain suite can
+-- tell the two apart.
+step("the panel tells a creature's populations apart by the group of now", function()
+  local TextKey = ns.core.TextKey
+  local record = context.tracker:current()
+  if record == nil then error("no level in progress to seed") end
+
+  -- The same creature, the same average, killed alone: only the population
+  -- differs, so nothing priced anywhere else moves.
+  local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
+  record.creatures[ns.core.LevelRecord.creatureId(lynx, 1)] =
+    { key = lynx, sharedBy = 1, kills = 2, xpTotal = 84 }
+  record.killsWithXp = record.killsWithXp + 2
+
+  panel:markDirty()
+  panel:refresh()
+  panel:selectTab("breakdown")
+
+  local uncounted, foreign, plain = 0, 0, 0
+  for _, text in ipairs(textsOf(panel.lists.breakdown)) do
+    if text:find("Springpaw Lynx", 1, true) then
+      if text:find(context.locale:get(TextKey.PANEL_CREATURE_MIXED), 1, true) then
+        uncounted = uncounted + 1
+      elseif text:find(context.locale:get(TextKey.PANEL_CREATURE_SHARED, 1), 1, true) then
+        -- The row that WAS measured with this group, marked as if it belonged to
+        -- another one: what a seam the composition root never wired looks like.
+        foreign = foreign + 1
+      else
+        plain = plain + 1
+      end
+    end
+  end
+
+  if uncounted ~= 1 then
+    error(("the kills nobody counted were drawn %d times as their own population"):format(uncounted))
+  end
+  if plain ~= 1 or foreign ~= 0 then
+    error(("the row measured in the current group was drawn %d times unmarked and %d times as another group's")
+      :format(plain, foreign))
   end
 end)
 
@@ -1609,6 +1876,81 @@ step("every slider in the addon", function()
   end
 end)
 
+-- 4.6, the reset half: the plate page's own reset puts every key the plate owns
+-- back to its default and touches NOT ONE of the bar's. The plate wears the bar's
+-- skin, palette and contrast by design (D87), so the mistake this guards against
+-- is the easy one -- a reset that reached them would undo, from a page that never
+-- mentions the bar, choices made for the other surface.
+--
+-- HERE rather than with the other plate steps, because it is also the way back to
+-- a known state: the two walks above dragged the plate's own sliders to their
+-- ends and clicked its seven zone boxes off, and the plate steps further down
+-- read the settings they find rather than writing every one of them first.
+step("the plate page's reset gives the plate its defaults and the bar nothing", function()
+  local SettingKey, Defaults, Frozen = ns.core.SettingKey, ns.core.Defaults, ns.core.Frozen
+  local button = _G.AscentOptionsPlateReset
+  if button == nil then error("the plate page built no reset to click") end
+
+  -- Reading a default and a stored value the same way, whether either is a
+  -- frozen proxy, a plain list or a number.
+  local function flatten(value)
+    if type(value) ~= "table" then return tostring(value) end
+    local pieces = {}
+    if Frozen.isFrozen(value) then
+      for key, inner in Frozen.each(value) do
+        pieces[#pieces + 1] = tostring(key) .. "=" .. flatten(inner)
+      end
+    else
+      for key, inner in pairs(value) do
+        pieces[#pieces + 1] = tostring(key) .. "=" .. flatten(inner)
+      end
+    end
+    table.sort(pieces)
+    return "{" .. table.concat(pieces, ",") .. "}"
+  end
+
+  -- The bar, deliberately NOT at its defaults: a bar already sitting on them
+  -- would make "the reset left the bar alone" true for the wrong reason.
+  context.saveSetting(SettingKey.BAR_SCALE, 1.35)
+  context.saveSetting(SettingKey.BAR_APPEARANCE, { border = { thickness = 5 } })
+  context.saveSetting(SettingKey.HIGH_CONTRAST, true)
+
+  -- And the plate away from its own, including the two the walks above do not
+  -- reach: where it was dragged to, and whether it is on at all.
+  context.saveSetting(SettingKey.PLATE_ENABLED, false)
+  context.saveSetting(SettingKey.PLATE_POSITION,
+    { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 11, y = -22 })
+  context.saveSetting(SettingKey.PLATE_LOCKED, true)
+  context.saveSetting(SettingKey.PLATE_APPEARANCE, { text = { size = 17 } })
+
+  button.scripts.OnClick(button, "LeftButton")
+
+  for _, key in ipairs({ SettingKey.PLATE_ENABLED, SettingKey.PLATE_POSITION, SettingKey.PLATE_LOCKED,
+                         SettingKey.PLATE_SCALE, SettingKey.PLATE_WIDTH, SettingKey.PLATE_OPACITY,
+                         SettingKey.PLATE_HOLD_SECONDS, SettingKey.PLATE_ROWS, SettingKey.PLATE_ZONES,
+                         SettingKey.PLATE_APPEARANCE }) do
+    local now, want = flatten(context.settings()[key]), flatten(Defaults[key])
+    if now ~= want then
+      error(("%s reads %s after the reset, not its default %s"):format(key, now, want))
+    end
+  end
+
+  if context.settings()[SettingKey.BAR_SCALE] ~= 1.35 then
+    error("the plate's reset took the bar's scale with it")
+  end
+  if context.settings()[SettingKey.HIGH_CONTRAST] ~= true then
+    error("the plate's reset took the bar's contrast with it")
+  end
+  if flatten(context.settings()[SettingKey.BAR_APPEARANCE]) ~= "{border={thickness=5}}" then
+    error("the plate's reset reached the bar's own appearance: "
+      .. flatten(context.settings()[SettingKey.BAR_APPEARANCE]))
+  end
+
+  context.saveSetting(SettingKey.BAR_SCALE, Defaults[SettingKey.BAR_SCALE])
+  context.saveSetting(SettingKey.BAR_APPEARANCE, {})
+  context.saveSetting(SettingKey.HIGH_CONTRAST, false)
+end)
+
 step("commands that need no views", function()
   local handler = SlashCmdList["ASCENT"]
   handler("")
@@ -1685,6 +2027,8 @@ step("the diagnostic answers in one command, quest log included", function()
     "quest names known:",      -- the name directory
     "kill objectives:",        -- and the one figure that needs a real client
     "client strings dumped",   -- the strings, summarised rather than dumped to chat
+    "sharing the pay",         -- how many the pay is split between right now
+    "creature populations:",   -- and how many samples each context has collected
   }) do
     if chatSince(mark, needle) == nil then
       error("one command no longer answers for '" .. needle .. "'")
@@ -1713,6 +2057,55 @@ step("the two place lines agree with each other", function()
   -- could print -- everything placed AND everything unplaced -- is reachable here.
   if unplaced > 0 and named >= ledgered then
     error("the panel claims everything was placed while also claiming none of it was")
+  end
+end)
+
+-- group-aware-rates 3.2: the instrument the design's open question needs, and the
+-- only gate that can see either half of it. The size is asked of the client at the
+-- moment the command runs -- a block that printed a constant, or one wired to
+-- nothing, reads identically from inside the domain suite -- and the creature
+-- lines have to group the way the estimator does, by name across level bands, or
+-- the file shows halves of every population it is meant to size up.
+step("the diagnostic says how many share the pay, and how thin each population is", function()
+  local record = context.tracker:current()
+  if record == nil then error("no level in progress to seed") end
+
+  -- One creature, three aggregates: two level bands taken alone, which the
+  -- estimator reads as ONE population of seven, and the kills nobody counted,
+  -- which it reads as a population of its own (D84). Ids nothing else here uses,
+  -- so the lines below can only come from these.
+  local young = ns.core.CreatureKey.new(99001, 10, "Smoke Basilisk")
+  local elder = ns.core.CreatureKey.new(99002, 11, "Smoke Basilisk")
+  local seeded = {
+    ns.core.LevelRecord.creatureId(young, 1),
+    ns.core.LevelRecord.creatureId(elder, 1),
+    ns.core.LevelRecord.creatureId(young, nil),
+  }
+  record.creatures[seeded[1]] = { key = young, sharedBy = 1, kills = 4, xpTotal = 168 }
+  record.creatures[seeded[2]] = { key = elder, sharedBy = 1, kills = 3, xpTotal = 150 }
+  record.creatures[seeded[3]] = { key = young, sharedBy = nil, kills = 2, xpTotal = 84 }
+
+  local members = GetNumGroupMembers
+  GetNumGroupMembers = function() return 5 end
+  local mark = #chatLines + 1
+  SlashCmdList["ASCENT"]("debug")
+  GetNumGroupMembers = members
+
+  for _, id in ipairs(seeded) do record.creatures[id] = nil end
+
+  local shared = chatSince(mark, "sharing the pay")
+  if shared == nil then error("the diagnostic never says how many share the pay") end
+  if tonumber(shared:match("(%d+) sharing the pay")) ~= 5 then
+    error("the group line does not read the client of the moment: " .. shared)
+  end
+
+  local line = chatSince(mark, "Smoke Basilisk:")
+  if line == nil then error("no line was printed for a creature with two populations") end
+  if not line:find("7 shared by 1", 1, true) then
+    error("two level bands of one name were not counted as the one population the estimator reads: " .. line)
+  end
+  if not line:find("2 nobody counted", 1, true) then
+    error("the kills nobody counted were not listed as a population of their own: " .. line)
   end
 end)
 
@@ -1890,13 +2283,24 @@ step("every options control fits inside the page it lives on", function()
   -- the same shape: a control laid out somewhere the player cannot reach, with no
   -- error to find it by -- past the bottom of a scroll child, or past the right
   -- edge after inheriting a gallery's indent.
-  local PAGES = { "Main", "Skin", "Colors", "Fields", "Size", "Behaviour" }
+  -- Written out by hand, which is the risk this list carries: a page that is not
+  -- named here is a page the only net for geometric containment does not cover,
+  -- and nobody notices. "Plate" is the seventh (tasks.md 4.2).
+  local PAGES = { "Main", "Skin", "Colors", "Fields", "Size", "Behaviour", "Plate" }
 
   local contents = {}
   for _, key in ipairs(PAGES) do
     local scroll = _G["AscentOptions" .. key .. "Scroll"]
     if scroll == nil or scroll.scrollChild == nil then
       error("page " .. key .. " has no scroll child")
+    end
+    -- Every page MEASURES its height off the last control on it. 100 is the
+    -- provisional the scroll child is built with, and a page still wearing it is
+    -- a page whose `last` was never set -- which is the whole defect again:
+    -- controls laid out past the bottom edge, where scrolling cannot reach.
+    if (scroll.scrollChild.h or 0) <= 100 then
+      error(("the %s page is %s tall, still the provisional it was built with")
+        :format(key, tostring(scroll.scrollChild.h)))
     end
     contents[scroll.scrollChild] = key
   end
@@ -1975,7 +2379,14 @@ step("every options control fits inside the page it lives on", function()
     "AscentOptionsColorEXPLORATIONButton", "AscentOptionsColorPENDINGButton",
     "AscentOptionsField1CheckButton", "AscentOptionsField11CheckButton",
     "AscentOptionsHighContrastCheckButton", "AscentOptionsAxis1Slider",
-    "AscentOptionsWidthSlider", "AscentOptionsHeightSlider", "AscentOptionsMotionSlider" }) do
+    "AscentOptionsWidthSlider", "AscentOptionsHeightSlider", "AscentOptionsMotionSlider",
+    -- The plate's page, top to bottom: the first control, the last slider of each
+    -- of its three sections, the last of its seven zone boxes, and the button at
+    -- the foot of it. A page this long is exactly where a control falls off the
+    -- bottom, and the reset is the furthest thing down it.
+    "AscentOptionsPlateEnabledCheckButton", "AscentOptionsPlateHoldSlider",
+    "AscentOptionsPlateZone7CheckButton", "AscentOptionsPlateLook3Slider",
+    "AscentOptionsPlateReset" }) do
     local widget = _G[name]
     if widget == nil then
       error(name .. " was never built")
@@ -2380,7 +2791,8 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
     local record = context.tracker:current()
     if record == nil then error("no level in progress to seed") end
     local key = ns.core.CreatureKey.new(17204, 10, "Mana Serpent")
-    record.creatures[key:id()] = { key = key, kills = 1, xpTotal = 86 }
+    record.creatures[ns.core.LevelRecord.creatureId(key, nil)] =
+      { key = key, kills = 1, xpTotal = 86 }
     record.killsWithXp = record.killsWithXp + 1
     record.xpBySource[ns.core.XpSource.MOB_KILL] =
       (record.xpBySource[ns.core.XpSource.MOB_KILL] or 0) + 86
@@ -2487,7 +2899,7 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
   -- banked figure and the estimate are the same quantity, and an estimate set off
   -- in the margin reads as a footnote to the number instead of part of it.
   -- The seeded level has already been paid for a Mana Serpent, so two of them
-  -- standing is a MEASURED estimate rather than a guess.
+  -- standing is an estimate rather than a guess.
   -- Let the headline arrive before reading it. The number WALKS to its target --
   -- that is the whole point of the counter -- so asserting on the first frame
   -- would be asserting on the animation rather than on the answer.
@@ -2495,12 +2907,64 @@ step("a pull opens, counts, settles late experience, and becomes a plaque", func
 
   -- ONE number, and while the fight runs it is the forecast rather than the zero
   -- that has landed so far. The seeded level has already been paid for a Mana
-  -- Serpent, so two of them standing is a MEASURED estimate, not a guess.
+  -- Serpent, so two of them standing is an estimate rather than a guess.
   if plate.xp.text ~= "172 XP" then
     error("the headline read " .. tostring(plate.xp.text) .. ", expected 172 XP")
   end
   if not plate.entrance then
     error("the plate has no arrival to play")
+  end
+
+  -- group-aware-rates 3.1: the plate has no room for a mark beside the digits --
+  -- a glyph cannot be aligned against them -- so the claim is carried by how
+  -- strongly the headline is drawn, and the three provenances have to be three
+  -- weights. The seeded Serpent was banked before anything counted who shared the
+  -- pay, so this 172 is an average over a population nobody can name.
+  do
+    local record = context.tracker:current()
+    local key = ns.core.CreatureKey.new(17204, 10, "Mana Serpent")
+    local function headlineAlpha()
+      local color = plate.xp.textColor
+      return color ~= nil and color[4] or nil
+    end
+
+    local uncounted = headlineAlpha()
+
+    -- The same creature, the same 86, this time with as many sharing the pay as
+    -- there are right now: the forecast does not move and the claim behind it
+    -- does. Same number, drawn two ways, which is what makes the weight a
+    -- statement about provenance instead of a style on estimates.
+    record.creatures[ns.core.LevelRecord.creatureId(key, 1)] =
+      { key = key, sharedBy = 1, kills = 1, xpTotal = 86 }
+    plate:follow(tracker, seconds)
+    local measured = headlineAlpha()
+
+    if plate.xp.text ~= "172 XP" then
+      error("pricing the same average from this group moved the headline to " .. tostring(plate.xp.text))
+    end
+    if measured == nil or uncounted == nil then
+      error("the headline was drawn without a colour, so it claims nothing at all")
+    end
+    if uncounted >= measured then
+      error(("a forecast from kills nobody counted was drawn at %s, no dimmer than the %s of one measured here")
+        :format(tostring(uncounted), tostring(measured)))
+    end
+
+    -- And the widest of the three: a creature this level has never been paid for
+    -- at all falls to the level's own mean, which must not look like either.
+    record.creatures[ns.core.LevelRecord.creatureId(key, 1)] = nil
+    record.creatures[ns.core.LevelRecord.creatureId(key, nil)] = nil
+    plate:follow(tracker, seconds)
+    local wide = headlineAlpha()
+    if wide == nil or wide >= uncounted then
+      error(("the level's own mean was drawn at %s, no dimmer than the %s of a mixed creature average")
+        :format(tostring(wide), tostring(uncounted)))
+    end
+
+    -- Put the seed back: the rest of this step reads the 172 it produces.
+    record.creatures[ns.core.LevelRecord.creatureId(key, nil)] =
+      { key = key, kills = 1, xpTotal = 86 }
+    plate:follow(tracker, seconds)
   end
 
   -- Nothing has paid yet, so the source bar must not be drawn at all. It used to
@@ -2707,6 +3171,48 @@ step("the plate demo runs a whole fake pull and hands the plate back", function(
   GetTime = realGetTime
 end)
 
+-- 4.6, the demo half: the plate's page has no preview of its own on purpose
+-- (D92), and this button is what stands in for one -- the same fake pull the
+-- command runs, on the real plate, at the settings just chosen. Driven to the
+-- end like the step above, because the half that matters is the hand-back: a
+-- button that left a fictional fight on screen over a real one would be worse
+-- than no preview at all.
+step("the plate page's demo button runs the whole pull and gives the plate back", function()
+  local button = _G.AscentOptionsPlateDemo
+  if button == nil then error("the plate page built no demo button") end
+  if button.scripts == nil or button.scripts.OnClick == nil then
+    error("the demo button does nothing: the composition root published no demo to run")
+  end
+
+  local plate = context.plate
+  local seconds = 9000
+  local realGetTime = GetTime
+  GetTime = function() return seconds end
+
+  button.scripts.OnClick(button, "LeftButton")
+
+  local ticker = context.ticker and context.ticker.scripts and context.ticker.scripts.OnUpdate
+  if ticker == nil then error("no OnUpdate to drive") end
+
+  local sawPlaque = false
+  for _ = 1, 260 do
+    seconds = seconds + 0.1
+    ticker(nil, 0.1)
+    if plate.frame.shown and plate.frame.h > 74 then
+      sawPlaque = true
+    end
+  end
+
+  GetTime = realGetTime
+
+  if not sawPlaque then
+    error("the button's demo never reached the plaque")
+  end
+  if plate.frame.shown then
+    error("the button's demo never gave the plate back")
+  end
+end)
+
 -- Where the player puts it is where it stays. The defect this holds: the plate
 -- captured the settings table it was built with, and every save builds a NEW
 -- frozen one -- so dropping it wrote the new position and then re-anchored to
@@ -2737,6 +3243,855 @@ step("the plate stays where it is dropped", function()
     error(("the plate moved to %s/%s %s,%s"):format(
       tostring(point), tostring(relativePoint), tostring(x), tostring(y)))
   end
+end)
+
+-- ---------------------------------------------------------------------------
+-- What the plate reads about ITSELF (tasks.md group 3). ui/ has no unit test, so
+-- every claim below is made against what the stand-in client was actually told to
+-- draw -- a text, a size, an anchor -- rather than against the addon not raising.
+-- ---------------------------------------------------------------------------
+
+-- The stub's GetTime is a constant, and a settling window measured against a
+-- clock that never moves never closes. Swapped per step and put back even when
+-- the step fails, because a harness that left a fake clock behind would take
+-- every step after it with it.
+local plateClock = 7000
+
+-- Everything the steps below move, put back to its default whether the step
+-- passed or not. A step that failed half way through would otherwise hand the
+-- next one a plate nobody configured, and that one's failure would read as a
+-- second defect somewhere else -- which is exactly how a run turns into a hunt.
+local function restorePlateSettings()
+  local SettingKey, Defaults = ns.core.SettingKey, ns.core.Defaults
+  for _, key in ipairs({ SettingKey.PLATE_SCALE, SettingKey.PLATE_WIDTH,
+                         SettingKey.PLATE_OPACITY, SettingKey.PLATE_HOLD_SECONDS,
+                         SettingKey.PLATE_ROWS, SettingKey.PLATE_LOCKED,
+                         SettingKey.BAR_LOCKED, SettingKey.MOTION_SCALE }) do
+    context.saveSetting(key, Defaults[key])
+  end
+  -- Copied rather than handed back: the default list a frozen table answers with
+  -- IS its backing store (Frozen's own header), and storing that reference in the
+  -- saved variables would put the addon's constants one write away from a player.
+  local zones = {}
+  for _, zone in ipairs(Defaults[SettingKey.PLATE_ZONES]) do
+    zones[#zones + 1] = zone
+  end
+  context.saveSetting(SettingKey.PLATE_ZONES, zones)
+  context.saveSetting(SettingKey.PLATE_APPEARANCE, {})
+end
+
+local function plateStep(what, fn)
+  step(what, function()
+    local realGetTime = GetTime
+    plateClock = 7000
+    GetTime = function() return plateClock end
+    local ok, err = pcall(fn)
+    GetTime = realGetTime
+    restorePlateSettings()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+end
+
+-- The three calls the composition root's own ticker makes, in its order, exactly
+-- as the long step above states them.
+local function plateTick(dt)
+  plateClock = plateClock + dt
+  context.pullTracker:tick(plateClock)
+  if context.pullTracker:consumeChange() then
+    context.plate:follow(context.pullTracker, plateClock)
+  end
+  context.plate:tick(dt)
+end
+
+-- A fight with something in every zone -- two creatures, two abilities, two kills
+-- close enough to chain, experience paid -- left OPEN, because an open pull is
+-- what redraws when a setting changes under it. The counters are walked to their
+-- targets first: the headline WALKS, so reading it on the first frame would be
+-- reading the animation instead of the answer.
+local function openAFight()
+  local EventTopic, XpSource = ns.core.EventTopic, ns.core.XpSource
+  local bus = context.bus
+  context.pullTracker:reset()
+  bus:publish(EventTopic.COMBAT_STARTED, {})
+  bus:publish(EventTopic.ABILITY_USED, { key = 1752, name = "Mind Blast" })
+  bus:publish(EventTopic.ABILITY_USED, { key = 589, name = "Shadow Word: Pain" })
+  bus:publish(EventTopic.DAMAGE_DEALT, { amount = 240, name = "Mana Serpent", guid = "Creature-0-1-1-1-17204-A" })
+  bus:publish(EventTopic.DAMAGE_DEALT, { amount = 180, name = "Kobold Miner", guid = "Creature-0-1-1-1-6-C" })
+  bus:publish(EventTopic.CREATURE_DIED, { name = "Mana Serpent", at = plateClock })
+  bus:publish(EventTopic.XP_ATTRIBUTED, { gain = { amount = 44, source = XpSource.MOB_KILL } })
+  bus:publish(EventTopic.CREATURE_DIED, { name = "Kobold Miner", at = plateClock })
+  bus:publish(EventTopic.XP_ATTRIBUTED, { gain = { amount = 51, source = XpSource.MOB_KILL } })
+  for _ = 1, 20 do plateTick(0.1) end
+  if not context.plate.frame.shown then
+    error("the fight left nothing on the plate to look at")
+  end
+end
+
+-- Where the plate's own arithmetic says its pieces go, asked the way the view
+-- asks for it. Restated here rather than in numbers so that a changed constant
+-- shows up as a changed PLATE, not as a harness that has to be edited to agree.
+local function plateLayout(creatures, abilities)
+  local settings = context.settings()
+  local own = settings[ns.core.SettingKey.PLATE_APPEARANCE]
+  local text = ns.core.SkinResolver.fieldOf(own, "text")
+  return ns.core.PlateLayout.lay({
+    textSize = ns.core.SkinResolver.fieldOf(text, "size"),
+    zones = settings[ns.core.SettingKey.PLATE_ZONES],
+    creatures = creatures,
+    abilities = abilities,
+  })
+end
+
+-- D88, and the whole of add-ascent-pull-recap 7.4. The defect: the plate asked
+-- the BAR's lock, so a player who had locked the bar -- or who had taken the
+-- client's bar slot, which DISABLES that lock -- could not move the plate, and
+-- nothing anywhere said why.
+plateStep("the plate has a lock of its own, and the bar's does not reach it", function()
+  local SettingKey = ns.core.SettingKey
+  local plate, save = context.plate, context.saveSetting
+  local frame = plate.frame
+  local wasAt = context.settings()[SettingKey.PLATE_POSITION]
+
+  -- The client's StartMoving records nothing, and the stub auto-stubs it into a
+  -- call that returns self -- so a drag that was refused and one that went
+  -- through are the same nothing from out here. This is the stand-in that tells
+  -- them apart.
+  local realStartMoving = rawget(frame, "StartMoving")
+  local started = 0
+  frame.StartMoving = function() started = started + 1 end
+
+  save(SettingKey.BAR_LOCKED, true)
+  frame.scripts.OnDragStart(frame)
+  if started ~= 1 then
+    error("the bar's lock still stops the plate being dragged")
+  end
+
+  frame:ClearAllPoints()
+  frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 480, -96)
+  frame.scripts.OnDragStop(frame)
+  local saved = context.settings()[SettingKey.PLATE_POSITION]
+  if saved.point ~= "TOPLEFT" or saved.x ~= 480 or saved.y ~= -96 then
+    error(("the drop with the bar locked saved %s %s,%s")
+      :format(tostring(saved.point), tostring(saved.x), tostring(saved.y)))
+  end
+
+  -- And its own lock does stop it, or it is not a lock.
+  save(SettingKey.PLATE_LOCKED, true)
+  frame.scripts.OnDragStart(frame)
+  if started ~= 1 then
+    error("the plate's own lock did not stop the drag")
+  end
+
+  save(SettingKey.PLATE_POSITION, { point = wasAt.point, relativePoint = wasAt.relativePoint,
+    x = wasAt.x, y = wasAt.y })
+  frame.StartMoving = realStartMoving
+end)
+
+-- 3.2: the frame takes the scale, the width and the height its contents ask for,
+-- and the rows are cut to the width in force rather than to the 240 this file
+-- used to carry.
+plateStep("the plate is the size the player asked for, rows included", function()
+  local SettingKey = ns.core.SettingKey
+  local plate, save = context.plate, context.saveSetting
+  local frame = plate.frame
+
+  save(SettingKey.PLATE_SCALE, 1.5)
+  save(SettingKey.PLATE_WIDTH, 320)
+  openAFight()
+
+  if frame:GetEffectiveScale() ~= 1.5 then
+    error("the plate was drawn at scale " .. tostring(frame:GetEffectiveScale()))
+  end
+  if frame:GetWidth() ~= 320 then
+    error("the plate was drawn " .. tostring(frame:GetWidth()) .. " wide")
+  end
+  -- The height is the layout service's answer and not the view's own running
+  -- total: two of those would be free to disagree, and the one that decides how
+  -- tall the frame is would win in silence.
+  local layout = plateLayout(2, 2)  -- two creatures fought, two abilities pressed
+  if frame:GetHeight() ~= layout.height then
+    error(("the plate stands %s tall where its contents ask for %s")
+      :format(tostring(frame:GetHeight()), tostring(layout.height)))
+  end
+
+  -- A row's text is cut to the width in force. At 240 this was 188.
+  local row = plate.creatureRows[1]
+  if row.name.w ~= 320 - layout.padding * 2 - 32 then
+    error("a creature row was cut to " .. tostring(row.name.w) .. " on a plate 320 wide")
+  end
+  local chipsWide = 0
+  for _, chip in ipairs(plate.chips) do
+    if chip.shown then chipsWide = chipsWide + chip.w end
+  end
+  if math.abs(chipsWide - (320 - layout.padding * 2)) > 0.01 then
+    error("the source bar spans " .. tostring(chipsWide) .. " on a plate 320 wide")
+  end
+
+  -- And the saved position is re-read AFTER the scale, so the anchor the player
+  -- dropped it at is the one it is hanging from.
+  local saved = context.settings()[SettingKey.PLATE_POSITION]
+  local point, _, relativePoint, x, y = frame:GetPoint()
+  if point ~= saved.point or relativePoint ~= saved.relativePoint or x ~= saved.x or y ~= saved.y then
+    error(("scaling the plate left it at %s/%s %s,%s")
+      :format(tostring(point), tostring(relativePoint), tostring(x), tostring(y)))
+  end
+end)
+
+-- 3.5: a zone that is off is not drawn AND leaves no gap, the headline is not one
+-- of the zones, and none of it builds a single new region.
+plateStep("the plate draws the zones and the rows the player chose, and builds nothing", function()
+  local SettingKey, PlateZone = ns.core.SettingKey, ns.core.PlateZone
+  local plate, save = context.plate, context.saveSetting
+
+  local before = widgets
+  openAFight()
+
+  for _, drawn in ipairs({ { "the clock", plate.clock }, { "the level line", plate.remaining },
+                           { "the chain", plate.streak }, { "the first source", plate.chips[1] },
+                           { "a creature row", plate.creatureRows[1].name },
+                           { "an ability row", plate.abilityRows[1].name },
+                           { "the footer", plate.footerLeft } }) do
+    if not drawn[2].shown then
+      error("with every zone on, " .. drawn[1] .. " was not drawn")
+    end
+  end
+  local tall = plate.frame:GetHeight()
+
+  -- One zone off. Not drawn, and the plate is SHORTER -- hiding it and leaving
+  -- its gap behind would be the other thing, and the one D90 rules out.
+  save(SettingKey.PLATE_ZONES, { PlateZone.CLOCK, PlateZone.REMAINING, PlateZone.STREAK,
+    PlateZone.SOURCES, PlateZone.CREATURES, PlateZone.ABILITIES })
+  openAFight()
+  if plate.footerLeft.shown or plate.footerRight.shown then
+    error("the footer was turned off and drawn anyway")
+  end
+  if plate.frame:GetHeight() >= tall then
+    error(("turning a zone off left the plate %s tall, against %s with it on")
+      :format(tostring(plate.frame:GetHeight()), tostring(tall)))
+  end
+
+  -- Every accessory zone off is a choice, not a corrupt file (D90). What is left
+  -- is the figure the plate exists to show and the count facing it, and neither
+  -- can be turned off: a frame that appears in combat without them is decoration.
+  save(SettingKey.PLATE_ZONES, {})
+  openAFight()
+  for _, gone in ipairs({ { "the clock", plate.clock }, { "the level line", plate.remaining },
+                          { "the chain", plate.streak }, { "the first source", plate.chips[1] },
+                          { "a creature row", plate.creatureRows[1].name },
+                          { "an ability row", plate.abilityRows[1].name },
+                          { "the footer", plate.footerLeft } }) do
+    if gone[2].shown then
+      error("with every accessory zone off, " .. gone[1] .. " was still drawn")
+    end
+  end
+  -- Never hidden and still carrying a figure. The figure itself is whatever the
+  -- fight was worth -- this step is about the zones, and pinning the number here
+  -- would make it fail for a reason it is not asking about.
+  if plate.xp.shown == false or plate.xp.text == nil or not plate.xp.text:find("XP", 1, true) then
+    error("the headline went with the zones: " .. tostring(plate.xp.text))
+  end
+  if plate.kills.shown == false or plate.kills.text ~= "2" then
+    error("the count went with the zones: " .. tostring(plate.kills.text))
+  end
+  if plate.frame:GetHeight() ~= plateLayout(0, 0).height then
+    error("a plate with nothing but its headline stands " .. tostring(plate.frame:GetHeight()))
+  end
+
+  -- How many rows, changed with the pull still open: the new number is drawn on
+  -- the next redraw, with no frame rebuilt -- they all exist already.
+  save(SettingKey.PLATE_ZONES, { PlateZone.CLOCK, PlateZone.REMAINING, PlateZone.STREAK,
+    PlateZone.SOURCES, PlateZone.CREATURES, PlateZone.ABILITIES, PlateZone.FOOTER })
+  openAFight()
+  if not plate.creatureRows[2].name.shown then
+    error("two creatures were fought and only one row drawn")
+  end
+  save(SettingKey.PLATE_ROWS, 1)
+  plate:follow(context.pullTracker, plateClock)
+  if not plate.creatureRows[1].name.shown or plate.creatureRows[2].name.shown then
+    error("asking for one row mid-fight drew " .. tostring(plate.creatureRows[2].name.text))
+  end
+  if plate.abilityRows[2].name.shown then
+    error("the row count reached the creatures and not the abilities")
+  end
+
+  save(SettingKey.PLATE_ROWS, 6)
+  openAFight()
+  if widgets ~= before then
+    error(("the plate built %d new region(s) across four pulls and five settings changes")
+      :format(widgets - before))
+  end
+end)
+
+-- 3.3 and D91: the opacity is a FACTOR over whatever the plate is drawing at,
+-- never the frame's alpha -- that channel is how the plate leaves.
+plateStep("the plate is drawn at the opacity the player chose, and still fades to nothing", function()
+  local SettingKey = ns.core.SettingKey
+  local plate, save = context.plate, context.saveSetting
+  local frame = plate.frame
+
+  save(SettingKey.PLATE_OPACITY, 0.5)
+  openAFight()
+  if frame:GetAlpha() ~= 0.5 then
+    error("a plate at half opacity was drawn at " .. tostring(frame:GetAlpha()))
+  end
+
+  -- Closing the pull is a reset of the frame's alpha all of its own, and it has
+  -- to land on the factor rather than on one.
+  context.bus:publish(ns.core.EventTopic.COMBAT_ENDED, {})
+  local closed = false
+  for _ = 1, 200 do
+    plateTick(0.1)
+    if context.pullTracker:currentPhase() == ns.core.PullPhase.CLOSED then
+      closed = true
+      break
+    end
+  end
+  if not closed then
+    error("the pull never closed")
+  end
+  if frame:GetAlpha() ~= 0.5 then
+    error("closing the pull put the plate back to " .. tostring(frame:GetAlpha()))
+  end
+
+  -- Held, then fading, and never brighter than the factor at any instant in
+  -- between: one that reached the fade and not the hold would be a plaque that
+  -- brightens the moment it stops moving.
+  local mid
+  for _ = 1, 400 do
+    plateTick(0.1)
+    if not frame.shown then break end
+    if frame:GetAlpha() > 0.5 then
+      error("the plaque was drawn at " .. tostring(frame:GetAlpha()) .. " while it was up")
+    end
+    if frame:GetAlpha() < 0.5 then
+      mid = frame:GetAlpha()
+      break
+    end
+  end
+  if mid == nil then
+    error("the plate never started fading from the opacity it was drawn at")
+  end
+
+  -- Carried on rather than started over: the same pull, alive again. THIS is the
+  -- reset D91 warns is the easy one to miss -- a resumed pull plays no arrival, so
+  -- nothing else writes the alpha behind it, and a factor that had not reached
+  -- this line would show up as a plate that brightens when the fighting resumes.
+  context.bus:publish(ns.core.EventTopic.COMBAT_STARTED, {})
+  context.bus:publish(ns.core.EventTopic.DAMAGE_DEALT,
+    { amount = 40, name = "Kobold Miner", guid = "Creature-0-1-1-1-6-C" })
+  plateTick(0.016)
+  if frame:GetAlpha() ~= 0.5 then
+    error("carrying the pull on put the plate back to " .. tostring(frame:GetAlpha()))
+  end
+
+  -- And it still leaves on its own. Half opacity is where the fade starts from,
+  -- not a floor under it: a factor that stopped the plate disappearing would be a
+  -- plaque sitting over the next fight.
+  context.bus:publish(ns.core.EventTopic.COMBAT_ENDED, {})
+  for _ = 1, 400 do
+    plateTick(0.1)
+    if not frame.shown then break end
+  end
+  if frame.shown then
+    error("the plate never left")
+  end
+  -- Letting go of the screen puts the alpha back for the next time, and "back"
+  -- is the factor: the fourth of the four resets D91 counts, and the only one
+  -- whose write nothing else follows.
+  if frame:GetAlpha() ~= 0.5 then
+    error("the plate let go of the screen at " .. tostring(frame:GetAlpha()))
+  end
+
+  -- With motion turned off there IS no arrival -- a duration of zero builds the
+  -- inert effect -- so a new pull's own reset is the only thing writing the
+  -- frame's alpha. It is the reset the arrival hides in every other path.
+  save(SettingKey.MOTION_SCALE, 0)
+  openAFight()
+  if frame:GetAlpha() ~= 0.5 then
+    error("a new pull with motion off opened at " .. tostring(frame:GetAlpha()))
+  end
+
+  -- Below the floor the plate imposes on the SKIN's background, which is a floor
+  -- on a colour and not on the player (D91).
+  save(SettingKey.PLATE_OPACITY, 0.2)
+  openAFight()
+  if frame:GetAlpha() ~= 0.2 then
+    error("an opacity under the background's floor was drawn at " .. tostring(frame:GetAlpha()))
+  end
+  local background = plate.background.color
+  if background == nil or background[4] < 0.72 then
+    error("the floor under the skin's own background went with it: " .. tostring(background and background[4]))
+  end
+
+  save(SettingKey.PLATE_OPACITY, ns.core.Defaults[SettingKey.PLATE_OPACITY])
+  openAFight()
+  if frame:GetAlpha() ~= 1 then
+    error("putting the opacity back left the plate at " .. tostring(frame:GetAlpha()))
+  end
+end)
+
+-- D89's half of the view: how long the plaque stays is the player's, read per
+-- tick rather than captured, so a plaque already on screen when it changes
+-- honours the new number. The OTHER half -- the window a closed pull can still be
+-- carried on in, which is meant to be this same figure -- belongs to the
+-- composition root and is not wired yet (tasks.md group 4).
+plateStep("the plaque stays as long as the player asked, not as long as the file said", function()
+  local SettingKey, PullPhase = ns.core.SettingKey, ns.core.PullPhase
+  local plate, save = context.plate, context.saveSetting
+  local frame = plate.frame
+
+  save(SettingKey.PLATE_HOLD_SECONDS, 3)
+  openAFight()
+  context.bus:publish(ns.core.EventTopic.COMBAT_ENDED, {})
+  local closed = false
+  for _ = 1, 200 do
+    plateTick(0.1)
+    if context.pullTracker:currentPhase() == PullPhase.CLOSED then
+      closed = true
+      break
+    end
+  end
+  if not closed then
+    error("the pull never closed")
+  end
+
+  local heldFor
+  for _ = 1, 300 do
+    plateTick(0.1)
+    if not frame.shown then break end
+    if frame:GetAlpha() < 1 then
+      heldFor = plate.heldFor
+      break
+    end
+  end
+  if heldFor == nil then
+    error("the plaque never started fading")
+  end
+  -- Three seconds and change: the tick that notices is the first one past the
+  -- hold, not the instant of it. Six would be the file's old literal.
+  if heldFor < 3 or heldFor >= 4 then
+    error(("the plaque held for %s seconds where the player asked for 3"):format(tostring(heldFor)))
+  end
+
+  for _ = 1, 300 do
+    plateTick(0.1)
+    if not frame.shown then break end
+  end
+  if frame.shown then
+    error("the plaque never left")
+  end
+end)
+
+-- 3.4 and D87: the plate follows the bar's skin and may adjust a few axes over
+-- it. An axis it states wins, an axis it leaves out keeps following the bar, and
+-- neither reaches the bar itself.
+plateStep("the plate's own appearance sits on top of the bar's and stops there", function()
+  local SettingKey = ns.core.SettingKey
+  local plate, save = context.plate, context.saveSetting
+
+  openAFight()
+  local barAccent = context.bar.appearance.accent
+  local signature = plate.effectSignature
+  local glow = plate.glow
+
+  save(SettingKey.PLATE_APPEARANCE, { accent = { r = 1, g = 0, b = 0, a = 1 } })
+  openAFight()
+
+  if plate.appearance.accent.r ~= 1 or plate.appearance.accent.g ~= 0 then
+    error("the plate's own accent did not reach it")
+  end
+  -- Drawn with it, not merely resolved into a table nobody paints from.
+  local title = plate.title.textColor
+  if title == nil or title[1] ~= 1 or title[2] ~= 0 then
+    error("the plate's caption is still the bar's colour")
+  end
+  if context.bar.appearance.accent.r ~= barAccent.r or context.bar.appearance.accent.g ~= barAccent.g then
+    error("the plate's own accent reached the bar as well")
+  end
+  -- The axis it did NOT state still follows the bar, which is what makes one
+  -- tweak survive the bar changing skin underneath it.
+  if plate.appearance.background.r ~= context.bar.appearance.background.r then
+    error("an axis the plate never stated stopped following the bar")
+  end
+
+  -- A text size of its own moves the plate's own arithmetic -- and only that: the
+  -- plate has never read the skin's text size, so the bar's 11 does not reach it.
+  save(SettingKey.PLATE_APPEARANCE, { text = { size = 16 } })
+  openAFight()
+  local big = plateLayout(2, 2)
+  local titlePoint = plate.title.points[1]
+  if titlePoint == nil or titlePoint[5] ~= -big.header.title then
+    error("the plate's caption ignored the text size it was given")
+  end
+  if plate.xp.font.size ~= big.font.headline then
+    error("the headline was drawn at " .. tostring(plate.xp.font.size))
+  end
+  if plate.frame:GetHeight() ~= big.height then
+    error("a plate with bigger text did not grow to " .. tostring(big.height))
+  end
+
+  -- An axis of the map that reaches the EFFECTS has to reach the signature that
+  -- decides whether they are rebuilt. An animation group cannot be destroyed, so
+  -- a rebuild skipped in silence leaves the old one playing for good.
+  save(SettingKey.PLATE_APPEARANCE, { effects = { glow = { color = { r = 1, g = 0, b = 0, a = 0.25 } } } })
+  openAFight()
+  if plate.effectSignature == signature or plate.glow == glow then
+    error("an effect the plate's own map moved did not rebuild the effects")
+  end
+  local dimmed = plate.effectSignature
+  save(SettingKey.PLATE_APPEARANCE, { effects = { glow = { color = { r = 1, g = 0, b = 0, a = 1 } } } })
+  openAFight()
+  if plate.effectSignature == dimmed then
+    error("an effect colour that changed only in alpha left the signature alone")
+  end
+
+  save(SettingKey.PLATE_APPEARANCE, {})
+  openAFight()
+  if plate.appearance.accent.r ~= barAccent.r then
+    error("clearing the plate's own map left it wearing one")
+  end
+  context.plate:hide()
+end)
+
+-- ---------------------------------------------------------------------------
+-- The plate's page in the options panel (tasks.md group 4). ui/ has no unit
+-- test, so each of these drives the real handlers the panel registered -- a
+-- click, a drag, a release, an OnShow -- and asserts on what the stand-in client
+-- was actually told, never on the addon merely not raising.
+-- ---------------------------------------------------------------------------
+
+-- The client's own SetValue FIRES OnValueChanged; the stand-in's is auto-stubbed
+-- and records nothing. Both halves of that matter here: the guard against a page
+-- writing settings merely by opening only exists because of the first, and a
+-- control refreshed into the void cannot be read back because of the second. So
+-- the client's behaviour is put back for the length of a step, and taken off
+-- again afterwards -- including the auto-stub that was cached on the frame, or
+-- the next access would silently build another one.
+local function withLiveSliders(names, fn, dispatch)
+  local restore = {}
+  for _, name in ipairs(names) do
+    local widget = _G[name]
+    if widget == nil then
+      error(name .. " was never built")
+    end
+    restore[widget] = { set = rawget(widget, "SetValue"), get = rawget(widget, "GetValue") }
+    widget.SetValue = function(self, value)
+      self.value = value
+      local handler = self.scripts and self.scripts.OnValueChanged
+      if dispatch and handler ~= nil then
+        handler(self, value)
+      end
+    end
+  end
+  local ok, err = pcall(fn)
+  for widget, saved in pairs(restore) do
+    widget.SetValue, widget.GetValue = saved.set, saved.get
+  end
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- Dragging a slider to a value and letting go, the way the player does it. The
+-- release reads the slider's OWN value, which the stand-in answers 1 to whatever
+-- happened, so the value under the mouse is stated here and taken away after.
+local function dragSlider(name, value)
+  local slider = _G[name]
+  if slider == nil then
+    error(name .. " was never built")
+  end
+  local realGetValue = rawget(slider, "GetValue")
+  slider.GetValue = function() return value end
+  local handler = slider.scripts and slider.scripts.OnValueChanged
+  if handler ~= nil then
+    handler(slider, value)
+  end
+  local ok, err = pcall(slider.scripts.OnMouseUp, slider, "LeftButton")
+  slider.GetValue = realGetValue
+  if not ok then
+    error(err, 0)
+  end
+end
+
+local PLATE_FRAME_SLIDERS = {
+  "AscentOptionsPlateScaleSlider", "AscentOptionsPlateWidthSlider",
+  "AscentOptionsPlateOpacitySlider", "AscentOptionsPlateHoldSlider",
+}
+
+-- 4.3: the four sliders of the frame preview while they move and write when they
+-- are let go. The guard that makes the first half possible is the one worth the
+-- step: setting a slider's value fires its own handler, previewing resizes the
+-- real surface, and so merely OPENING the page would otherwise resize the
+-- player's plate to whatever the slider's bounds allowed.
+plateStep("opening the plate page changes nothing, and dragging a slider writes once", function()
+  local SettingKey = ns.core.SettingKey
+  local frame = context.plate.frame
+
+  context.saveSetting(SettingKey.PLATE_WIDTH, 260)
+
+  withLiveSliders(PLATE_FRAME_SLIDERS, function()
+    -- A width no slider on the page could produce, so a preview that ran shows
+    -- up as the frame no longer wearing it.
+    frame:SetWidth(999)
+    local onShow = context.optionsPanel:GetScript("OnShow")
+    onShow(context.optionsPanel)
+
+    if frame:GetWidth() ~= 999 then
+      error(("opening the page previewed and resized the plate to %s")
+        :format(tostring(frame:GetWidth())))
+    end
+    if context.settings()[SettingKey.PLATE_WIDTH] ~= 260 then
+      error("opening the page wrote a setting")
+    end
+
+    -- And a real drag: the preview lands on the frame, and nothing is persisted
+    -- until the mouse comes up.
+    local slider = _G.AscentOptionsPlateWidthSlider
+    slider.scripts.OnValueChanged(slider, 300)
+    if frame:GetWidth() ~= 300 then
+      error(("dragging the width previewed %s"):format(tostring(frame:GetWidth())))
+    end
+    if context.settings()[SettingKey.PLATE_WIDTH] ~= 260 then
+      error("dragging wrote the setting before the mouse came up")
+    end
+  end, true)
+
+  dragSlider("AscentOptionsPlateWidthSlider", 300)
+  if context.settings()[SettingKey.PLATE_WIDTH] ~= 300 then
+    error(("letting go of the width wrote %s")
+      :format(tostring(context.settings()[SettingKey.PLATE_WIDTH])))
+  end
+
+  -- The other three write their own setting and nobody else's: four sliders
+  -- wired to three settings would be a page where one control moves two things.
+  dragSlider("AscentOptionsPlateScaleSlider", 1.25)
+  dragSlider("AscentOptionsPlateOpacitySlider", 0.6)
+  dragSlider("AscentOptionsPlateHoldSlider", 9)
+  for key, want in pairs({ [SettingKey.PLATE_SCALE] = 1.25, [SettingKey.PLATE_OPACITY] = 0.6,
+                           [SettingKey.PLATE_HOLD_SECONDS] = 9, [SettingKey.PLATE_WIDTH] = 300 }) do
+    if context.settings()[key] ~= want then
+      error(("%s reads %s after its slider was dragged to %s")
+        :format(key, tostring(context.settings()[key]), tostring(want)))
+    end
+  end
+
+  -- D89's other half, which is the whole reason this slider is not cosmetic: how
+  -- long the plaque stays IS how long a closed pull can be carried on, read live
+  -- rather than captured at construction.
+  if context.pullTracker:resumeWindow() ~= 9 + ns.ui.PullPlateView.FADE_SECONDS then
+    error(("the resume window stayed at %s with the plaque held for 9")
+      :format(tostring(context.pullTracker:resumeWindow())))
+  end
+end)
+
+-- 4.4: the content block. What is stored is a SET of choices, so the list comes
+-- back in the order the plate draws them and never in the order the boxes were
+-- ticked (D90) -- and every box off is an answer, not a corrupt file.
+plateStep("ticking a zone writes the list in the plate's order, and none is a choice", function()
+  local SettingKey, PlateZone, TextKey = ns.core.SettingKey, ns.core.PlateZone, ns.core.TextKey
+  local content = _G.AscentOptionsPlateScroll.scrollChild
+  local wanted = context.locale:get(TextKey.OPT_PLATE_ZONES_NONE)
+
+  -- The note that says an empty selection is a choice. It has no name of its
+  -- own, like the bar's, so it is found by the words the player reads -- and
+  -- found ONCE, while it is showing: refresh empties it as well as hiding it,
+  -- because the section below is anchored to it and a hidden font string keeps
+  -- the height of the text it last held.
+  local note
+
+  local function tick(name, checked)
+    local check = _G[name]
+    if check == nil then error(name .. " was never built") end
+    -- The client's checkbox template flips itself and THEN runs OnClick, so the
+    -- handler reads the state the player just chose.
+    check:SetChecked(checked)
+    check.scripts.OnClick(check, "LeftButton")
+  end
+
+  context.saveSetting(SettingKey.PLATE_ZONES, {})
+  for _, child in ipairs(content.children) do
+    if child.text == wanted then
+      note = child
+    end
+  end
+  if note == nil or not note.shown then
+    error("every zone off and the page says nothing about it")
+  end
+
+  -- Ticked in the wrong order on purpose: the footer is the LAST zone the plate
+  -- draws and the clock the first, so a list stored in the order they were
+  -- clicked would come back with the footer at the front.
+  tick("AscentOptionsPlateZone7CheckButton", true)
+  tick("AscentOptionsPlateZone1CheckButton", true)
+
+  local stored = context.settings()[SettingKey.PLATE_ZONES]
+  if #stored ~= 2 or stored[1] ~= PlateZone.CLOCK or stored[2] ~= PlateZone.FOOTER then
+    error(("the boxes stored %s, not the clock then the footer")
+      :format(table.concat(stored, ", ")))
+  end
+  if note.shown or (note.text or "") ~= "" then
+    error("two zones on and the page still says there are none")
+  end
+
+  -- Unticking the last of them is a choice the page states rather than argues
+  -- with -- the same note, for the same reason, as a bar with no text.
+  tick("AscentOptionsPlateZone1CheckButton", false)
+  tick("AscentOptionsPlateZone7CheckButton", false)
+  if #context.settings()[SettingKey.PLATE_ZONES] ~= 0 then
+    error("unticking the last zone left something in the list")
+  end
+  if not note.shown or note.text ~= wanted then
+    error("every zone off again and the note never came back")
+  end
+
+  -- There is a box for every zone the vocabulary names, counted against the
+  -- vocabulary and not against seven: a zone added there and forgotten on this
+  -- page is a zone nobody can turn off, and nothing else would say so.
+  for _, name in ipairs(ns.core.Frozen.keys(PlateZone)) do
+    local zone, found = PlateZone[name], false
+    for index = 1, #ns.core.Frozen.keys(PlateZone) do
+      local check = _G["AscentOptionsPlateZone" .. index .. "CheckButton"]
+      if check ~= nil then
+        context.saveSetting(SettingKey.PLATE_ZONES, { zone })
+        if check:GetChecked() then
+          found = true
+        end
+      end
+    end
+    if not found then
+      error("no box on the page turns " .. tostring(zone) .. " off")
+    end
+  end
+
+  dragSlider("AscentOptionsPlateRowsSlider", 3)
+  if context.settings()[SettingKey.PLATE_ROWS] ~= 3 then
+    error(("asking for three rows stored %s")
+      :format(tostring(context.settings()[SettingKey.PLATE_ROWS])))
+  end
+end)
+
+-- 4.5: the three axes of the plate's own map, each with a reset that is on screen
+-- only while that axis really is the player's. What is left showing after a skin
+-- change is therefore exactly the list of their own tweaks still being applied
+-- over the new one -- the other thing this surface has to say.
+plateStep("each axis of the plate's own look resets on its own, and says when it can", function()
+  local SettingKey = ns.core.SettingKey
+
+  -- Reading an axis off a map that may be frozen and may not hold it at all.
+  local function at(node, key)
+    if node == nil then return nil end
+    if ns.core.Frozen.isFrozen(node) then
+      return ns.core.Frozen.has(node, key) and node[key] or nil
+    end
+    return node[key]
+  end
+
+  context.saveSetting(SettingKey.PLATE_APPEARANCE, {})
+  local backgroundReset = _G.AscentOptionsPlateLook1Reset
+  local textReset = _G.AscentOptionsPlateLook3Reset
+  if backgroundReset == nil or textReset == nil then
+    error("the plate page built no per-axis reset")
+  end
+  if backgroundReset:IsShown() or textReset:IsShown() then
+    error("a plate axis nobody has touched is offering to reset itself")
+  end
+
+  dragSlider("AscentOptionsPlateLook1Slider", 0.4)
+  dragSlider("AscentOptionsPlateLook3Slider", 16)
+
+  local own = context.settings()[SettingKey.PLATE_APPEARANCE]
+  if at(at(own, "background"), "a") ~= 0.4 then
+    error("the plate's own background opacity did not reach its map")
+  end
+  -- The text size is the axis the plate reads off its OWN map and nowhere else,
+  -- which is what PullPlateView:ownTextSize asks for: a key of its own would be
+  -- a second place to look and a third thing to keep in step.
+  if at(at(own, "text"), "size") ~= 16 then
+    error("the text size went somewhere other than the plate's own map")
+  end
+  if not backgroundReset:IsShown() or not textReset:IsShown() then
+    error("an axis the player just set is not offering to reset itself")
+  end
+
+  textReset.scripts.OnClick(textReset, "LeftButton")
+  own = context.settings()[SettingKey.PLATE_APPEARANCE]
+  if at(at(own, "text"), "size") ~= nil then
+    error("resetting the text size left it behind")
+  end
+  if at(at(own, "background"), "a") ~= 0.4 then
+    error("resetting the text size took the background opacity with it")
+  end
+  -- The empty branch is pruned on the way back up. An override map still
+  -- carrying `text = {}` reads as "the player touched the text", which would
+  -- leave this button on screen for a setting nobody holds any more.
+  if at(own, "text") ~= nil then
+    error("resetting the last axis of a branch left the empty branch behind")
+  end
+  if textReset:IsShown() then
+    error("the reset stayed on screen after the axis went back to the skin")
+  end
+  if not backgroundReset:IsShown() then
+    error("resetting one axis took the other's reset off screen")
+  end
+end)
+
+-- 4.7: every new control is written in the refresh, which is shared by all seven
+-- pages. A control left out of it shows stale state with no error at all -- and
+-- these settings are the ones a chat command is likeliest to have moved while the
+-- panel was open.
+plateStep("a plate setting changed from outside the panel shows on its page", function()
+  local SettingKey, PlateZone = ns.core.SettingKey, ns.core.PlateZone
+  local wasEnabled = context.settings()[SettingKey.PLATE_ENABLED]
+
+  -- From outside the panel, the way the spec means it: a chat command for the
+  -- one setting that has one, and saveSetting -- which is what every command
+  -- goes through -- for the rest.
+  SlashCmdList["ASCENT"]("options plate off")
+  context.saveSetting(SettingKey.PLATE_WIDTH, 420)
+  context.saveSetting(SettingKey.PLATE_ROWS, 5)
+  context.saveSetting(SettingKey.PLATE_ZONES, { PlateZone.CLOCK })
+  context.saveSetting(SettingKey.PLATE_APPEARANCE, { text = { size = 14 } })
+
+  withLiveSliders({ "AscentOptionsPlateWidthSlider", "AscentOptionsPlateRowsSlider",
+                    "AscentOptionsPlateLook3Slider" }, function()
+    -- Scrambled first, and that is what makes this a test of the REFRESH rather
+    -- than of saveSetting: every write above already refreshed the panel, so a
+    -- control that is right because nothing touched it proves nothing.
+    _G.AscentOptionsPlateWidthSlider.value = -1
+    _G.AscentOptionsPlateRowsSlider.value = -1
+    _G.AscentOptionsPlateLook3Slider.value = -1
+    _G.AscentOptionsPlateEnabledCheckButton:SetChecked(true)
+    _G.AscentOptionsPlateZone1CheckButton:SetChecked(false)
+    _G.AscentOptionsPlateZone7CheckButton:SetChecked(true)
+
+    local onShow = context.optionsPanel:GetScript("OnShow")
+    onShow(context.optionsPanel)
+
+    if _G.AscentOptionsPlateEnabledCheckButton:GetChecked() then
+      error("the page still shows the plate as on after it was switched off")
+    end
+    for name, want in pairs({ AscentOptionsPlateWidthSlider = 420,
+                              AscentOptionsPlateRowsSlider = 5,
+                              AscentOptionsPlateLook3Slider = 14 }) do
+      if _G[name].value ~= want then
+        error(("%s shows %s where the setting reads %s")
+          :format(name, tostring(_G[name].value), tostring(want)))
+      end
+    end
+    if not _G.AscentOptionsPlateZone1CheckButton:GetChecked() then
+      error("the only zone left on does not read as on")
+    end
+    if _G.AscentOptionsPlateZone7CheckButton:GetChecked() then
+      error("a zone that was turned off still reads as on")
+    end
+    if not _G.AscentOptionsPlateLook3Reset:IsShown() then
+      error("an axis set from outside the panel offers no way back")
+    end
+  end, false)
+
+  context.saveSetting(SettingKey.PLATE_ENABLED, wasEnabled)
 end)
 
 -- THE ONE CHANNEL BACK, driven the way a player reporting a bug drives it.
@@ -2930,6 +4285,198 @@ step("the help names the changelog, because a command not in it does not exist",
   if chatSince(mark, "changelog") == nil then
     error("the help does not offer the changelog")
   end
+end)
+
+-- 5.1, the half that answers. `skin` and `slot` already print what they are set
+-- to when asked with no argument, and the plate is the surface that needs it
+-- most: it is the one a player can lose. Off, transparent, or dropped past the
+-- edge of the screen all look identical from the chair -- nothing appears when a
+-- fight starts -- and these four lines are what tell them apart.
+--
+-- Every value it is asked about is moved off its default first, deliberately. A
+-- status print wired to the constants instead of to the settings would answer
+-- correctly for a plate nobody had touched, which is the one plate nobody asks
+-- about.
+step("the plate says what state it is in, which is how a lost one is found", function()
+  local SettingKey, PlateZone = ns.core.SettingKey, ns.core.PlateZone
+
+  context.saveSetting(SettingKey.PLATE_LOCKED, true)
+  context.saveSetting(SettingKey.PLATE_WIDTH, 317)
+  context.saveSetting(SettingKey.PLATE_OPACITY, 0.35)
+  context.saveSetting(SettingKey.PLATE_HOLD_SECONDS, 11)
+  context.saveSetting(SettingKey.PLATE_ROWS, 2)
+  context.saveSetting(SettingKey.PLATE_POSITION,
+    { point = "TOPLEFT", relativePoint = "TOPLEFT", x = -940, y = 77 })
+  -- Stored footer-first, which is NOT the order the plate draws them in.
+  context.saveSetting(SettingKey.PLATE_ZONES, { PlateZone.FOOTER, PlateZone.CLOCK })
+
+  local mark = #chatLines + 1
+  slash("options plate")
+
+  for _, needle in ipairs({ "locked: true", "317", "0.35", "11", "TOPLEFT", "-940", "77" }) do
+    if chatSince(mark, needle) == nil then
+      error("the plate's state never mentioned " .. needle)
+    end
+  end
+
+  -- The order drawn, not the order stored (D90): the clock is above the footer,
+  -- and what is printed has to be what the player will see.
+  local zones = chatSince(mark, "zones:")
+  if zones == nil or not zones:find("clock, footer", 1, true) then
+    error("the zones were not printed in the order the plate draws them: " .. tostring(zones))
+  end
+end)
+
+-- 5.1, the half that undoes. This is the ONLY way back for the plate: its page
+-- is reached by clicking, and the plate the step above just left at 35% opacity
+-- in the top-left corner is exactly the plate that cannot be clicked.
+--
+-- Two claims, and the second is the one with teeth: every key the plate owns
+-- comes back, and not one of the bar's goes with it. The plate follows the bar's
+-- skin, palette and contrast (D87), so a reset that reasoned about "appearance"
+-- rather than about ownership would take the other surface's choices with it.
+step("resetting the plate returns every key it owns and leaves the bar's alone", function()
+  local SettingKey, Frozen = ns.core.SettingKey, ns.core.Frozen
+
+  -- Borrowed, and given back at the bottom: the rest of the harness runs against
+  -- whatever the bar was left at, so this step must not decide that for it.
+  local borrowed = context.settings()
+  local skin = borrowed[SettingKey.BAR_SKIN]
+  local contrast = borrowed[SettingKey.HIGH_CONTRAST]
+  local barWidth = borrowed[SettingKey.BAR_WIDTH]
+
+  context.saveSetting(SettingKey.BAR_SKIN, "phantom")
+  context.saveSetting(SettingKey.HIGH_CONTRAST, true)
+  context.saveSetting(SettingKey.BAR_WIDTH, 512)
+
+  slash("options plate reset")
+
+  -- Compared key by key against the defaults, through the very list the command
+  -- resets by: a plate key added to that list and skipped by the command would
+  -- otherwise pass here by never being looked at.
+  local function matchesDefault(value, default)
+    if Frozen.isFrozen(default) then
+      for key, inner in Frozen.each(default) do
+        if not matchesDefault(value[key], inner) then return false end
+      end
+      return true
+    end
+    if type(default) == "table" then
+      if type(value) ~= "table" then return false end
+      -- An empty default is EMPTY, not merely short. The plate's own appearance
+      -- map is one (D87), and a leftover axis in it has no index for `#` to
+      -- count -- nor does a frozen proxy, which reads as empty from outside.
+      if next(default) == nil then
+        return not Frozen.isFrozen(value) and next(value) == nil
+      end
+      if #value ~= #default then return false end
+      for index = 1, #default do
+        if not matchesDefault(value[index], default[index]) then return false end
+      end
+      return true
+    end
+    return value == default
+  end
+
+  local settings = context.settings()
+  for _, key in ipairs(ns.core.PlateSettingKeys) do
+    if not matchesDefault(settings[key], ns.core.Defaults[key]) then
+      error(key .. " did not come back to its default")
+    end
+  end
+
+  -- What reached the repository, not what `resolve` handed back. Storing the
+  -- default itself would put the addon's own constants one write away from the
+  -- player's saved variables, and a frozen map stored that way reaches disk as
+  -- the empty carrier it is -- a reset that loses itself by the next session.
+  local stored = context.repository:settings()
+  for _, key in ipairs(ns.core.PlateSettingKeys) do
+    if Frozen.isFrozen(stored[key]) then
+      error(key .. " was stored as a frozen proxy, which reaches disk empty")
+    end
+    if type(ns.core.Defaults[key]) == "table" and stored[key] == ns.core.Defaults[key] then
+      error(key .. " was stored as the default table itself rather than as a copy")
+    end
+  end
+
+  if settings[SettingKey.BAR_SKIN] ~= "phantom" or settings[SettingKey.HIGH_CONTRAST] ~= true
+    or settings[SettingKey.BAR_WIDTH] ~= 512 then
+    error("resetting the plate reached the bar's own choices")
+  end
+
+  context.saveSetting(SettingKey.BAR_SKIN, skin)
+  context.saveSetting(SettingKey.HIGH_CONTRAST, contrast)
+  context.saveSetting(SettingKey.BAR_WIDTH, barWidth)
+end)
+
+-- 5.2. The line had shipped three subcommands short -- `plate`, `slot` and
+-- `panel` -- which is the same defect as advertising one that was folded away,
+-- read from the other side: a player who never learns `plate reset` has no way
+-- back to a plate they dragged off the screen.
+--
+-- Checked by RUNNING what the line announces rather than by matching it against a
+-- list written here, which would be a second copy of the vocabulary to keep.
+step("every option the help announces is one the addon answers", function()
+  local mark = #chatLines + 1
+  slash("help")
+
+  local row
+  for index = mark, #chatLines do
+    if chatLines[index]:find("/ascent options ", 1, true) then
+      row = chatLines[index]
+    end
+  end
+  if row == nil then
+    error("the help does not mention the options command at all")
+  end
+
+  local inside = row:match("%[(.+)%]")
+  if inside == nil then
+    error("the options line announces no subcommands: " .. row)
+  end
+
+  -- The alternatives at the top level of the bracket. Depth-aware because the
+  -- ones that take an argument spell it inline -- `plate [on|off|demo|reset]` --
+  -- and a plain split on "|" would offer "off" as a subcommand in its own right.
+  local alternatives, depth, piece = {}, 0, ""
+  for index = 1, #inside do
+    local char = inside:sub(index, index)
+    if char == "[" or char == "<" then depth = depth + 1 end
+    if char == "]" or char == ">" then depth = depth - 1 end
+    if char == "|" and depth == 0 then
+      alternatives[#alternatives + 1] = piece
+      piece = ""
+    else
+      piece = piece .. char
+    end
+  end
+  alternatives[#alternatives + 1] = piece
+
+  local announced = {}
+  for _, alternative in ipairs(alternatives) do
+    local keyword = alternative:match("^%s*(%a+)")
+    if keyword == nil then
+      error("the options line offers an alternative with no keyword: " .. alternative)
+    end
+    local before = #chatLines + 1
+    slash("options " .. keyword)
+    if chatSince(before, "is not an Ascent option") ~= nil then
+      error("the help offers `options " .. keyword .. "`, which the addon does not answer")
+    end
+    announced[keyword] = true
+  end
+
+  -- Named explicitly because the loop above only proves that what IS announced
+  -- answers; nothing in it would notice the line going short again.
+  for _, keyword in ipairs({ "plate", "slot", "panel" }) do
+    if not announced[keyword] then
+      error("the options help still does not announce `" .. keyword .. "`")
+    end
+  end
+
+  -- `lock` was one of the alternatives just run, and a locked bar is not the
+  -- state this step found.
+  slash("options unlock")
 end)
 
 step("the changelog opens as text, headed by the version being played", function()

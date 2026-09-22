@@ -31,7 +31,11 @@ function ReportPanelViewModel.build(record, params)
 
   return {
     active = true,
-    breakdown = LevelBreakdownViewModel.build(record),
+    -- `params.sharedBy` is the group of NOW here too, even when `record` is a
+    -- level finished months ago: the per-creature rows carry the group each was
+    -- measured in, and this is what says which of them describes the character's
+    -- current situation (D81).
+    breakdown = LevelBreakdownViewModel.build(record, params.sharedBy),
     combat = CombatBreakdownViewModel.build(record),
     abilities = AbilityRankingViewModel.build(record),
     -- `params.currentRecord`, not `record`: the pending tab describes the quest
@@ -39,7 +43,8 @@ function ReportPanelViewModel.build(record, params)
     -- what a creature pays is a fact about the character's current level. Pricing
     -- today's objectives with a finished level's averages would be quoting a
     -- character who no longer exists.
-    pending = QuestPendingViewModel.build(params.questReport, params.questEntries, params.currentRecord),
+    pending = QuestPendingViewModel.build(params.questReport, params.questEntries,
+      params.currentRecord, params.sharedBy),
   }
 end
 

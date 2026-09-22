@@ -151,19 +151,25 @@ end
 -- eight times. With no guid -- a client that gave none, a source this router
 -- could not name -- the creature is counted once by name and never again, which
 -- undercounts a pack of identical adds rather than inventing one per hit.
+-- Answers whether this changed anything, because the callers need to know and
+-- were all guessing. Both ways of learning that a creature is in the fight are
+-- repetitive by nature -- the combat log writes thirty lines about one creature
+-- and a sweep sees the same nameplate four times a second -- and the pull is the
+-- one place that can say which of them was news.
 function PullRecord:recordEngagement(name, guid)
   if name == nil then
-    return
+    return false
   end
 
   local key = guid or name
   if self.engagedGuids[key] then
-    return
+    return false
   end
   self.engagedGuids[key] = true
 
   local entry = self:creatureEntry(name)
   entry.engaged = entry.engaged + 1
+  return true
 end
 
 function PullRecord:recordAbility(key, name)
@@ -254,8 +260,21 @@ end
 -- nothing in it is a real thing -- combat entered by a passing proximity aggro
 -- and left again -- and the plate needs to be able to say so rather than draw a
 -- plaque full of zeros.
+-- Nothing to say yet, which the plate reads as "stay hidden".
+--
+-- Being fought counts, and it did not: the four figures below are all about
+-- damage, so a creature beating on an absorb shield left every one of them at
+-- zero and the plate stayed down for the whole fight -- reported from a real one
+-- on 2026-09-22, with the creature enrolled, the pull open and the plate hidden.
+-- The same held for a creature charging across the ground, which is the case the
+-- nameplate watch exists for: it would enrol, and nobody would see it.
+--
+-- A pull with a creature in it HAS something to show -- that row is the thing the
+-- plate is for. What this still keeps out is a pull with nothing in it at all,
+-- which is the header of zeroes the guard was written for.
 function PullRecord:isEmpty()
-  return self.kills == 0 and self.xpTotal == 0 and self.damageDealt == 0 and self.damageTaken == 0
+  return self.kills == 0 and self.xpTotal == 0 and self.damageDealt == 0
+    and self.damageTaken == 0 and self:engagedCount() == 0
 end
 
 -- How many distinct creatures this pull has traded blows with, dead or not. The

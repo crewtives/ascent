@@ -55,7 +55,7 @@ function Packed.unescape(text)
 end
 
 -- Join a record's fields. `nil` and `false` become empty; trailing empties are
--- dropped, which is where most of the saving is -- a gain carries nine fields and
+-- dropped, which is where most of the saving is -- a gain carries ten fields and
 -- usually fills three.
 function Packed.join(fields)
   local last = 0

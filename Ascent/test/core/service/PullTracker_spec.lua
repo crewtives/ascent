@@ -89,6 +89,47 @@ describe("PullTracker", function()
     assert.equal(0, pull.damageTaken, "and nothing has hurt anyone yet")
   end)
 
+  -- The defect the whole nameplate path existed to answer, and could not: a
+  -- creature fighting this character before the client says PLAYER_REGEN_DISABLED
+  -- left the plate empty, because only that event opened a pull. Eight of the
+  -- nine fights recorded on 2026-09-22 were opened by a combat log line.
+  it("opens a pull for a creature fighting the player before the client agrees", function()
+    clock:advance(10)
+
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
+
+    local pull = tracker:current()
+    assert.is_not_nil(pull)
+    assert.equal(1, pull:engagedCount())
+    assert.equal(10, pull.startedAt)
+  end)
+
+  -- The event that used to be the only opener arrives a moment later, and must
+  -- not throw away the pull that is already running. It could not happen before:
+  -- while a pull was ACTIVE the player was in combat by definition.
+  it("does not restart the pull when combat is declared just after", function()
+    clock:advance(10)
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
+    clock:advance(2)
+    bus:publish(EventTopic.COMBAT_STARTED, {})
+
+    local pull = tracker:current()
+    assert.equal(10, pull.startedAt)
+    assert.equal(1, pull:engagedCount())
+  end)
+
+  it("counts the creature once, not once for opening and once for the replay", function()
+    clock:advance(10)
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
+
+    assert.equal(1, tracker:current():engagedCount())
+  end)
+
   it("keeps an engagement that precedes combat, and backdates the pull to it", function()
     clock:advance(10)
     bus:publish(EventTopic.ENEMY_ENGAGED,
@@ -354,6 +395,63 @@ describe("PullTracker", function()
       assert.equal(2, tracker:currentGeneration())
       assert.equal(0, tracker:current().xpTotal)
     end)
+
+    -- How long the plate stays is the player's (D89) and this window is the same
+    -- number, so it arrives as a function and is asked for at the moment the
+    -- question comes up. A tracker built with the old value would go on offering
+    -- the old window until the interface was reloaded -- and this is the tracker
+    -- that decides what counts as the same fight, so that would be a reload
+    -- between changing a slider and the records agreeing with what is on screen.
+    it("asks for the window every time rather than keeping the one it was built with", function()
+      local window = 7
+      tracker = build({ settleSeconds = 1, resumeSeconds = function() return window end })
+      bus:publish(EventTopic.COMBAT_STARTED, {})
+      bus:publish(EventTopic.CREATURE_DIED, { name = "Kobold Miner", at = clock:now() })
+      bus:publish(EventTopic.XP_ATTRIBUTED, gain(44))
+      clock:advance(5)
+      bus:publish(EventTopic.COMBAT_ENDED, {})
+      clock:advance(2)
+      tracker:tick(clock:now())
+      assert.equal(PullPhase.CLOSED, tracker:currentPhase())
+
+      window = 1
+      clock:advance(3)
+      bus:publish(EventTopic.COMBAT_STARTED, {})
+
+      assert.equal(2, tracker:currentGeneration(),
+        "the tracker resumed on a window the player had already shortened")
+      assert.equal(0, tracker:current().xpTotal)
+    end)
+
+    -- The other direction, and the one that says WHEN it is read: the pull was
+    -- closed while the window was short, and what decides whether it can carry on
+    -- is the window in force at the moment somebody pulls again.
+    it("measures a pull that closed earlier against the window in force now", function()
+      local window = 3
+      tracker = build({ settleSeconds = 1, resumeSeconds = function() return window end })
+      bus:publish(EventTopic.COMBAT_STARTED, {})
+      bus:publish(EventTopic.XP_ATTRIBUTED, gain(44))
+      clock:advance(5)
+      bus:publish(EventTopic.COMBAT_ENDED, {})
+      clock:advance(2)
+      tracker:tick(clock:now())
+      assert.equal(PullPhase.CLOSED, tracker:currentPhase())
+
+      window = 20
+      clock:advance(9)
+      bus:publish(EventTopic.COMBAT_STARTED, {})
+
+      assert.equal(1, tracker:currentGeneration(), "nine seconds is inside the window now")
+      assert.equal(44, tracker:current().xpTotal, "the counter kept what it had")
+    end)
+
+    -- A session with no views at all still has to answer the question, and the
+    -- fallback is the value this file has always carried.
+    it("falls back to its own window when the seam answers with nothing", function()
+      tracker = build({ settleSeconds = 1, resumeSeconds = function() return nil end })
+
+      assert.equal(7.2, tracker:resumeWindow())
+    end)
   end)
 
   describe("the change flag", function()
@@ -421,4 +519,40 @@ describe("PullTracker", function()
     end)
     assert.equal(1, tracker:current().kills)
   end)
+  -- The plate rebuilds when the tracker says something changed, and every one of
+  -- the ~30 lines the combat log writes about one creature used to say so. The
+  -- pull is the one place that knows which of them was news; both ways of
+  -- learning a creature is in the fight are repetitive by nature.
+  it("asks for a redraw once per creature, not once per line about it", function()
+    bus:publish(EventTopic.COMBAT_STARTED, {})
+    assert.is_true(tracker:consumeChange())
+
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
+    assert.is_true(tracker:consumeChange(), "the first one is news")
+
+    -- Consumed between each, or the flag being reset would hide the difference
+    -- and this would pass with or without the gate -- which it did, first try.
+    for line = 2, 10 do
+      bus:publish(EventTopic.ENEMY_ENGAGED,
+        { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
+      assert.is_false(tracker:consumeChange(), "line " .. line .. " changed nothing")
+    end
+
+    assert.equal(1, tracker:current():engagedCount())
+  end)
+
+  it("still asks for one when a different creature joins", function()
+    bus:publish(EventTopic.COMBAT_STARTED, {})
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-A" })
+    tracker:consumeChange()
+
+    bus:publish(EventTopic.ENEMY_ENGAGED,
+      { name = "Starving Ghostclaw", guid = "Creature-0-1-1-1-16347-B" })
+
+    assert.is_true(tracker:consumeChange())
+    assert.equal(2, tracker:current():engagedCount())
+  end)
+
 end)

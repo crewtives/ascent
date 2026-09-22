@@ -17,12 +17,15 @@ describe("PullViewModel", function()
   local function levelWith(entries)
     local record = ns.core.LevelRecord.new(11, 0)
     for index, entry in ipairs(entries) do
-      -- The bucket shape XpLedger writes: { key, kills, xpTotal }, filed under
-      -- the key's own id. Built by hand rather than by driving the ledger, so a
-      -- change in how experience is POSTED cannot quietly rewrite what this test
-      -- is asserting about how it is READ.
+      -- The bucket shape XpLedger writes: { key, sharedBy, kills, xpTotal },
+      -- filed under the creature and the group it was killed in. Built by hand
+      -- rather than by driving the ledger, so a change in how experience is
+      -- POSTED cannot quietly rewrite what this test is asserting about how it is
+      -- READ. An entry with no group size is one nobody counted, which is a
+      -- population of its own and not a record of playing alone.
       local key = ns.core.CreatureKey.new(entry.npcId or index, entry.level or 10, entry.name)
-      record.creatures[key:id()] = { key = key, kills = entry.kills, xpTotal = entry.xpTotal }
+      record.creatures[ns.core.LevelRecord.creatureId(key, entry.sharedBy)] =
+        { key = key, sharedBy = entry.sharedBy, kills = entry.kills, xpTotal = entry.xpTotal }
       record.killsWithXp = record.killsWithXp + entry.kills
       record.xpBySource[XpSource.MOB_KILL] = (record.xpBySource[XpSource.MOB_KILL] or 0) + entry.xpTotal
       record.xpTotal = record.xpTotal + entry.xpTotal
@@ -38,12 +41,12 @@ describe("PullViewModel", function()
     end)
 
     it("prices what was pulled from what that creature has paid", function()
-      local level = levelWith({ { name = "Mana Serpent", kills = 2, xpTotal = 172 } })
+      local level = levelWith({ { name = "Mana Serpent", kills = 2, xpTotal = 172, sharedBy = 1 } })
       local pull = PullRecord.new(0)
       pull:recordDamageDealt(10, "Mana Serpent", "guid-a")
       pull:recordDamageDealt(10, "Mana Serpent", "guid-b")
 
-      local view = PullViewModel.build(pull, PullPhase.ACTIVE, 3, level)
+      local view = PullViewModel.build(pull, PullPhase.ACTIVE, 3, level, 1)
 
       assert.equal(172, view.projection.total, "two serpents at 86 each")
       assert.equal(172, view.projection.expected)
@@ -121,6 +124,73 @@ describe("PullViewModel", function()
 
       assert.equal(Basis.LEVEL, view.projection.basis,
         "a sum is only as sure as its least sure term")
+    end)
+
+    -- 2.4: the plate asks for the group standing in the pull, and that is the
+    -- whole reason the size is carried at all. The same creature pays a fraction
+    -- of its solo rate once four other people are splitting it, so a plate that
+    -- kept quoting the solo figure inside a dungeon would be wrong by roughly the
+    -- size of the group -- with confidence, which is the worst way to be wrong.
+    it("prices the pull for the group of now, not for the one that did the killing", function()
+      local level = levelWith({
+        { npcId = 17204, name = "Mana Serpent", kills = 2, xpTotal = 172, sharedBy = 1 },
+        { npcId = 17204, name = "Mana Serpent", kills = 4, xpTotal = 80, sharedBy = 5 },
+      })
+      local pull = PullRecord.new(0)
+      pull:recordDamageDealt(10, "Mana Serpent", "guid-a")
+
+      local inFive = PullViewModel.build(pull, PullPhase.ACTIVE, 3, level, 5)
+      assert.equal(20, inFive.projection.total, "what one of them paid in a group of five")
+      assert.equal(Basis.CREATURE, inFive.projection.basis)
+
+      local alone = PullViewModel.build(pull, PullPhase.ACTIVE, 3, level, 1)
+      assert.equal(86, alone.projection.total, "and the solo average is untouched by it")
+      assert.equal(Basis.CREATURE, alone.projection.basis)
+    end)
+
+    -- D83/D84: a level recorded before any of this still prices the pull, because
+    -- discarding it would leave the plate blank over a distinction the character
+    -- never had the chance to record -- but it is marked, never passed off as a
+    -- measurement of the group fighting now.
+    it("serves an average from before the distinction existed, marked as mixed", function()
+      local level = levelWith({ { name = "Mana Serpent", kills = 2, xpTotal = 172 } })
+      local pull = PullRecord.new(0)
+      pull:recordDamageDealt(10, "Mana Serpent", "guid-a")
+
+      local view = PullViewModel.build(pull, PullPhase.ACTIVE, 3, level, 5)
+
+      assert.equal(86, view.projection.total)
+      assert.equal(Basis.MIXED, view.projection.basis)
+    end)
+
+    -- Both halves of the same pull, with the roles swapped: the creature measured
+    -- in this group is the first one read in one of the two and the last in the
+    -- other, whatever order `pairs` happens to use. A plate that simply kept the
+    -- last term it read would therefore claim a measurement on one of them --
+    -- which is what "least sure" has to mean now that there are three values and
+    -- not two.
+    it("keeps the least sure of its terms, whichever one it reads last", function()
+      local serpent = { npcId = 1, name = "Mana Serpent", kills = 2, xpTotal = 172 }
+      local lynx = { npcId = 2, name = "Springpaw Lynx", kills = 2, xpTotal = 40 }
+      local pull = PullRecord.new(0)
+      pull:recordDamageDealt(10, "Mana Serpent", "guid-a")
+      pull:recordDamageDealt(10, "Springpaw Lynx", "guid-b")
+
+      local function projectionWith(measured, uncounted)
+        measured.sharedBy = 5
+        uncounted.sharedBy = nil
+        return PullViewModel.build(pull, PullPhase.ACTIVE, 3,
+          levelWith({ measured, uncounted }), 5).projection
+      end
+
+      local serpentMeasured = projectionWith(serpent, lynx)
+      assert.equal(106, serpentMeasured.total, "one measured in this group, one from before")
+      assert.equal(Basis.MIXED, serpentMeasured.basis,
+        "a sum is only as sure as its least sure term, and this one is not the level's mean")
+
+      local lynxMeasured = projectionWith(lynx, serpent)
+      assert.equal(106, lynxMeasured.total)
+      assert.equal(Basis.MIXED, lynxMeasured.basis)
     end)
 
     it("says nothing at all when the level has nothing to estimate from", function()
@@ -266,10 +336,53 @@ describe("PullViewModel", function()
 
       local view = PullViewModel.build(pull, PullPhase.CLOSED, 10)
 
-      assert.equal(PullViewModel.TOP_CREATURES, #view.creatures)
+      assert.equal(ns.core.Defaults[ns.core.SettingKey.PLATE_ROWS], #view.creatures)
       assert.equal("Creature 6", view.creatures[1].name)
       assert.equal(6, view.creatures[1].killed)
       assert.equal("Creature 3", view.creatures[4].name)
+    end)
+
+    -- How many rows there are is the player's now, and it is asked for on every
+    -- build rather than captured: the plate is redrawn many times inside one
+    -- fight, so a number read at construction would only take effect on the next
+    -- one. The rows themselves already exist up to the ceiling (see ROW_CEILING);
+    -- this decides how many of them have anything in them.
+    it("cuts the list to the number of rows asked for", function()
+      local pull = PullRecord.new(0)
+      for index = 1, 6 do
+        for _ = 1, index do
+          pull:recordKill("Creature " .. index, 0)
+        end
+      end
+
+      assert.equal(2, #PullViewModel.build(pull, PullPhase.CLOSED, 10, nil, nil, 2).creatures)
+      assert.equal(6, #PullViewModel.build(pull, PullPhase.CLOSED, 10, nil, nil, 6).creatures)
+    end)
+
+    it("does not invent rows when more are asked for than were fought", function()
+      local pull = PullRecord.new(0)
+      pull:recordKill("Mana Serpent", 0)
+      pull:recordKill("Arcane Wraith", 0)
+
+      local view = PullViewModel.build(pull, PullPhase.CLOSED, 10, nil, nil, 6)
+
+      assert.equal(2, #view.creatures)
+    end)
+
+    -- A file edited by hand can carry any number at all, and the plate has built
+    -- exactly ROW_CEILING rows to put entries in: an eleventh entry would be a row
+    -- the view-model promised and the frame has nowhere to draw.
+    it("never returns more rows than the plate built", function()
+      local pull = PullRecord.new(0)
+      for index = 1, 12 do
+        pull:recordKill("Creature " .. index, 0)
+      end
+
+      local view = PullViewModel.build(pull, PullPhase.CLOSED, 10, nil, nil, 99)
+
+      assert.equal(PullViewModel.ROW_CEILING, #view.creatures)
+      assert.equal(ns.core.SettingRange[ns.core.SettingKey.PLATE_ROWS].max,
+        PullViewModel.ROW_CEILING)
     end)
 
     -- The whole point of the engaged half: this list is not empty during the
@@ -348,8 +461,18 @@ describe("PullViewModel", function()
       for _ = 1, spell do pull:recordAbility(spell, "Spell " .. spell) end
     end
 
-    assert.equal(PullViewModel.TOP_ABILITIES,
+    assert.equal(ns.core.Defaults[ns.core.SettingKey.PLATE_ROWS],
       #PullViewModel.build(pull, PullPhase.CLOSED, 10).abilities)
+  end)
+
+  it("cuts the ability list to the number of rows asked for too", function()
+    local pull = PullRecord.new(0)
+    for spell = 1, 9 do
+      for _ = 1, spell do pull:recordAbility(spell, "Spell " .. spell) end
+    end
+
+    assert.equal(2, #PullViewModel.build(pull, PullPhase.CLOSED, 10, nil, nil, 2).abilities)
+    assert.equal(6, #PullViewModel.build(pull, PullPhase.CLOSED, 10, nil, nil, 6).abilities)
   end)
 
   it("carries the rates already divided, and nil where there is no denominator", function()

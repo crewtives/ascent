@@ -36,6 +36,7 @@ local WOW_API = {
   "UnitXP", "UnitXPMax", "UnitLevel", "UnitName", "UnitGUID", "UnitClass", "UnitRace",
   "UnitHealth", "UnitHealthMax", "UnitPower", "UnitPowerMax", "UnitFactionGroup",
   "UnitTokenFromGUID", "UnitExists", "UnitIsUnit", "UnitCanAttack", "UnitIsDead", "UnitAffectingCombat",
+  "UnitIsTapDenied", "UnitThreatSituation",
   -- nameplates: the only place a Classic client names a creature that has aggroed
   -- and not yet reached you
   "C_NamePlate",

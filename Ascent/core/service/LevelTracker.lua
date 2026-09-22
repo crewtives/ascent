@@ -203,6 +203,11 @@ function LevelTracker:openLevel(level, seedXp)
     -- up to the level total would be false from the first minute -- and the record
     -- says it is partial, because the time and the breakdown before now are not
     -- things this addon watched.
+    --
+    -- No group size on it either, deliberately (D81): this experience was paid at
+    -- instants nobody counted, and stamping the group of right now on it would be
+    -- reading the present as if it were the past -- the exact reclassification the
+    -- decision exists to prevent. The gain leaves here with the size unknown.
     record.partial = true
     -- The amount, not only the fact. Zero is recorded as zero rather than left nil:
     -- a level opened with nothing carried in WAS seeded, and saying so is what lets
@@ -344,7 +349,9 @@ end
 
 -- Pick up a record that was already for this level. Anything the character gained
 -- while the addon was not watching -- a reload, a late start -- shows up as a
--- positive difference and goes where every unexplained gain goes.
+-- positive difference and goes where every unexplained gain goes, with no group
+-- size for the same reason the seed above has none: it was earned while nobody was
+-- counting, and the group of this second is not evidence about it (D81).
 function LevelTracker:resume(record, fromStore)
   local player = self.playerState
 

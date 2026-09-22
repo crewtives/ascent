@@ -29,10 +29,13 @@
 -- same one BarRenderer and XpBarView have, for the same reason -- it is what
 -- makes the interesting half testable without a client.
 --
--- POOLS ARE FIXED, AND SIZED FROM THE VIEW-MODEL'S OWN CEILINGS. Every row this
+-- POOLS ARE FIXED, AND SIZED FROM THE VIEW-MODEL'S OWN CEILING. Every row this
 -- can ever draw is built once, at construction, and hidden rather than
 -- destroyed. A plate that allocated a row per pull would allocate thousands over
 -- a levelling session, in combat, which is the one place this addon must not.
+-- The ceiling is the MOST the player can ask for, not what they are asking for
+-- now: how many rows are shown is a setting, and a frame cannot be destroyed --
+-- so the rows are paid for once and shown or hidden from then on.
 
 local _, ns = ...
 ns.ui = ns.ui or {}
@@ -47,31 +50,21 @@ local AbilityKey = ns.core.AbilityKey
 local SkinResolver = ns.core.SkinResolver
 local SkinCatalog = ns.core.SkinCatalog
 local SettingKey = ns.core.SettingKey
+local Defaults = ns.core.Defaults
+local PlateLayout = ns.core.PlateLayout
+local PlateZone = ns.core.PlateZone
 local Effects = ns.ui.Effects
 
-local WIDTH = 240
-local PADDING = 10
-local ROW_HEIGHT = 15
-local CHIP_HEIGHT = 5
-
--- The header's rows, as distances from the top of the frame. Stated here once and
--- anchored to the FRAME rather than to each other, which is the correction of a
--- real defect: the "to level" line used to hang off the headline's own font
--- string, whose height depends on the text in it, so the source bar below was
--- laid at a fixed offset that the text grew into and overlapped.
-local ROW_TITLE     = PADDING - 2
-local ROW_XP        = PADDING + 14
-local ROW_REMAINING = PADDING + 40
-local ROW_CHIPS     = PADDING + 56
-local ROW_RULE      = PADDING + 68
-local ROW_BODY      = PADDING + 76
-local ICON_SIZE     = 12
-
-local MIN_HEIGHT = ROW_BODY + PADDING
-
--- How long a finished plaque stays on screen before it fades. Long enough to
--- read four numbers, short enough that the next pull does not queue behind it.
-local HOLD_SECONDS = 6
+-- EVERY MEASUREMENT THIS FILE USED TO CARRY NOW COMES FROM SOMEWHERE ELSE. The
+-- width, how long the plaque stays, how many rows it lists and which of its zones
+-- are drawn are settings; the padding, the row height, the chip and icon sizes,
+-- the six header offsets and the floor under the frame's height are arithmetic,
+-- and arithmetic lives in core/service/PlateLayout.lua where there are tests
+-- (D93). What is left here is a frame, where it sits, and which of its rows show.
+--
+-- The one number that stayed: how long a finished plaque takes to LEAVE once its
+-- hold is over. It is movement, and movement already has a scalar of its own, so
+-- a second control for it would be two names for one preference (D94).
 local FADE_SECONDS = 1.2
 
 -- The chip row carries colour and nothing else, and the colours are the bar's
@@ -83,6 +76,20 @@ local SOURCE_PALETTE = {
   [XpSource.QUEST_TURNIN] = "QUEST_TURNIN",
   [XpSource.EXPLORATION] = "EXPLORATION",
   [XpSource.UNKNOWN] = "UNKNOWN",
+}
+
+-- How strongly the headline is drawn for each provenance the forecast can have.
+-- The ladder IS the mark: a glyph appended to the digits cannot be aligned
+-- against them (see the counter's own note above), so colour is the only channel
+-- left, and three claims need three weights of it rather than two.
+--
+-- Its order is BASIS_CONFIDENCE's in core/service/PullViewModel.lua, which is
+-- what picks the basis of a sum. Two ladders disagreeing would have the plate
+-- drawing a confidence it did not compute.
+local BASIS_ALPHA = {
+  [KillXpEstimator.Basis.CREATURE] = 1,
+  [KillXpEstimator.Basis.MIXED] = 0.8,
+  [KillXpEstimator.Basis.LEVEL] = 0.6,
 }
 
 local PullPlateView = {}
@@ -179,7 +186,21 @@ local function newFontString(parent, size, justify, flags)
   return text
 end
 
--- options: parent, settings, saveSetting, locale, levelProgress, levelRecord
+-- Re-sizes a font string already built, keeping the face and the flags it was
+-- given. They are read back rather than restated because the outline is part of
+-- what the region IS -- the headline is thick-outlined and the rows are not -- and
+-- a resize that restated them would quietly flatten that distinction the first
+-- time the player moved the text size.
+local function resizeFont(text, size)
+  local path, current, flags = text:GetFont()
+  if path == nil or current == size then
+    return
+  end
+  text:SetFont(path, size, flags)
+end
+
+-- options: parent, settings, saveSetting, locale, levelProgress, levelRecord,
+-- sharedBy
 --
 -- `levelProgress` is a function returning { remaining, percent } for the level in
 -- progress, or nil when there is none (max level, gain switched off, nothing
@@ -193,7 +214,6 @@ function PullPlateView.new(options)
   end
 
   local frame = CreateFrame("Frame", "AscentPullPlate", options.parent or UIParent)
-  frame:SetSize(WIDTH, MIN_HEIGHT)
   frame:SetFrameStrata("MEDIUM")
   frame:SetClampedToScreen(true)
   frame:Hide()
@@ -205,6 +225,11 @@ function PullPlateView.new(options)
     saveSetting = options.saveSetting,
     levelProgress = options.levelProgress,
     levelRecord = options.levelRecord,
+    -- How many are sharing the pay right now, and another function for the same
+    -- reason: what a creature pays depends on how many people split it, so the
+    -- forecast has to be priced for the group standing there at this draw rather
+    -- than for the one that was there when the plate was built.
+    sharedBy = options.sharedBy,
     appearance = nil,
 
     -- Which pull is on screen, so a redraw of the SAME pull does not restart a
@@ -218,12 +243,81 @@ function PullPlateView.new(options)
   }, PullPlateView)
 
   self:build()
+  self:applyFrame()
   self:applyPosition()
   return self
 end
 
+-- ---------------------------------------------------------------------------
+-- What the plate reads about itself
+-- ---------------------------------------------------------------------------
+
+-- One of the plate's own settings, with the default standing in when there is no
+-- settings table at all -- a plate built before the saved variables loaded, or by
+-- a test. Every key asked for here is declared in Defaults, so neither read can
+-- raise on the frozen table it comes off.
+function PullPlateView:setting(key)
+  if self.settings == nil then
+    return Defaults[key]
+  end
+  return self.settings[key]
+end
+
+-- The text size the PLAYER gave the plate, or nil for the size it has always
+-- drawn at. Deliberately NOT the resolved appearance's `text.size`: the plate has
+-- never read that field -- it ignores the skin's text size, style and anchor --
+-- so starting to would move every plate that exists to the bar's 11 on the first
+-- login after updating. Read through SkinResolver because the map is partial and
+-- frozen: indexing it for an axis the player never touched raises.
+function PullPlateView:ownTextSize()
+  local own = self:setting(SettingKey.PLATE_APPEARANCE)
+  return SkinResolver.fieldOf(SkinResolver.fieldOf(own, "text"), "size")
+end
+
+-- Where every piece of the plate sits, for a body holding this many rows. The
+-- header's own offsets do not depend on those counts -- only on the text size and
+-- on which zones are on -- which is what lets applyFrame place the header once
+-- per settings change while each draw places only the body.
+function PullPlateView:layoutFor(creatures, abilities)
+  return PlateLayout.lay({
+    textSize = self:ownTextSize(),
+    zones = self:setting(SettingKey.PLATE_ZONES),
+    creatures = creatures,
+    abilities = abilities,
+  })
+end
+
+-- The alpha the frame should be showing RIGHT NOW: how far through the hold and
+-- the fade it is, times the player's own factor.
+--
+-- One function rather than the five writes it replaces, and that is the whole
+-- point of D91. The factor is a FACTOR and not the frame's alpha -- that channel
+-- IS the fade -- so it has to reach the fade and each of the four places that put
+-- the frame back to full strength. Four of five is not a smaller version of this
+-- feature: it is a plate that comes back to full opacity down some paths and not
+-- others, which reads as a bug in the fade.
+function PullPlateView:currentAlpha()
+  local factor = self:setting(SettingKey.PLATE_OPACITY)
+  local held = self.heldFor
+  local hold = self:setting(SettingKey.PLATE_HOLD_SECONDS)
+  if held == nil or held <= hold then
+    return factor
+  end
+  local left = 1 - (held - hold) / FADE_SECONDS
+  if left < 0 then
+    left = 0
+  end
+  return left * factor
+end
+
 function PullPlateView:build()
   local frame = self.frame
+  -- Built at the sizes the settings ask for rather than at a set of literals that
+  -- place() would overwrite one call later. The layout for an EMPTY body is the
+  -- right one to build from: the fonts and the header are the same whatever the
+  -- body holds, and nothing has been fought yet.
+  local layout = self:layoutFor(0, 0)
+  local font = layout.font
 
   local background = frame:CreateTexture(nil, "BACKGROUND")
   background:SetAllPoints(frame)
@@ -232,16 +326,13 @@ function PullPlateView:build()
   self.border = Effects.plaqueBorder(frame, { size = 1, inset = 0 })
 
   -- Header: what this is, and how long it has been going.
-  self.title = newFontString(frame, 10, "LEFT")
-  self.title:SetPoint("TOPLEFT", frame, "TOPLEFT", PADDING, -ROW_TITLE)
+  self.title = newFontString(frame, font.title, "LEFT")
   self.title:SetText(self.locale:get(TextKey.PLATE_TITLE))
 
-  self.clock = newFontString(frame, 10, "RIGHT")
-  self.clock:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PADDING, -ROW_TITLE)
+  self.clock = newFontString(frame, font.title, "RIGHT")
 
   -- The headline: experience, big, counting.
-  self.xp = newFontString(frame, 20, "LEFT", "THICKOUTLINE")
-  self.xp:SetPoint("TOPLEFT", frame, "TOPLEFT", PADDING, -ROW_XP)
+  self.xp = newFontString(frame, font.headline, "LEFT", "THICKOUTLINE")
   -- ONE number, always. While the pull is running it is what the pull is on
   -- course to be worth, marked with a tilde; once the experience has actually
   -- landed it is that figure, unmarked. Showing both -- "0 / ~73 XP" -- was
@@ -261,8 +352,7 @@ function PullPlateView:build()
   end)
 
   -- Kills and the running chain, right-aligned against the headline.
-  self.kills = newFontString(frame, 18, "RIGHT", "THICKOUTLINE")
-  self.kills:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PADDING, -ROW_XP)
+  self.kills = newFontString(frame, font.kills, "RIGHT", "THICKOUTLINE")
   -- Reads "killed/engaged" while any of them is still standing, and the plain
   -- count once they are all down. Two numbers rather than one because during the
   -- fight the interesting figure is how many are LEFT, and a lone "0" three
@@ -277,14 +367,13 @@ function PullPlateView:build()
   -- How much the LEVEL still needs. Not the pull's own number and never drawn as
   -- one: it is the question a player asks between fights, and the plate is on
   -- screen exactly then.
-  self.remaining = newFontString(frame, 10, "LEFT")
-  -- Anchored to the FRAME and not to the headline above it. See the row
-  -- constants: a font string's height follows its text, so hanging this off
-  -- one made every row below it move whenever the number got longer -- which
-  -- is how the source bar ended up drawn through this line.
-  self.remaining:SetPoint("TOPLEFT", frame, "TOPLEFT", PADDING, -ROW_REMAINING)
+  -- Anchored to the FRAME and not to the headline above it, which is what
+  -- PlateLayout's six offsets are: a font string's height follows its text, so
+  -- hanging this off one made every row below it move whenever the number got
+  -- longer -- which is how the source bar ended up drawn through this line.
+  self.remaining = newFontString(frame, font.body, "LEFT")
 
-  self.streak = newFontString(frame, 9, "RIGHT")
+  self.streak = newFontString(frame, font.streak, "RIGHT")
   self.streak:SetPoint("TOPRIGHT", self.kills, "BOTTOMRIGHT", 0, -1)
 
   -- The chip row: the pull's experience split by source, in the bar's own
@@ -292,7 +381,6 @@ function PullPlateView:build()
   self.chips = {}
   for index = 1, PullViewModel.SOURCE_COUNT do
     local chip = frame:CreateTexture(nil, "ARTWORK")
-    chip:SetHeight(CHIP_HEIGHT)
     chip:Hide()
     self.chips[index] = chip
   end
@@ -301,8 +389,6 @@ function PullPlateView:build()
   -- plate and does the most for it: without one, the source bar and the first
   -- creature row read as the same block, and the eye has nowhere to stop.
   self.rule = frame:CreateTexture(nil, "ARTWORK")
-  self.rule:SetPoint("TOPLEFT", frame, "TOPLEFT", PADDING, -ROW_RULE)
-  self.rule:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PADDING, -ROW_RULE)
   self.rule:SetHeight(1)
   self.rule:Hide()
 
@@ -311,8 +397,9 @@ function PullPlateView:build()
   self.detail = {}
 
   self.creatureRows = {}
-  for index = 1, PullViewModel.TOP_CREATURES do
-    local row = { name = newFontString(frame, 10, "LEFT"), count = newFontString(frame, 10, "RIGHT") }
+  for index = 1, PullViewModel.ROW_CEILING do
+    local row = { name = newFontString(frame, font.body, "LEFT"),
+                  count = newFontString(frame, font.body, "RIGHT") }
     row.name:Hide()
     row.count:Hide()
     self.creatureRows[index] = row
@@ -321,13 +408,12 @@ function PullPlateView:build()
   end
 
   self.abilityRows = {}
-  for index = 1, PullViewModel.TOP_ABILITIES do
+  for index = 1, PullViewModel.ROW_CEILING do
     local row = {
       icon = frame:CreateTexture(nil, "ARTWORK"),
-      name = newFontString(frame, 10, "LEFT"),
-      count = newFontString(frame, 10, "RIGHT"),
+      name = newFontString(frame, font.body, "LEFT"),
+      count = newFontString(frame, font.body, "RIGHT"),
     }
-    row.icon:SetSize(ICON_SIZE, ICON_SIZE)
     -- The client's icons carry a border baked into the outer few pixels; every
     -- addon that shows one trims it, and a plate that did not would draw a row of
     -- grey frames rather than a row of spells.
@@ -340,8 +426,8 @@ function PullPlateView:build()
     self.detail[#self.detail + 1] = row.count
   end
 
-  self.footerLeft = newFontString(frame, 10, "LEFT")
-  self.footerRight = newFontString(frame, 10, "RIGHT")
+  self.footerLeft = newFontString(frame, font.body, "LEFT")
+  self.footerRight = newFontString(frame, font.body, "RIGHT")
   self.detail[#self.detail + 1] = self.footerLeft
   self.detail[#self.detail + 1] = self.footerRight
   self.detail[#self.detail + 1] = self.rule
@@ -356,7 +442,12 @@ function PullPlateView:makeMovable()
   frame:EnableMouse(true)
   frame:RegisterForDrag("LeftButton")
   frame:SetScript("OnDragStart", function(moved)
-    if self.settings ~= nil and self.settings[SettingKey.BAR_LOCKED] then
+    -- ITS OWN lock, not the bar's (D88). The two surfaces have opposite
+    -- ergonomics -- a bar is placed once and locked for good, a plate moves
+    -- whenever the fighting does -- and while they shared one, the bar slot
+    -- decided whether this frame could be dragged: taking the client's bar
+    -- DISABLES the bar's lock, and this read it.
+    if self:setting(SettingKey.PLATE_LOCKED) then
       return
     end
     moved:StartMoving()
@@ -393,9 +484,87 @@ end
 -- it was put, for a reason nowhere near where it looked.
 function PullPlateView:applySettings(settings)
   self.settings = settings or self.settings
+  -- Before the skin: building an effect sizes its textures to the frame, so a
+  -- width or a scale that just changed has to have landed first.
+  self:applyFrame()
   self:applySkin(self.settings[SettingKey.BAR_SKIN], self.settings[SettingKey.BAR_APPEARANCE],
     self.settings[SettingKey.BAR_COLORS], self.settings[SettingKey.HIGH_CONTRAST])
+  -- And after it: the saved anchor is re-read once the scale it will be drawn at
+  -- is the one in force. Whether a scale applied after an anchor moves the frame
+  -- is what tasks.md 0.1 measures in the client -- an anchor's offsets are in the
+  -- frame's own scale, and the bar cannot answer it because its anchor is three
+  -- fields and this one is four. Nothing here compensates for it until that
+  -- measurement exists: compensating for a shift nobody has seen would move every
+  -- plate that is sitting exactly where it was left.
   self:applyPosition()
+  self.frame:SetAlpha(self:currentAlpha())
+  return self
+end
+
+-- The three measurements that come straight off the settings -- the scale, the
+-- width, and the height the contents ask for -- and everything whose size follows
+-- the text size rather than the pull.
+--
+-- Run on a settings change and not on every draw, because none of it depends on
+-- what is being fought. What a draw still has to place is the body, whose blocks
+-- move with how many rows there are to put in them.
+function PullPlateView:applyFrame()
+  local layout = self:layoutFor(0, 0)
+
+  self.frame:SetScale(self:setting(SettingKey.PLATE_SCALE))
+  self.frame:SetSize(self:setting(SettingKey.PLATE_WIDTH), layout.height)
+
+  self:place(layout)
+  self:resizeEffects()
+  return self
+end
+
+-- Where the header sits and how big every piece of text on the plate is. Takes
+-- the layout rather than asking for one, so that a draw places its body against
+-- the very same arithmetic that placed the header above it.
+function PullPlateView:place(layout)
+  local frame, font, padding = self.frame, layout.font, layout.padding
+
+  local function at(region, corner, x, y)
+    region:ClearAllPoints()
+    region:SetPoint(corner, frame, corner, x, y)
+  end
+
+  resizeFont(self.title, font.title)
+  at(self.title, "TOPLEFT", padding, -layout.header.title)
+  resizeFont(self.clock, font.title)
+  at(self.clock, "TOPRIGHT", -padding, -layout.header.title)
+
+  resizeFont(self.xp, font.headline)
+  at(self.xp, "TOPLEFT", padding, -layout.header.xp)
+  resizeFont(self.kills, font.kills)
+  at(self.kills, "TOPRIGHT", -padding, -layout.header.xp)
+
+  resizeFont(self.remaining, font.body)
+  at(self.remaining, "TOPLEFT", padding, -layout.header.remaining)
+  -- The chain is the one region still hung off a neighbour instead of off the
+  -- frame, and it may stay there: the thing above it is in the same column and is
+  -- the count, which cannot grow into it. The arithmetic models it exactly there.
+  resizeFont(self.streak, font.streak)
+
+  self.rule:ClearAllPoints()
+  self.rule:SetPoint("TOPLEFT", frame, "TOPLEFT", padding, -layout.header.rule)
+  self.rule:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -padding, -layout.header.rule)
+
+  for _, chip in ipairs(self.chips) do
+    chip:SetHeight(layout.chipHeight)
+  end
+  for _, row in ipairs(self.creatureRows) do
+    resizeFont(row.name, font.body)
+    resizeFont(row.count, font.body)
+  end
+  for _, row in ipairs(self.abilityRows) do
+    resizeFont(row.name, font.body)
+    resizeFont(row.count, font.body)
+    row.icon:SetSize(layout.iconSize, layout.iconSize)
+  end
+  resizeFont(self.footerLeft, font.body)
+  resizeFont(self.footerRight, font.body)
   return self
 end
 
@@ -454,12 +623,19 @@ end
 -- the bar's width rebuilds the plate's appearance too -- and an animation group
 -- cannot be destroyed once created. Without this, a minute in the options panel
 -- would leave a stack of dead animation groups parented to the plate.
-local function effectSignature(effects, scale)
-  local parts = { ("%.3f"):format(scale) }
+local function effectSignature(effects, scale, opacity)
+  local parts = { ("%.3f|%.3f"):format(scale, opacity) }
   for _, name in ipairs({ "glow", "sweep", "burst" }) do
     local spec = effects[name]
     local color = spec.color
-    parts[#parts + 1] = ("%s|%.3f|%.2f,%.2f,%.2f"):format(spec.kind, spec.duration, color.r, color.g, color.b)
+    -- ALPHA INCLUDED, and it was not until the plate got an appearance map of its
+    -- own. Effects tints its textures with the whole colour, alpha and all, so a
+    -- map that dimmed an effect and changed nothing else produced an identical
+    -- signature -- and the rebuild was skipped in silence, leaving the animation
+    -- group that was built from the old colour playing. Everything the map can
+    -- reach has to be in here or the comparison is a lie (task 3.4).
+    parts[#parts + 1] = ("%s|%.3f|%.2f,%.2f,%.2f,%.2f")
+      :format(spec.kind, spec.duration, color.r, color.g, color.b, color.a)
   end
   parts[#parts + 1] = ("%.2f|%d|%.1f|%.1f|%.3f")
     :format(effects.glow.peak, effects.burst.count, effects.burst.rise, effects.burst.spread, effects.burst.stagger)
@@ -474,8 +650,15 @@ function PullPlateView:buildEffects(effects)
   if self.settings ~= nil then
     scale = self.settings[SettingKey.MOTION_SCALE] or 1
   end
+  -- The opacity is in here for the same reason the motion scalar is: the arrival
+  -- below is BUILT from it, and an animation group cannot be retuned once it
+  -- exists. It is also the fifth place the frame's alpha goes back to a fixed
+  -- number, and the one D91 does not name -- the four it names are all in this
+  -- file, and this one is a quarter of a second late, which is what makes it the
+  -- write that wins.
+  local opacity = self:setting(SettingKey.PLATE_OPACITY)
 
-  local signature = effectSignature(effects, scale)
+  local signature = effectSignature(effects, scale, opacity)
   if signature == self.effectSignature then
     return
   end
@@ -497,7 +680,7 @@ function PullPlateView:buildEffects(effects)
 
   -- A quarter second, scaled like everything else, so "reduce motion" to zero
   -- turns this into the frame simply being there.
-  self.entrance = Effects.entrance(self.frame, 0.25 * scale)
+  self.entrance = Effects.entrance(self.frame, 0.25 * scale, opacity)
 
   self.glow = Effects.glow(self.frame, scaled(effects.glow, { peak = effects.glow.peak }))
   self.sweep = Effects.sweep(self.frame, scaled(effects.sweep))
@@ -547,17 +730,26 @@ function PullPlateView:composeProjection(view)
     return
   end
 
-  -- The colour is the whole claim now, and it carries D4's distinction as well:
-  -- the skin's accent for a rate measured on THIS creature at THIS level, and a
-  -- dimmer one where it had to fall back to the level's own mean. An elite and a
-  -- critter of the same level pay very differently, so a figure resting on that
-  -- mean must not look like a measurement.
+  -- The colour is the whole claim now, and it carries D4's distinction and D83's:
+  -- the skin's accent at full strength for a rate measured on THIS creature at
+  -- THIS level with THIS many sharing the pay, a step down where the only kills
+  -- recorded for it predate anyone counting the group, and dimmer still where it
+  -- fell back to the level's own mean. An elite and a critter of the same level
+  -- pay very differently, and so do a kill taken alone and one taken by five --
+  -- neither of the last two may look like a measurement of this fight.
+  --
+  -- An unlisted basis takes the dimmest rung rather than the nil alpha the client
+  -- would read as full strength: the failure has to land on the cautious side.
   local accent = self.appearance.accent
-  local measured = projection.basis == KillXpEstimator.Basis.CREATURE
-  self.xp:SetTextColor(accent.r, accent.g, accent.b, measured and 1 or 0.6)
+  self.xp:SetTextColor(accent.r, accent.g, accent.b,
+    BASIS_ALPHA[projection.basis] or BASIS_ALPHA[KillXpEstimator.Basis.LEVEL])
 end
 
-function PullPlateView:drawRemaining()
+function PullPlateView:drawRemaining(layout)
+  if not layout.draws[PlateZone.REMAINING] then
+    self.remaining:Hide()
+    return
+  end
   if self.levelProgress == nil then
     self.remaining:Hide()
     return
@@ -585,8 +777,19 @@ end
 -- The chip row. Widths are shares of the pull, laid left to right in the bar's
 -- channel order -- so a plate and a bar showing the same pull read the same way,
 -- which is the whole reason the order is stated once in core and not twice here.
-function PullPlateView:drawChips(view)
-  local available = WIDTH - PADDING * 2
+function PullPlateView:drawChips(view, layout)
+  -- A zone that is off is not drawn AND takes no room: the offsets below it in
+  -- the layout have already closed over the gap, so all that is left here is not
+  -- painting it (D90).
+  if not layout.draws[PlateZone.SOURCES] then
+    for _, chip in ipairs(self.chips) do
+      chip:Hide()
+    end
+    return
+  end
+
+  local padding = layout.padding
+  local available = self:setting(SettingKey.PLATE_WIDTH) - padding * 2
   local left = 0
   for index, chip in ipairs(self.chips) do
     local entry = view.sources[index]
@@ -602,8 +805,8 @@ function PullPlateView:drawChips(view)
       end
       local color = self.appearance.colors[SOURCE_PALETTE[entry.source]]
       chip:ClearAllPoints()
-      chip:SetPoint("TOPLEFT", self.frame, "TOPLEFT", PADDING + left, -ROW_CHIPS)
-      chip:SetSize(width, CHIP_HEIGHT)
+      chip:SetPoint("TOPLEFT", self.frame, "TOPLEFT", padding + left, -layout.header.chips)
+      chip:SetSize(width, layout.chipHeight)
       -- A slice that has not been paid yet is drawn as the lighter claim it is,
       -- so the bar shows banked and expected as one length without passing the
       -- second off as the first.
@@ -618,19 +821,26 @@ end
 -- The body of the plate: what is being fought, what is being pressed, what it is
 -- costing. Drawn identically whether the pull is running or finished -- see the
 -- module header for why that is the whole correction.
-function PullPlateView:drawPlaque(view)
+--
+-- Each block starts where the layout says it starts, and a block the layout does
+-- not name is one that is not drawn at all -- the zone is off, or there is nothing
+-- in it. That absence IS the instruction: the rows below it have already been
+-- lifted by the same arithmetic that decided the frame's height, so a block drawn
+-- here anyway would land on top of the next one.
+function PullPlateView:drawPlaque(view, layout)
   self.rule:Show()
-  local top = -ROW_BODY
-  local width = WIDTH - PADDING * 2
+  local padding = layout.padding
+  local width = self:setting(SettingKey.PLATE_WIDTH) - padding * 2
 
+  local top = layout.blocks.creatures
   for index, row in ipairs(self.creatureRows) do
-    local entry = view.creatures[index]
+    local entry = top ~= nil and view.creatures[index] or nil
     if entry == nil then
       row.name:Hide()
       row.count:Hide()
     else
       row.name:ClearAllPoints()
-      row.name:SetPoint("TOPLEFT", self.frame, "TOPLEFT", PADDING, top)
+      row.name:SetPoint("TOPLEFT", self.frame, "TOPLEFT", padding, -top)
       row.name:SetWidth(width - 32)
       row.name:SetText(entry.name)
       -- Explicit, because it is NOT the default. A font string inherited from
@@ -641,7 +851,7 @@ function PullPlateView:drawPlaque(view)
       row.name:Show()
 
       row.count:ClearAllPoints()
-      row.count:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -PADDING, top)
+      row.count:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -padding, -top)
       if entry.pending > 0 then
         -- Still standing: how many are down out of how many were pulled, in the
         -- skin's accent so the eye finds the row that is still costing something.
@@ -654,15 +864,14 @@ function PullPlateView:drawPlaque(view)
         row.count:SetTextColor(color.r, color.g, color.b, color.a or 1)
       end
       row.count:Show()
-      top = top - ROW_HEIGHT
+      top = top + layout.rowHeight
     end
   end
 
-  top = top - 4
-
+  top = layout.blocks.abilities
   local text = self.appearance.text.color
   for index, row in ipairs(self.abilityRows) do
-    local entry = view.abilities[index]
+    local entry = top ~= nil and view.abilities[index] or nil
     if entry == nil then
       row.icon:Hide()
       row.name:Hide()
@@ -672,7 +881,7 @@ function PullPlateView:drawPlaque(view)
 
       if icon ~= nil then
         row.icon:ClearAllPoints()
-        row.icon:SetPoint("TOPLEFT", self.frame, "TOPLEFT", PADDING, top - 1)
+        row.icon:SetPoint("TOPLEFT", self.frame, "TOPLEFT", padding, -top - 1)
         row.icon:SetTexture(icon)
         row.icon:Show()
       else
@@ -682,34 +891,39 @@ function PullPlateView:drawPlaque(view)
       row.name:ClearAllPoints()
       -- Indented to the icon column whether or not this row got one, so a
       -- missing icon leaves a gap rather than knocking the row out of line.
-      row.name:SetPoint("TOPLEFT", self.frame, "TOPLEFT", PADDING + ICON_SIZE + 5, top)
-      row.name:SetWidth(width - ICON_SIZE - 45)
+      row.name:SetPoint("TOPLEFT", self.frame, "TOPLEFT", padding + layout.iconSize + 5, -top)
+      row.name:SetWidth(width - layout.iconSize - 45)
       row.name:SetText(label)
       row.name:SetTextColor(text.r, text.g, text.b, text.a or 1)
       row.name:Show()
 
       row.count:ClearAllPoints()
-      row.count:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -PADDING, top)
+      row.count:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -padding, -top)
       row.count:SetText(self.locale:get(TextKey.PLATE_COUNT, entry.count))
       row.count:SetTextColor(text.r, text.g, text.b, (text.a or 1) * 0.75)
       row.count:Show()
-      top = top - ROW_HEIGHT
+      top = top + layout.rowHeight
     end
   end
 
-  top = top - 4
+  local footer = layout.blocks.footer
+  if footer == nil then
+    self.footerLeft:Hide()
+    self.footerRight:Hide()
+    return self
+  end
 
   self.footerLeft:ClearAllPoints()
-  self.footerLeft:SetPoint("TOPLEFT", self.frame, "TOPLEFT", PADDING, top)
+  self.footerLeft:SetPoint("TOPLEFT", self.frame, "TOPLEFT", padding, -footer)
   self.footerLeft:SetText(self.locale:get(TextKey.PLATE_DPS, compact(view.damagePerSecond)))
   self.footerLeft:Show()
 
   self.footerRight:ClearAllPoints()
-  self.footerRight:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -PADDING, top)
+  self.footerRight:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -padding, -footer)
   self.footerRight:SetText(self.locale:get(TextKey.PLATE_XP_HOUR, compact(view.xpPerHour)))
   self.footerRight:Show()
 
-  return math.abs(top) + ROW_HEIGHT + PADDING
+  return self
 end
 
 -- `view` is what PullViewModel.build returned. Called when the tracker says
@@ -731,14 +945,24 @@ function PullPlateView:update(view)
 
   local phase = view.phase
   local final = view.final
+  -- Asked for with the counts THIS draw has to place, so the body blocks and the
+  -- frame's height come out of one call and cannot disagree. The header half of
+  -- it is the same one applyFrame already placed: it follows the text size and
+  -- the zones, neither of which a draw can move.
+  local layout = self:layoutFor(#view.creatures, #view.abilities)
 
   -- The clock stops when the pull does, and says so rather than freezing
   -- silently: a number that stopped moving and a number that is still settling
   -- look identical otherwise.
-  if phase == PullPhase.SETTLING then
-    self.clock:SetText(self.locale:get(TextKey.PLATE_SETTLING))
+  if not layout.draws[PlateZone.CLOCK] then
+    self.clock:Hide()
   else
-    self.clock:SetText(clockText(self.locale, view.elapsed))
+    if phase == PullPhase.SETTLING then
+      self.clock:SetText(self.locale:get(TextKey.PLATE_SETTLING))
+    else
+      self.clock:SetText(clockText(self.locale, view.elapsed))
+    end
+    self.clock:Show()
   end
 
   -- All set before the counters, because their own formatters read them.
@@ -762,9 +986,9 @@ function PullPlateView:update(view)
   -- number, and without this the row would keep claiming one is still standing.
   self.counters.kills:repaint()
 
-  self:drawRemaining()
+  self:drawRemaining(layout)
 
-  if view.bestStreak >= 2 then
+  if layout.draws[PlateZone.STREAK] and view.bestStreak >= 2 then
     local best = final and view.bestStreak or view.streak
     self.streak:SetText(self.locale:get(TextKey.PLATE_STREAK, best))
     self.streak:Show()
@@ -772,7 +996,7 @@ function PullPlateView:update(view)
     self.streak:Hide()
   end
 
-  self:drawChips(view)
+  self:drawChips(view, layout)
 
   -- Nothing waits for the pull to close. A fight in progress draws the same rows
   -- a finished one does; what closing changes is that the numbers stop moving.
@@ -781,7 +1005,11 @@ function PullPlateView:update(view)
   -- that was worse than saying nothing: the header already reads "0 XP" and "0",
   -- so a sentence announcing emptiness added a line of text and no information.
   -- The plate simply stays at its smallest.
-  self.frame:SetHeight(math.max(MIN_HEIGHT, self:drawPlaque(view)))
+  self:drawPlaque(view, layout)
+  -- The height the contents ask for, floor included: with every block empty the
+  -- arithmetic already lands on the smallest the plate can be, so there is no
+  -- minimum to assert on top of it.
+  self.frame:SetHeight(layout.height)
 
   self:resizeEffects()
   return self
@@ -792,7 +1020,7 @@ end
 -- run exactly once -- and because "what happened" and "celebrate it" are two
 -- different statements even when they arrive together.
 function PullPlateView:celebrate()
-  self.frame:SetAlpha(1)
+  self.frame:SetAlpha(self:currentAlpha())
   for _, effect in ipairs({ self.glow, self.sweep, self.burst }) do
     if effect ~= nil then
       effect:play()
@@ -823,18 +1051,22 @@ function PullPlateView:tick(elapsed)
 
   if self.heldFor ~= nil then
     self.heldFor = self.heldFor + (elapsed or 0)
-    if self.heldFor >= HOLD_SECONDS + FADE_SECONDS then
+    -- Read per tick, not captured: how long the plaque stays is the player's now
+    -- (D89), and a plaque already on screen when it changes has to honour the new
+    -- number rather than the one it was built under.
+    local hold = self:setting(SettingKey.PLATE_HOLD_SECONDS)
+    if self.heldFor >= hold + FADE_SECONDS then
       self.frame:Hide()
-      self.frame:SetAlpha(1)
       self.heldFor = nil
       self.generation = nil
+      self.frame:SetAlpha(self:currentAlpha())
       return false
-    elseif self.heldFor >= HOLD_SECONDS then
+    elseif self.heldFor >= hold then
       -- Faded in Lua rather than by an animation group: this one has to be
       -- interruptible at any instant, because the next pull can start in the
       -- middle of it, and stopping an alpha animation leaves the frame at
       -- whatever alpha it had reached.
-      self.frame:SetAlpha(1 - (self.heldFor - HOLD_SECONDS) / FADE_SECONDS)
+      self.frame:SetAlpha(self:currentAlpha())
     end
     busy = true
   end
@@ -864,7 +1096,7 @@ function PullPlateView:follow(tracker, now)
   if isNewPull then
     self.generation = generation
     self.heldFor = nil
-    self.frame:SetAlpha(1)
+    self.frame:SetAlpha(self:currentAlpha())
     for _, counter in pairs(self.counters) do
       counter:reset()
     end
@@ -880,7 +1112,7 @@ function PullPlateView:follow(tracker, now)
 
   if resumed then
     self.heldFor = nil
-    self.frame:SetAlpha(1)
+    self.frame:SetAlpha(self:currentAlpha())
   end
 
   self.phase = phase
@@ -892,7 +1124,18 @@ function PullPlateView:follow(tracker, now)
     local ok, value = pcall(self.levelRecord)
     record = ok and value or nil
   end
-  self:update(PullViewModel.build(tracker:current(), phase, now, record))
+  -- Asked the same way and guarded the same way: this one ends in a client call,
+  -- and a client that cannot answer costs the context, not the plate.
+  local sharedBy = nil
+  if self.sharedBy ~= nil then
+    local ok, value = pcall(self.sharedBy)
+    sharedBy = ok and value or nil
+  end
+  -- How many rows to list, passed per draw rather than captured, so that changing
+  -- it mid-fight shows the new number on the very next redraw without anything
+  -- being rebuilt -- the rows all exist already (see the module header).
+  self:update(PullViewModel.build(tracker:current(), phase, now, record, sharedBy,
+    self:setting(SettingKey.PLATE_ROWS)))
 
   -- After update(), so the frame is at its real size and the glow is sized to
   -- match before either of them is seen.
@@ -924,10 +1167,19 @@ end
 
 -- Used by the options panel and by /ascent plate demo: resolves a skin and
 -- applies it without needing a live pull, so a player can see what they picked.
+--
+-- The skin, the palette and the high contrast are the BAR's and are not asked for
+-- again here (D87): the chip row uses the same colours as the bar's segments on
+-- purpose, and two palettes would be two vocabularies rather than two tastes. What
+-- the plate does get is a map of its own, laid over the bar's and read straight
+-- off the settings rather than passed in -- an axis it states wins, an axis it
+-- leaves out keeps following the bar, which is what makes one tweak survive the
+-- bar changing skin underneath it.
 function PullPlateView:applySkin(skinId, overrides, colors, highContrast)
   local appearance = SkinResolver.resolve({
     skin = SkinResolver.skinFor(SkinCatalog, skinId, ns.core.DEFAULT_SKIN_ID),
     overrides = overrides,
+    own = self:setting(SettingKey.PLATE_APPEARANCE),
     colors = colors,
     palette = Palette,
     highContrast = highContrast,
@@ -935,10 +1187,17 @@ function PullPlateView:applySkin(skinId, overrides, colors, highContrast)
   return self:applyAppearance(appearance)
 end
 
--- How long a finished plate stays readable, hold plus fade. Published because the
--- pull tracker's resume window is meant to be exactly this: a pull can be carried
--- on for as long as the player can still see it. Two constants that had to agree
--- would drift; one that is read is one.
-PullPlateView.VISIBLE_SECONDS = HOLD_SECONDS + FADE_SECONDS
+-- How long a finished plate takes to leave once its hold is over, and how long it
+-- stays readable when the player has not moved the hold at all.
+--
+-- The pull tracker's resume window is meant to be the second figure: a pull can be
+-- carried on for as long as the player can still see it. That was one constant
+-- because two that had to agree would drift -- but the hold is a setting now
+-- (D89), so the live figure is `settings[PLATE_HOLD_SECONDS] + FADE_SECONDS` and
+-- only the composition root can ask for it per question instead of once. Until it
+-- does (tasks.md group 4), the window stays the default one and the setting moves
+-- what is drawn and not what counts as the same fight.
+PullPlateView.FADE_SECONDS = FADE_SECONDS
+PullPlateView.VISIBLE_SECONDS = Defaults[SettingKey.PLATE_HOLD_SECONDS] + FADE_SECONDS
 
 ns.ui.PullPlateView = PullPlateView

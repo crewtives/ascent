@@ -91,6 +91,8 @@ ns.locale.tables.enUS = {
   [TextKey.PANEL_CREATURE_ROW]     = "  %s%s: %d kills, %d xp",
   [TextKey.PANEL_CREATURE_LEVEL]   = " (lvl %d)",
   [TextKey.PANEL_UNKNOWN_CREATURE] = "Unknown creature",
+  [TextKey.PANEL_CREATURE_SHARED]  = " (shared by %d)",
+  [TextKey.PANEL_CREATURE_MIXED]   = " (group not counted)",
   [TextKey.PANEL_BY_PLACE]         = "By place:",
   [TextKey.PANEL_PLACE_CONTEXT]    = " (%s, %s)",
   [TextKey.PANEL_UNKNOWN_PLACE]    = "Somewhere the client could not name",
@@ -130,8 +132,17 @@ ns.locale.tables.enUS = {
   -- The same figure, marked: it was priced with the level's average per kill
   -- rather than with this creature's, and those differ by a lot.
   [TextKey.PANEL_OBJ_ROUGH]        = "~%d xp*",
+  -- Marked too, and differently, because it is a different kind of wrong: this
+  -- one IS this creature's own average, but over kills taken before anyone
+  -- counted how many people split the pay, so it describes a population nobody
+  -- can name (D83). A plus rather than a second asterisk -- the two marks are not
+  -- degrees of one another -- and ASCII, like every string in this file, because
+  -- the client's font is promised nothing else.
+  [TextKey.PANEL_OBJ_MIXED]        = "~%d xp+",
   [TextKey.PANEL_OBJ_NO_RATE]      = "no rate yet",
   [TextKey.PANEL_OBJ_FOOTNOTE]     = "|cffffcc00* priced with this level's average per kill, not this creature's.|r",
+  [TextKey.PANEL_OBJ_MIXED_FOOTNOTE] =
+    "|cffffcc00+ priced with kills taken before the group sharing them was counted.|r",
   [TextKey.PANEL_PENDING_ROW]      = "  #%d: %s xp [%s]%s",
   [TextKey.PANEL_READY_MARK]       = " (ready)",
   [TextKey.PANEL_LBL_PROGRESS]        = "Level progress",
@@ -191,10 +202,10 @@ ns.locale.tables.enUS = {
   [TextKey.CMD_HELP_PANEL]         = "open or close the level report panel",
   [TextKey.CMD_HELP_SUMMARY]       = "breakdown of the current level's experience",
   [TextKey.CMD_HELP_PENDING]       = "forecasted experience from quests in progress",
-  [TextKey.CMD_HELP_OPTIONS]       = "bar options",
+  [TextKey.CMD_HELP_OPTIONS]       = "how the addon looks, and where its surfaces sit",
   [TextKey.CMD_HELP_RESET]         = "erase this character's recorded history",
   [TextKey.CMD_HELP_DEBUG]         = "everything the addon knows about itself: client, capabilities, "
-                                  .. "attribution, places, quests and client strings. evidence on|off|reset "
+                                  .. "attribution, places, group, quests and client strings. evidence on|off|reset "
                                   .. "records a session to a file instead of the chat; timesync on|off toggles "
                                   .. "the played-time request",
   [TextKey.CMD_HELP_DEMO]          = "step the bar through every visual state; off to stop",
@@ -262,6 +273,23 @@ ns.locale.tables.enUS = {
   [TextKey.OPT_SECTION_PREVIEW]       = "Preview",
   [TextKey.OPT_COLOR_RESTED]       = "Rested",
   [TextKey.CMD_APPEARANCE_RESET]   = "appearance reset to defaults, bar back in the middle of the screen",
+
+  -- What `/ascent options plate` answers, indented under its first line the way
+  -- the summary rows are. It exists for a player who cannot see the plate, so it
+  -- leads with the three things that hide one -- switched off, transparent, or
+  -- dropped somewhere off the screen -- and prints where it is before what it
+  -- draws. The lock is on the first line because it is what stops them moving it
+  -- once they find it.
+  [TextKey.CMD_PLATE_STATUS]       = "plate: %s (locked: %s)",
+  [TextKey.CMD_PLATE_FRAME]        = "  scale %s, width %s, opacity %s, hold %ss, rows %s",
+  [TextKey.CMD_PLATE_AT]           = "  at %s %s, %s",
+  [TextKey.CMD_PLATE_ZONES]        = "  zones: %s",
+  -- Every accessory zone off is a choice the panel offers (D90), so this says
+  -- what the plate still draws rather than reading as an empty line.
+  [TextKey.CMD_PLATE_NO_ZONES]     = "  zones: none, the headline only",
+  [TextKey.CMD_PLATE_RESET]        =
+    "plate reset to defaults, back in the middle of the screen; the bar was left alone",
+  [TextKey.CMD_BAD_PLATE]          = "plate what? one of: %s",
   [TextKey.CMD_EVIDENCE_ON]        =
     "evidence recording on -- nothing will be printed; play normally and /reload when done",
   [TextKey.CMD_EVIDENCE_OFF]       = "evidence recording off",
@@ -362,6 +390,38 @@ ns.locale.tables.enUS = {
   [TextKey.OPT_BAR_WIDTH]             = "Bar width",
   [TextKey.OPT_BAR_HEIGHT]            = "Bar height",
   [TextKey.OPT_MOTION_SCALE]          = "Motion intensity (0 turns animation off)",
+  [TextKey.OPT_PAGE_PLATE]            = "Pull plate",
+  [TextKey.OPT_PAGE_PLATE_DESC]       =
+    "The frame that counts a fight while it happens and stays as a plaque when it ends.",
+  [TextKey.OPT_SECTION_PLATE_FRAME]   = "The frame",
+  [TextKey.OPT_SECTION_PLATE_CONTENT] = "What it shows",
+  -- "Its own", not "Appearance": the plate wears the bar's skin and its palette
+  -- (D87), and what this section holds is only what it changes on top of them.
+  [TextKey.OPT_SECTION_PLATE_LOOK]    = "Its own look",
+  [TextKey.OPT_PLATE_ENABLED]         = "Show the pull plate",
+  [TextKey.OPT_PLATE_LOCKED]          = "Lock the plate where it is",
+  [TextKey.OPT_PLATE_SCALE]           = "Plate scale",
+  [TextKey.OPT_PLATE_WIDTH]           = "Plate width",
+  [TextKey.OPT_PLATE_OPACITY]         = "Plate opacity",
+  [TextKey.OPT_PLATE_HOLD]            = "Seconds the plaque stays (and can be carried on)",
+  [TextKey.OPT_PLATE_ROWS]            = "Creature and ability rows",
+  [TextKey.OPT_PLATE_ZONE_CLOCK]      = "How long the fight has been going",
+  [TextKey.OPT_PLATE_ZONE_REMAINING]  = "What the level still needs",
+  [TextKey.OPT_PLATE_ZONE_STREAK]     = "The kill chain",
+  [TextKey.OPT_PLATE_ZONE_SOURCES]    = "Where the experience came from",
+  [TextKey.OPT_PLATE_ZONE_CREATURES]  = "Creatures",
+  [TextKey.OPT_PLATE_ZONE_ABILITIES]  = "Abilities",
+  [TextKey.OPT_PLATE_ZONE_FOOTER]     = "Damage per second and experience per hour",
+  -- Every accessory zone off is a choice and not a mistake (D90), so this says
+  -- what is left rather than arguing -- the same note, for the same reason, that
+  -- a bar with no text gets.
+  [TextKey.OPT_PLATE_ZONES_NONE]      =
+    "With none of these on, the plate shows the experience and the kill count and nothing else.",
+  [TextKey.OPT_PLATE_DEMO]            = "Show me a pull",
+  [TextKey.OPT_PLATE_DEMO_TIP]        =
+    "Runs a whole fake fight on the real plate. There is no separate preview here on purpose: "
+    .. "this is the plate itself, at the settings you just chose.",
+  [TextKey.OPT_PLATE_RESET]           = "Reset the plate to defaults",
   [TextKey.PLATE_TITLE]               = "Pull",
   [TextKey.PLATE_XP]                  = "%s XP",
   [TextKey.PLATE_KILLS]               = "%d",

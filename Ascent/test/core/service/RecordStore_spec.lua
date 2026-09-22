@@ -51,7 +51,7 @@ describe("RecordStore", function()
       local restored = store:current()
       assert.equal(24, restored.level)
       assert.equal(350, restored.xpTotal)
-      assert.equal(1, restored.creatures["5644:6"].kills)
+      assert.equal(1, restored.creatures["5644:6@?"].kills)
       assert.is_true(restored:sourcesAddUp())
     end)
 
@@ -109,6 +109,7 @@ describe("RecordStore", function()
           -- including the ones that convert nothing.
           [1] = function() end,
           [2] = function() end,
+          [3] = function() end,
         },
       }):load()
 
@@ -159,6 +160,76 @@ describe("RecordStore", function()
       assert.is_false(loaded.archived)
       assert.equal(ns.core.SchemaVersion.CURRENT, repository:schemaVersion())
       assert.equal(24, loaded:current().level)
+    end)
+
+    -- The guard above only asks for a function, and `function() end` answers it. The
+    -- 3 -> 4 step is the first one that cannot be that: the group a creature's kills
+    -- were paid to is written AHEAD of the creature's key, because the key is the
+    -- line's variable-length tail, so every stored creature line shifts by a field.
+    -- Left empty, the step would pass every test the chain has and hand the reader
+    -- the npc id where the group belongs.
+    --
+    -- The version is spelled out rather than derived from CURRENT because this
+    -- conversion belongs to that step for good; keeping a later bump honest is the
+    -- job of the test above.
+    it("converts the creature aggregates its step was raised for", function()
+      local step = ns.core.RecordStore.MIGRATIONS[3]
+      assert.equal("function", type(step))
+
+      repository:saveCurrentRecord({
+        level = 24,
+        creatures = "1,84,15343,6,Springpaw Lynx;2,104",
+      })
+
+      step(repository)
+
+      -- The blank in the third field is the whole conversion. The unidentified
+      -- aggregate keeps its two fields: its blank is trailing, and trailing blanks
+      -- are dropped.
+      assert.equal("1,84,,15343,6,Springpaw Lynx;2,104",
+        repository:currentRecord().creatures)
+    end)
+
+    -- And the same thing as a character sees it. "carries a character forward"
+    -- above stores a record with no creature aggregates at all, so it stays green
+    -- with the conversion broken; this hands the store a file in the shape version
+    -- 3 wrote and reads it back through the model.
+    it("reads a file from the previous version with its creatures intact and uncounted", function()
+      repository:setSchemaVersion(ns.core.SchemaVersion.CURRENT - 1)
+      repository:saveCurrentRecord({
+        level = 24, xpTotal = 128, killsWithXp = 3,
+        xpBySource = { mob_kill = 128 },
+        creatures = "1,84,15343,6,Springpaw Lynx;2,44,5644,6,Kobold Miner",
+      })
+      repository:saveCompletedRecord({
+        level = 23, xpTotal = 44, killsWithXp = 1,
+        xpBySource = { mob_kill = 44 },
+        creatures = "1,44,5644,6,Kobold Miner",
+      })
+
+      local loaded = newStore():load()
+      assert.is_false(loaded.archived)
+
+      local current = loaded:current()
+      local lynx = current.creatures["15343:6@?"]
+      assert.equal(15343, lynx.key.npcId)
+      assert.equal("Springpaw Lynx", lynx.key.name)
+      assert.equal(1, lynx.kills)
+      assert.equal(84, lynx.xpTotal)
+
+      -- Unknown, and deliberately not solo: most of these kills probably were solo,
+      -- which is exactly what would make claiming it undetectable (D84).
+      assert.is_nil(lynx.sharedBy)
+      assert.is_nil(current.creatures["15343:6@1"])
+
+      -- The levels already finished walk forward too. The step is handed the
+      -- repository, and the history is the larger part of what is in it.
+      assert.equal(44, loaded:completed(23).creatures["5644:6@?"].xpTotal)
+
+      -- The level's own sums live outside the packed text: this change separates a
+      -- breakdown, it does not restate a total.
+      assert.equal(128, current:xpFrom(ns.core.XpSource.MOB_KILL))
+      assert.equal(3, current.killsWithXp)
     end)
   end)
 

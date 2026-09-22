@@ -89,6 +89,8 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   PANEL_CREATURE_ROW  = "panel_creature_row",
   PANEL_CREATURE_LEVEL = "panel_creature_level",
   PANEL_UNKNOWN_CREATURE = "panel_unknown_creature",
+  PANEL_CREATURE_SHARED = "panel_creature_shared",
+  PANEL_CREATURE_MIXED = "panel_creature_mixed",
   PANEL_BY_PLACE      = "panel_by_place",
   PANEL_PLACE_CONTEXT = "panel_place_context",
   PANEL_UNKNOWN_PLACE = "panel_unknown_place",
@@ -131,8 +133,10 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   PANEL_OBJECTIVE     = "panel_objective",
   PANEL_OBJ_ESTIMATE  = "panel_obj_estimate",
   PANEL_OBJ_ROUGH     = "panel_obj_rough",
+  PANEL_OBJ_MIXED     = "panel_obj_mixed",
   PANEL_OBJ_NO_RATE   = "panel_obj_no_rate",
   PANEL_OBJ_FOOTNOTE  = "panel_obj_footnote",
+  PANEL_OBJ_MIXED_FOOTNOTE = "panel_obj_mixed_footnote",
   PANEL_PENDING_ROW   = "panel_pending_row",
   PANEL_READY_MARK    = "panel_ready_mark",
   PANEL_LBL_PROGRESS      = "panel_lbl_progress",
@@ -243,6 +247,17 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   OPT_SECTION_PREVIEW = "opt_section_preview",
   OPT_COLOR_RESTED    = "opt_color_rested",
   CMD_APPEARANCE_RESET= "cmd_appearance_reset",
+
+  -- The plate, from chat. Its own keys and not the bar's status lines, even where
+  -- the words would be the same: two surfaces sharing one key is the mistake 11.5
+  -- had to undo, and these are read side by side with the bar's.
+  CMD_PLATE_STATUS    = "cmd_plate_status",
+  CMD_PLATE_FRAME     = "cmd_plate_frame",
+  CMD_PLATE_AT        = "cmd_plate_at",
+  CMD_PLATE_ZONES     = "cmd_plate_zones",
+  CMD_PLATE_NO_ZONES  = "cmd_plate_no_zones",
+  CMD_PLATE_RESET     = "cmd_plate_reset",
+  CMD_BAD_PLATE       = "cmd_bad_plate",
   CMD_EVIDENCE_ON     = "cmd_evidence_on",
   CMD_EVIDENCE_OFF    = "cmd_evidence_off",
   CMD_EVIDENCE_STATUS = "cmd_evidence_status",
@@ -329,6 +344,42 @@ ns.core.TextKey = Frozen.enum("TextKey", {
   OPT_BAR_WIDTH       = "opt_bar_width",
   OPT_BAR_HEIGHT      = "opt_bar_height",
   OPT_MOTION_SCALE    = "opt_motion_scale",
+
+  -- The pull plate's own page (D92). One page carrying the surface's name, with
+  -- three headings inside it -- the frame, what it shows, and its own look --
+  -- rather than its lock filed under Behaviour and its width under Size.
+  --
+  -- Three of its controls deliberately have NO key of their own: the background
+  -- opacity, the border thickness and the text size are the same three words on
+  -- this page as on the bar's, and a second string saying "Text size" is a second
+  -- thing to translate and one more place for the two to drift apart.
+  OPT_PAGE_PLATE      = "opt_page_plate",
+  OPT_PAGE_PLATE_DESC = "opt_page_plate_desc",
+  OPT_SECTION_PLATE_FRAME   = "opt_section_plate_frame",
+  OPT_SECTION_PLATE_CONTENT = "opt_section_plate_content",
+  OPT_SECTION_PLATE_LOOK    = "opt_section_plate_look",
+  OPT_PLATE_ENABLED   = "opt_plate_enabled",
+  OPT_PLATE_LOCKED    = "opt_plate_locked",
+  OPT_PLATE_SCALE     = "opt_plate_scale",
+  OPT_PLATE_WIDTH     = "opt_plate_width",
+  OPT_PLATE_OPACITY   = "opt_plate_opacity",
+  -- Says what it costs, in the label, because it is not only a look: the plaque's
+  -- time on screen IS the window a closed pull can be carried on in (D89), and a
+  -- consequence the player only meets in their records is a consequence hidden.
+  OPT_PLATE_HOLD      = "opt_plate_hold",
+  OPT_PLATE_ROWS      = "opt_plate_rows",
+  OPT_PLATE_ZONE_CLOCK     = "opt_plate_zone_clock",
+  OPT_PLATE_ZONE_REMAINING = "opt_plate_zone_remaining",
+  OPT_PLATE_ZONE_STREAK    = "opt_plate_zone_streak",
+  OPT_PLATE_ZONE_SOURCES   = "opt_plate_zone_sources",
+  OPT_PLATE_ZONE_CREATURES = "opt_plate_zone_creatures",
+  OPT_PLATE_ZONE_ABILITIES = "opt_plate_zone_abilities",
+  OPT_PLATE_ZONE_FOOTER    = "opt_plate_zone_footer",
+  OPT_PLATE_ZONES_NONE = "opt_plate_zones_none",
+  OPT_PLATE_DEMO      = "opt_plate_demo",
+  OPT_PLATE_DEMO_TIP  = "opt_plate_demo_tip",
+  OPT_PLATE_RESET     = "opt_plate_reset",
+
   -- The pull plate. Short on purpose: every one of these sits in a frame a
   -- couple of hundred pixels wide, next to a number that is the actual content,
   -- and a label that wraps is a label that should have been an icon.

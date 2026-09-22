@@ -32,6 +32,27 @@ ns.core.SettingKey = Frozen.enum("SettingKey", {
   -- bottom wants the other somewhere else.
   PLATE_ENABLED      = "plate_enabled",
   PLATE_POSITION     = "plate_position",
+  -- Its own lock, deliberately not the bar's (D88). The two have opposite
+  -- ergonomics -- the bar is placed once and locked for good, the plate moves
+  -- whenever the fighting does -- and sharing one meant the bar slot, which
+  -- disables the bar's lock when it suspends its position, silently decided
+  -- whether the plate could be dragged.
+  PLATE_LOCKED       = "plate_locked",
+  PLATE_SCALE        = "plate_scale",
+  PLATE_WIDTH        = "plate_width",  -- the plate's own width, independent of PLATE_SCALE
+  -- A FACTOR on the alpha the plate is drawn with at each instant, never the
+  -- frame's alpha itself: that channel IS how the plate fades out, so a setting
+  -- written into it would fight the fade every frame and the last write would
+  -- win (D91).
+  PLATE_OPACITY      = "plate_opacity",
+  -- How long the finished plaque stays before it fades -- and with it, how long a
+  -- closed pull can still be resumed. One number for both on purpose: the spec
+  -- says a pull continues while it is still on screen, so stretching what is seen
+  -- stretches what can be continued (D89).
+  PLATE_HOLD_SECONDS = "plate_hold_seconds",
+  PLATE_ROWS         = "plate_rows",   -- creature and ability rows SHOWN; the rows built are the ceiling
+  PLATE_ZONES        = "plate_zones",  -- which accessory zones are drawn (PlateZone below)
+  PLATE_APPEARANCE   = "plate_appearance", -- the player's own tweaks ON TOP of the bar's resolved skin
 
   EVIDENCE           = "evidence", -- the flight recorder: file only, never chat
   -- Whether the addon asks the server for time played on entering the world.
@@ -67,9 +88,29 @@ ns.core.BarSlot = Frozen.enum("BarSlot", {
   REPLACE = "replace",
 })
 
+-- The accessory zones of the pull plate, one word per thing the player can turn
+-- off. The headline figure and its kill count are deliberately absent: they are
+-- the reason the plate appears at all, and a frame that shows up in combat
+-- without them is an empty frame with decoration (D90).
+--
+-- Order is not part of this vocabulary either. These strings are persisted, and
+-- the order the plate reads in -- what you got, against what, what is left, where
+-- it came from -- belongs to whoever lays it out, not to whatever order a saved
+-- file happens to list them in.
+ns.core.PlateZone = Frozen.enum("PlateZone", {
+  CLOCK     = "clock",     -- how long the fight has been going
+  REMAINING = "remaining", -- what the LEVEL still needs, not what the pull paid
+  STREAK    = "streak",    -- the running kill chain
+  SOURCES   = "sources",   -- the chip row: the pull's experience split by source
+  CREATURES = "creatures",
+  ABILITIES = "abilities",
+  FOOTER    = "footer",    -- damage per second and experience per hour
+})
+
 ns.core.ClientFlavor = Frozen.enum("ClientFlavor", {
   CLASSIC_ERA     = "classic_era",
   BURNING_CRUSADE = "burning_crusade",
+  FOREVER         = "forever",
   UNKNOWN         = "unknown",
 })
 
@@ -88,6 +129,13 @@ ns.core.ClientFlavor = Frozen.enum("ClientFlavor", {
 --            say how much of its unclassified experience was seeded, so the field
 --            restores nil -- "never recorded" -- rather than zero, which would
 --            claim the whole of it was observed and left unattributed.
+--   3 -> 4   a per-creature aggregate gained the size of the group the kills were
+--            paid to. The first step that CONVERTS rather than defaults: the group
+--            had to be written ahead of the creature's key, because the key is the
+--            line's tail and trailing empties are dropped, so every stored creature
+--            line shifts by one field. The step rewrites them with that field left
+--            blank -- unknown, never one -- because a level recorded before this
+--            distinction cannot say who was standing there (D84).
 ns.core.SchemaVersion = Frozen.enum("SchemaVersion", {
-  CURRENT = 3,
+  CURRENT = 4,
 })

@@ -170,4 +170,36 @@ function Frozen.each(frozen)
   end
 end
 
+-- A plain, writable deep copy of a value that may be frozen. The two shapes both
+-- need one and for different reasons: a map comes back as a proxy, which `pairs`
+-- cannot walk and which raises on a key it does not have, and an array comes back
+-- as the backing store itself (see the header), so whoever keeps one has the
+-- addon's own constants one write away from whatever they kept it in.
+--
+-- Saved variables are the case that makes this more than tidiness. A proxy is an
+-- empty carrier with a metatable, so writing one to disk stores an EMPTY table:
+-- a setting reset to its default would come back from the next session having
+-- lost itself, in silence, with nothing to read.
+--
+-- Not Stored.plainCopy, which is the other direction: that one walks a RECORD on
+-- its way to disk and raises on a metatable, because a proxy in a record is a bug
+-- rather than a table to copy. This one exists to get rid of exactly that proxy.
+function Frozen.plain(value)
+  if Frozen.isFrozen(value) then
+    local copy = {}
+    for key, inner in Frozen.each(value) do
+      copy[key] = Frozen.plain(inner)
+    end
+    return copy
+  end
+  if type(value) ~= "table" then
+    return value
+  end
+  local copy = {}
+  for key, inner in pairs(value) do
+    copy[key] = Frozen.plain(inner)
+  end
+  return copy
+end
+
 ns.core.Frozen = Frozen

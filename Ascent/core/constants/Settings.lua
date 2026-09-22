@@ -17,6 +17,7 @@ local Frozen = ns.core.Frozen
 local SettingKey = ns.core.SettingKey
 local TextToken = ns.core.TextToken
 local BarSlot = ns.core.BarSlot
+local PlateZone = ns.core.PlateZone
 
 ns.core.Defaults = Frozen.enum("Defaults", {
   -- Fraction of health and primary resource above which the player counts as
@@ -105,6 +106,48 @@ ns.core.Defaults = Frozen.enum("Defaults", {
   -- position missing the second half reaches a frozen read that raises.
   [SettingKey.PLATE_POSITION] = { point = "CENTER", relativePoint = "CENTER", x = 0, y = -120 },
 
+  -- Unlocked, like the bar's own lock and for the same reason: an update must not
+  -- hand anyone a surface they cannot move. Whoever locked the bar in order to
+  -- lock both finds the plate loose after updating -- the cost is declared in the
+  -- proposal, and the alternative was a schema version and a migration for one
+  -- checkbox (D88).
+  [SettingKey.PLATE_LOCKED] = false,
+
+  [SettingKey.PLATE_SCALE] = 1.0,
+
+  -- These four were file literals in ui/PullPlateView.lua until they became
+  -- settings -- WIDTH = 240, HOLD_SECONDS = 6 -- and the row counts were
+  -- PullViewModel's own TOP_CREATURES and TOP_ABILITIES. The defaults ARE those
+  -- numbers, so the first session after updating draws the plate that was there
+  -- before and nothing moves under anyone who never opens the page.
+  [SettingKey.PLATE_WIDTH] = 240,
+  -- A factor, not an alpha: 1 is "whatever the plate would have drawn anyway",
+  -- which is the only default that changes nothing (D91).
+  [SettingKey.PLATE_OPACITY] = 1,
+  [SettingKey.PLATE_HOLD_SECONDS] = 6,
+  [SettingKey.PLATE_ROWS] = 4,
+
+  -- Every zone on, for the same reason: the plate an existing install draws after
+  -- updating is the plate it drew before. A list and not a map of flags, so that
+  -- a zone this build does not know is one entry to drop rather than a key to
+  -- explain -- see SettingListChoices below.
+  [SettingKey.PLATE_ZONES] = {
+    PlateZone.CLOCK,
+    PlateZone.REMAINING,
+    PlateZone.STREAK,
+    PlateZone.SOURCES,
+    PlateZone.CREATURES,
+    PlateZone.ABILITIES,
+    PlateZone.FOOTER,
+  },
+
+  -- Empty, exactly like BAR_APPEARANCE and for exactly the same reason: an empty
+  -- table is array-like to Frozen, so it declares no shape and is taken or
+  -- rejected WHOLE rather than completed key by key. That is the point -- what is
+  -- stored here means "only what the player changed", so their one tweak survives
+  -- the bar switching skins underneath it (D87).
+  [SettingKey.PLATE_APPEARANCE] = {},
+
   [SettingKey.EVIDENCE] = false,
   [SettingKey.TIME_SYNC] = true,
   [SettingKey.DEBUG] = false,
@@ -121,6 +164,45 @@ ns.core.SettingRange = Frozen.enum("SettingRange", {
   [SettingKey.BAR_SCALE] = { min = 0.5, max = 2.0 },
   [SettingKey.MOTION_SCALE] = { min = 0, max = 1 },
   [SettingKey.RECOVERY_THRESHOLD] = { min = 0, max = 1 },
+
+  -- The plate's half. Wide on purpose -- see SettingPanelRange below for the half
+  -- the player is actually offered. A hold of zero would be a plaque gone before
+  -- it can be read AND a resume window shut before the client has paid the
+  -- experience for the last kill of the pull, which in Classic arrives after it.
+  [SettingKey.PLATE_WIDTH] = { min = 120, max = 800 },
+  [SettingKey.PLATE_SCALE] = { min = 0.5, max = 3.0 },
+  [SettingKey.PLATE_OPACITY] = { min = 0, max = 1 },
+  [SettingKey.PLATE_HOLD_SECONDS] = { min = 1, max = 120 },
+  -- The ceiling here is also how many rows the plate BUILDS: they are created
+  -- once and shown or hidden, never built in combat, so this number is paid for
+  -- at load whether or not anybody asks for it.
+  [SettingKey.PLATE_ROWS] = { min = 1, max = 8 },
+})
+
+-- What the options panel offers for those same settings, which is deliberately
+-- narrower than what the setting admits. The two say different things: the range
+-- above is the last line before a hand-edited file reaches a frame, and this one
+-- is what makes sense to drag.
+--
+-- The bar has had both halves for a while -- its width admits 60..1600 and its
+-- slider offers 120..900 -- with the panel's half written as a literal in
+-- ui/OptionsPanel.lua. The plate's is declared here instead because the
+-- containment between the two is a claim worth a test, and core/ is the only
+-- layer that has any (D93).
+--
+-- It matters most for how long the plate stays. That number also decides how long
+-- a closed pull can be resumed (D89), so a hold of minutes would quietly make
+-- every fight in a zone the same pull: the setting still admits it, the panel
+-- does not offer it.
+ns.core.SettingPanelRange = Frozen.enum("SettingPanelRange", {
+  [SettingKey.PLATE_SCALE] = { min = 0.75, max = 2.0, step = 0.05 },
+  [SettingKey.PLATE_WIDTH] = { min = 180, max = 480, step = 10 },
+  -- Not down to zero: a plate at zero opacity is a surface that is still there,
+  -- still catching the mouse, and impossible to find again. That belongs to the
+  -- hand-edited file and its reset command, not to a slider.
+  [SettingKey.PLATE_OPACITY] = { min = 0.2, max = 1, step = 0.05 },
+  [SettingKey.PLATE_HOLD_SECONDS] = { min = 3, max = 20, step = 1 },
+  [SettingKey.PLATE_ROWS] = { min = 1, max = 6, step = 1 },
 })
 
 -- Settings whose value is a closed vocabulary rather than a number or a flag.
@@ -135,6 +217,54 @@ ns.core.SettingRange = Frozen.enum("SettingRange", {
 -- comes back. A slot the client cannot honour is a different thing -- see D49.
 ns.core.SettingChoices = Frozen.enum("SettingChoices", {
   [SettingKey.BAR_SLOT] = { [BarSlot.OFF] = true, [BarSlot.INSET] = true, [BarSlot.REPLACE] = true },
+})
+
+-- Settings whose value is a LIST, every entry of which must belong to a closed
+-- vocabulary. What separates these from SettingChoices above is what a bad value
+-- costs: a scalar outside its vocabulary carries no intent and the whole value
+-- falls back, but a list is several choices in one key, and throwing all of them
+-- away because a hand-edited file carries one word this build does not know would
+-- charge the player for six decisions they did make. The unknown entry is dropped
+-- and the key reported, the same way a value of the wrong type is.
+--
+-- An empty list survives this untouched, and that is deliberate: every accessory
+-- zone off is a player who wants the headline and nothing else (D90), not a
+-- corrupt file.
+ns.core.SettingListChoices = Frozen.enum("SettingListChoices", {
+  [SettingKey.PLATE_ZONES] = {
+    [PlateZone.CLOCK] = true,
+    [PlateZone.REMAINING] = true,
+    [PlateZone.STREAK] = true,
+    [PlateZone.SOURCES] = true,
+    [PlateZone.CREATURES] = true,
+    [PlateZone.ABILITIES] = true,
+    [PlateZone.FOOTER] = true,
+  },
+})
+
+-- Everything the plate owns, and nothing the bar does. Two resets are driven by
+-- this list -- the button on the plate's page and `/ascent options plate reset`
+-- -- and they have to return the same keys, because the one a player reaches for
+-- is whichever surface they can still use. The bar is absent on purpose: the
+-- plate follows its skin, palette and contrast (D87), so a reset that reached
+-- those would undo, from a page and a command that never mention the bar,
+-- choices made for the other surface.
+--
+-- Written out rather than matched on the `plate_` prefix the persisted strings
+-- happen to share: which keys belong to the plate is a decision, and the prefix
+-- is what the spec uses as an independent oracle to catch this list drifting
+-- behind the vocabulary.
+ns.core.PlateSettingKeys = Frozen.enum("PlateSettingKeys", {
+  SettingKey.PLATE_ENABLED,
+  SettingKey.PLATE_POSITION,
+  SettingKey.PLATE_LOCKED,
+  SettingKey.PLATE_SCALE,
+  SettingKey.PLATE_WIDTH,
+  SettingKey.PLATE_OPACITY,
+  SettingKey.PLATE_HOLD_SECONDS,
+  SettingKey.PLATE_ROWS,
+  SettingKey.PLATE_ZONES,
+  SettingKey.PLATE_APPEARANCE,
 })
 
 local Settings = {}
@@ -160,6 +290,33 @@ local function allowed(key, value)
     return true
   end
   return Frozen.has(ns.core.SettingChoices[key], value)
+end
+
+-- Drop the entries of a list-valued setting that its vocabulary does not name.
+-- Hands back the very value it was given when the setting has no list vocabulary,
+-- so a caller can pass anything through it -- the same shape `clamped` has, where
+-- only a number with a declared range is touched.
+local function pruned(key, value)
+  if type(value) ~= "table" or not Frozen.has(ns.core.SettingListChoices, key) then
+    return value
+  end
+  local vocabulary = ns.core.SettingListChoices[key]
+  local kept = {}
+  for index = 1, #value do
+    if Frozen.has(vocabulary, value[index]) then
+      kept[#kept + 1] = value[index]
+    end
+  end
+  return kept
+end
+
+-- Whether pruning actually lost something, which is what makes a key worth
+-- reporting. Identity is asked first on purpose: `pruned` returns the value
+-- itself when there is nothing to prune, and `#` on a stored string would
+-- otherwise raise inside the very function that exists to describe junk data.
+local function prunes(key, value)
+  local kept = pruned(key, value)
+  return kept ~= value and #kept ~= #value
 end
 
 -- Saved variables are a text file the player can edit and a place older and newer
@@ -211,7 +368,7 @@ function Settings.resolve(overrides)
     if definesShape(fallback) then
       resolved[key] = completeShape(type(override) == "table" and override or {}, fallback)
     elseif usable(override, fallback) and allowed(key, override) then
-      resolved[key] = clamped(key, override)
+      resolved[key] = clamped(key, pruned(key, override))
     else
       resolved[key] = fallback
     end
@@ -226,7 +383,8 @@ function Settings.invalidKeys(overrides)
   local invalid = {}
   for key, fallback in Frozen.each(ns.core.Defaults) do
     local override = (overrides or {})[key]
-    if override ~= nil and (not usable(override, fallback) or not allowed(key, override)) then
+    if override ~= nil and (not usable(override, fallback) or not allowed(key, override)
+      or prunes(key, override)) then
       invalid[#invalid + 1] = key
     end
   end

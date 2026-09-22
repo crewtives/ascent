@@ -147,7 +147,7 @@ describe("LevelBreakdownViewModel", function()
 
       -- Never posted through the ledger (nothing produces a zero-kill bucket for
       -- real): inserted directly to prove the filter excludes it.
-      record.creatures["9:1"] = { key = CreatureKey.new(9, 1), kills = 0, xpTotal = 0 }
+      record.creatures["9:1@?"] = { key = CreatureKey.new(9, 1), kills = 0, xpTotal = 0 }
 
       local viewModel = LevelBreakdownViewModel.build(record)
 
@@ -157,6 +157,55 @@ describe("LevelBreakdownViewModel", function()
       assert.equal(1, viewModel.topCreatures[2].creatureKey.npcId) -- weakCreature: 5 kills, 100 xp
       assert.equal(3, viewModel.topCreatures[3].creatureKey.npcId) -- rareCreature: 2 kills
       assert.equal(2, viewModel.topCreatures[3].kills)
+    end)
+
+    -- 2.4: one row per population, not per creature. Adding the two back together
+    -- here would print the mixed average this change exists to stop showing --
+    -- separated in the file and mixed again on the screen is the worst of both --
+    -- so each row says which group it was measured in, and the panel is told which
+    -- of them is the group of now.
+    it("keeps a creature's two populations apart and marks the one being played now", function()
+      local record = level(10, 1000)
+      local lynx = CreatureKey.new(15343, 6, "Springpaw Lynx")
+      for _ = 1, 3 do
+        XpLedger.post(record, gain({ amount = 42, creature = lynx, sharedBy = 1 }))
+      end
+      for _ = 1, 3 do
+        XpLedger.post(record, gain({ amount = 10, creature = lynx, sharedBy = 5 }))
+      end
+
+      local viewModel = LevelBreakdownViewModel.build(record, 5)
+
+      assert.equal(2, #viewModel.topCreatures)
+      local byGroup = {}
+      local paid = 0
+      for _, row in ipairs(viewModel.topCreatures) do
+        byGroup[row.sharedBy] = row
+        paid = paid + row.xpTotal
+      end
+      assert.equal(126, byGroup[1].xpTotal)
+      assert.is_false(byGroup[1].current)
+      assert.equal(30, byGroup[5].xpTotal)
+      assert.is_true(byGroup[5].current, "the group of now is the one the estimates read")
+      assert.equal(156, paid, "and the two together are still what the creature paid")
+
+      -- Same record, a character now playing alone: nothing recorded moved, only
+      -- which population describes what it is doing (D81).
+      for _, row in ipairs(LevelBreakdownViewModel.build(record, 1).topCreatures) do
+        assert.equal(row.sharedBy == 1, row.current)
+      end
+    end)
+
+    -- D84: the context nobody counted is its own population, and a row for it must
+    -- not be dressed up as the one measured while playing alone.
+    it("never marks kills nobody counted as the group of now", function()
+      local record = level(10, 1000)
+      XpLedger.post(record, gain({ amount = 42, creature = CreatureKey.new(15343, 6, "Springpaw Lynx") }))
+
+      local row = LevelBreakdownViewModel.build(record, 1).topCreatures[1]
+
+      assert.is_nil(row.sharedBy)
+      assert.is_false(row.current)
     end)
   end)
 

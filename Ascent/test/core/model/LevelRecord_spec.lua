@@ -212,6 +212,72 @@ describe("LevelRecord", function()
       PlaceKey, PlaceContext = ns.core.PlaceKey, ns.core.PlaceContext
     end)
 
+    -- The experience dimension balances because what cannot be attributed goes
+    -- somewhere explicit. Time had no such somewhere, so a level could measure
+    -- less than it played and say nothing at all about the difference (D78).
+    describe("the time it could not place", function()
+      local function played(record, seconds)
+        record.playedSeconds = seconds
+        record.timeAnchored = true
+        return record
+      end
+
+      it("names the difference between the time played and the time measured", function()
+        local record = played(ns.core.LevelRecord.new(5, 0), 9304)
+        seed(record, PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), 900, 8000)
+        seed(record, PlaceKey.new(PlaceContext.DUNGEON, 1581, "The Deadmines"), 100, 931)
+
+        assert.equal(8931, record:sumOfPlaceSeconds())
+        assert.equal(373, record:unaccountedSeconds())
+      end)
+
+      -- The invariant the figure exists to make writable. Its counterpart on the
+      -- experience side has been assertable since the beginning; this one could
+      -- not even be stated before.
+      it("adds up: the places plus what they could not account for is the time played", function()
+        local record = played(ns.core.LevelRecord.new(5, 0), 9304)
+        seed(record, PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), 900, 8000)
+        seed(record, PlaceKey.new(PlaceContext.DUNGEON, 1581, "The Deadmines"), 100, 931)
+
+        assert.equal(record.playedSeconds, record:sumOfPlaceSeconds() + record:unaccountedSeconds())
+      end)
+
+      it("answers zero when every second of the level was measured", function()
+        local record = played(ns.core.LevelRecord.new(5, 0), 8000)
+        seed(record, PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), 900, 8000)
+
+        assert.equal(0, record:unaccountedSeconds())
+        assert.is_false(record:timeUnderflowed())
+      end)
+
+      -- Zero would be a claim this level cannot make: it never heard the
+      -- server's figure, so it does not know whether it measured everything.
+      it("answers nothing at all when the level was never anchored against the server", function()
+        local record = ns.core.LevelRecord.new(5, 0)
+        seed(record, PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), 900, 8000)
+
+        assert.is_nil(record:unaccountedSeconds())
+      end)
+
+      it("answers nothing for a level written before places were tracked", function()
+        local record = played(ns.core.LevelRecord.new(5, 0), 9304)
+
+        assert.is_false(record:hasPlaces())
+        assert.is_nil(record:unaccountedSeconds())
+      end)
+
+      -- A negative difference is not less time, it is a broken anchor: the
+      -- server's figure arrived after seconds had already been booked against
+      -- places. Floored, and flagged, rather than shown as if it were time.
+      it("floors at zero and says so when the anchor landed late", function()
+        local record = played(ns.core.LevelRecord.new(5, 0), 500)
+        seed(record, PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), 900, 8000)
+
+        assert.equal(0, record:unaccountedSeconds())
+        assert.is_true(record:timeUnderflowed())
+      end)
+    end)
+
     it("leaves the reserved entry out of what was placed", function()
       local record = ns.core.LevelRecord.new(5, 0)
       seed(record, PlaceKey.new(PlaceContext.WORLD, 1429, "Elwynn Forest"), 900)

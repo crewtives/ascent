@@ -97,9 +97,16 @@ local CopyDialog = ns.ui.CopyDialog
 local CopyReport = ns.core.CopyReport
 -- The update check is reached through `ns` at the point of use rather than
 -- through file-local aliases like the lines above. Lua 5.1 allows a function 60
--- upvalues and buildContext, which is this whole file, was already at 57: four
--- more aliases is a SYNTAX error at load time, in the client, with nothing to
--- read. Anything added here from now on has the same budget to respect.
+-- upvalues and buildContext, which is this whole file, spends all 60: the budget
+-- this note once advertised is gone, and ONE more alias used in there is a SYNTAX
+-- error at load time, in the client, with nothing to read.
+--
+-- Re-measured 2026-09-22 (it had drifted -- this said 57): every file-local above
+-- is an upvalue of buildContext, so there is no dead alias to reclaim, and a copy
+-- with one more fails to compile with "has more than 60 upvalues". Worse, luajit
+-- blames the line of buildContext's `end`, not the alias that overflowed it.
+-- `ns` is already one of the 60, so `ns.core.X` at the point of use is free.
+-- Method and figures: openspec/changes/add-ascent-plate-customisation/design.md.
 
 local LocaleTable = ns.locale.LocaleTable
 
@@ -341,7 +348,8 @@ local function buildContext()
     evidence:record(kind, fields)
   end
 
-  CombatLogRouter.new({ bus = bus, clock = clock, playerState = playerState, logger = logger }):start()
+  CombatLogRouter.new({ bus = bus, clock = clock, playerState = playerState, logger = logger,
+    recordEvidence = recordEvidence }):start()
   TimePlayedSync.new({
     bus = bus, clock = clock, logger = logger,
     recordEvidence = recordEvidence,
@@ -499,9 +507,16 @@ local function buildContext()
     clock = clock,
     enabled = function() return settings[SettingKey.PLATE_ENABLED] end,
     -- A pull can be carried on for exactly as long as the player can still see
-    -- it. Read off the view rather than restated here, so the offer the plate is
-    -- making and the window the tracker honours cannot disagree.
-    resumeSeconds = PullPlateView.VISIBLE_SECONDS,
+    -- it. Derived rather than restated, so the offer the plate is making and the
+    -- window the tracker honours cannot disagree.
+    --
+    -- A FUNCTION and not the number, because how long the plaque stays is the
+    -- player's now (D89): captured as a value, changing it would move what is
+    -- drawn and not what counts as the same fight until the next /reload -- the
+    -- gap RECOVERY_THRESHOLD still has and COLLECT_DAMAGE closed the same way.
+    resumeSeconds = function()
+      return settings[SettingKey.PLATE_HOLD_SECONDS] + PullPlateView.FADE_SECONDS
+    end,
   })
 
   -- A pull that never happened, for looking at the plate without going to find
@@ -693,6 +708,11 @@ local function buildContext()
     panel = ReportPanelView.new({
       settings = settings, saveSetting = saveSetting, currentRecord = recordingLevel,
       questForecastService = questForecastService, questNames = questNames, locale = locale,
+      -- How many are sharing the pay right now. The domain cannot ask the client
+      -- itself, so the question crosses here, through the port, exactly like every
+      -- other reading of the character's state -- and it is asked on each rebuild
+      -- because the answer changes the moment the player joins or leaves a group.
+      sharedBy = function() return playerState:sharedBy() end,
       -- The three history seams (6.7). Functions rather than the store itself, for
       -- the same reason `currentRecord` is one: the view asks a question and gets
       -- an answer, and never learns that a RecordStore exists.
@@ -734,6 +754,9 @@ local function buildContext()
       -- per-creature history to say what the things still standing are likely to
       -- pay. The same indirection everything else here uses.
       levelRecord = recordingLevel,
+      -- The other half of what the forecast needs: which population to price it
+      -- from. Same seam, same reason as the panel's.
+      sharedBy = function() return playerState:sharedBy() end,
       levelProgress = function()
         local record = recordingLevel()
         if record == nil or record.xpRequired == nil or record.xpRequired <= 0 then
@@ -849,7 +872,7 @@ local function buildContext()
   local lastSweepAt = nil
   local nameplateWatch = ns.adapter.NameplateWatch.new({
     bus = bus, recordEvidence = recordEvidence,
-  })
+  }):start()
 
   local ticker = CreateFrame("Frame")
   ticker:SetScript("OnUpdate", function(_, elapsed)
@@ -877,7 +900,20 @@ local function buildContext()
     -- throttled AND gated): only while a pull is actually open, so out of combat
     -- it costs one comparison, and four times a second inside one, which is far
     -- faster than a creature can cross the ground between you.
-    if pullTracker:current() ~= nil and (lastSweepAt == nil or now - lastSweepAt >= 0.25) then
+    -- It used to run ONLY while a pull was already open, which put the one thing
+    -- that could see a creature coming behind the thing it was supposed to
+    -- precede: of nine fights recorded on 2026-09-22, eight were opened by a
+    -- combat log line and the sweep was switched off for every one of them until
+    -- after the fact. A creature charging you with a shield up writes nothing the
+    -- client calls damage, so the plate stayed empty until something landed.
+    --
+    -- Now it always runs, and the rate is what keeps D6's budget: four times a
+    -- second inside a fight, where creatures arrive and the answer changes, and
+    -- once a second outside one, which is far faster than anything can cross the
+    -- ground between you and still slow enough to disappear into the frame this
+    -- OnUpdate was already paying for.
+    local sweepEvery = pullTracker:current() ~= nil and 0.25 or 1
+    if lastSweepAt == nil or now - lastSweepAt >= sweepEvery then
       lastSweepAt = now
       nameplateWatch:sweep()
     end
@@ -893,6 +929,17 @@ local function buildContext()
           plate:follow(plateDemo, now)
         end
       elseif pullTracker:consumeChange() then
+        -- What the plate is actually being handed, which until now was the one
+        -- link in this chain with no instrument on it. Three sessions were spent
+        -- reasoning about an empty plate from enrolment data alone -- the file
+        -- could say a creature joined a pull and nothing at all about whether a
+        -- pull existed, what phase it was in, or what the view was asked to draw.
+        --
+        -- Only on a change, which is already throttled by consumeChange, and a
+        -- counter-only family so it can never crowd the ring.
+        local pull = pullTracker:current()
+        recordEvidence("plate." .. tostring(pullTracker:currentPhase())
+          .. "." .. (pull ~= nil and tostring(pull:engagedCount()) or "nopull"))
         plate:follow(pullTracker, now)
       end
       plate:tick(elapsed)
@@ -1010,6 +1057,12 @@ local function buildContext()
     -- drive, and asking for the instance would have tied the preview to a
     -- session where the views were built successfully.
     demoSample = DemoDriver.sample,
+    -- The plate's page has no preview of its own and does not want one (D92):
+    -- its button runs THIS, the same fake pull `/ascent options plate demo`
+    -- runs, on the real plate. Published as the function rather than as the
+    -- stand-in it builds, for the same reason demoSample is a module function --
+    -- the panel wants to start one, not to drive one.
+    startPlateDemo = startPlateDemo,
   }
   ns.app.context = context
 
@@ -1026,7 +1079,17 @@ local function buildContext()
     { "panel", TextKey.CMD_HELP_PANEL },
     { "summary", TextKey.CMD_HELP_SUMMARY },
     { "pending", TextKey.CMD_HELP_PENDING },
-    { "options [reset|skin <id>|contrast on|off|motion <0-1>|lock|unlock|scale <n>|debug on|off]",
+    -- Every subcommand handleOptions answers, and nothing else. It had grown three
+    -- short: `plate`, `slot` and `panel` all shipped without ever reaching this
+    -- line, which documents a command that does not exist just as surely as
+    -- advertising one that was folded away does -- and the harness checks it by
+    -- running what this line announces.
+    --
+    -- The alternatives are bracketed so that each one's first word IS the
+    -- keyword: `contrast on|off` read as two alternatives, the second of them
+    -- "off", which is not a subcommand at all.
+    { "options [reset|skin <id>|slot <where>|plate [on|off|demo|reset]|panel"
+      .. "|contrast <on|off>|motion <0-1>|lock|unlock|scale <n>|debug <on|off>]",
       TextKey.CMD_HELP_OPTIONS },
     { "reset confirm", TextKey.CMD_HELP_RESET },
     { "debug [evidence on|off|reset] [timesync on|off]", TextKey.CMD_HELP_DEBUG },
@@ -1090,6 +1153,45 @@ local function buildContext()
       logger:warn(locale:get(TextKey.CMD_SLOT_NO_CLIENT_BAR))
     end
   end
+
+  -- What `/ascent options plate` answers with no argument, the way `skin` and
+  -- `slot` already do. Written for a player who cannot find the plate at all, so
+  -- it leads with the three states that hide one -- switched off, transparent, or
+  -- dropped past the edge of the screen -- and says where it is before what it
+  -- draws. The lock is on the first line because it is what stops them moving it
+  -- once they have found it.
+  --
+  -- The plate's own appearance map is deliberately not printed: it is partial by
+  -- design (D87), it is the page's business, and no axis in it can hide a plate.
+  local function printPlateStatus()
+    logger:info(locale:get(TextKey.CMD_PLATE_STATUS,
+      tostring(settings[SettingKey.PLATE_ENABLED]),
+      tostring(settings[SettingKey.PLATE_LOCKED])))
+    logger:info(locale:get(TextKey.CMD_PLATE_FRAME,
+      tostring(settings[SettingKey.PLATE_SCALE]),
+      tostring(settings[SettingKey.PLATE_WIDTH]),
+      tostring(settings[SettingKey.PLATE_OPACITY]),
+      tostring(settings[SettingKey.PLATE_HOLD_SECONDS]),
+      tostring(settings[SettingKey.PLATE_ROWS])))
+
+    local position = settings[SettingKey.PLATE_POSITION]
+    logger:info(locale:get(TextKey.CMD_PLATE_AT,
+      tostring(position.point), tostring(position.x), tostring(position.y)))
+
+    -- Through the layout service, so what is printed is in the order the plate
+    -- draws (D90) rather than in whatever order the saved file happens to list.
+    local zones = ns.core.PlateLayout.zones(settings[SettingKey.PLATE_ZONES])
+    if #zones == 0 then
+      logger:info(locale:get(TextKey.CMD_PLATE_NO_ZONES))
+    else
+      logger:info(locale:get(TextKey.CMD_PLATE_ZONES, table.concat(zones, ", ")))
+    end
+  end
+
+  -- The plate's vocabulary, spelled the way the dispatcher matches it. A literal
+  -- rather than a locale string, for the same reason the help keywords are: a
+  -- translated keyword would name a command that no longer answers.
+  local PLATE_CHOICES = "on, off, demo, reset"
 
   local function handleOptions(rest)
     local sub, arg = splitFirst(rest)
@@ -1163,7 +1265,9 @@ local function buildContext()
       -- hurry -- mid-raid, mid-anything -- so it gets a typed way out that does
       -- not require finding a checkbox first.
       local wanted = arg:lower()
-      if wanted == "on" then
+      if wanted == "" then
+        printPlateStatus()
+      elseif wanted == "on" then
         saveSetting(SettingKey.PLATE_ENABLED, true)
       elseif wanted == "off" then
         saveSetting(SettingKey.PLATE_ENABLED, false)
@@ -1173,8 +1277,26 @@ local function buildContext()
         else
           startPlateDemo()
         end
+      elseif wanted == "reset" then
+        -- The way back, and for this surface the only one there is. The plate's
+        -- page is reached by clicking, and a plate dragged off the screen or left
+        -- at an opacity that hides it cannot be clicked: you cannot grab what you
+        -- cannot see. Same argument as the bar's reset above, and the same
+        -- promise -- this resets how the plate LOOKS, never what was recorded.
+        --
+        -- Its own keys and no others (D87): the plate follows the bar's skin,
+        -- palette and contrast, so a reset that reached those would undo, from a
+        -- command about one surface, choices made for the other. The list is
+        -- shared with the button on the plate's page so the two cannot disagree.
+        for _, key in ipairs(ns.core.PlateSettingKeys) do
+          -- A COPY of the default, never the default itself: a frozen map's proxy
+          -- written back is an empty carrier and reaches disk empty, and the zone
+          -- list a frozen table answers with IS its backing store.
+          saveSetting(key, Frozen.plain(ns.core.Defaults[key]))
+        end
+        logger:info(locale:get(TextKey.CMD_PLATE_RESET))
       else
-        logger:warn(locale:get(TextKey.CMD_BAD_ON_OFF, arg))
+        logger:warn(locale:get(TextKey.CMD_BAD_PLATE, PLATE_CHOICES))
       end
     elseif sub == "contrast" then
       if arg:lower() == "on" then
@@ -1359,6 +1481,80 @@ local function buildContext()
       questLogReader.objectivesRead, questLogReader.objectivesSeen))
   end
 
+  -- What the group dimension has actually collected, which is the only way the
+  -- design's open question -- whether sizes that turn up once a level deserve
+  -- lumping in with a bigger one -- gets settled against a file instead of an
+  -- argument. It needs a SAMPLE COUNT, and no other surface carries one: the panel
+  -- and the plate price a population, they never say how thin it is.
+  --
+  -- Grouped by NAME and not by aggregate, because the name is what the estimator
+  -- matches on: `creatureRate` sums every level band of a name at one group size,
+  -- so the population behind a number is the pair (name, size), and a listing
+  -- split per band would show halves of one.
+  local function printGroupDebug()
+    -- Asked of the port rather than of `GetNumGroupMembers`, so the figure printed
+    -- here is the one the estimator will be handed -- including the translation
+    -- of the client's zero into the one person who is always there (D85).
+    logger:info(("group: %d sharing the pay"):format(playerState:sharedBy()))
+
+    local record = tracker:current()
+    local order, byName, populations = {}, {}, 0
+    for _, bucket in pairs(record ~= nil and record.creatures or {}) do
+      -- An aggregate nobody could identify has no name to print, and its id is
+      -- what the rest of the addon calls it by.
+      local name = bucket.key.name or bucket.key:id()
+      local entry = byName[name]
+      if entry == nil then
+        entry = { kills = 0, sizes = {}, order = {} }
+        byName[name] = entry
+        order[#order + 1] = name
+      end
+      -- `false` and not nil: the kills nobody counted are a population of their
+      -- own (D84), and a nil would drop them out of the very list they belong in.
+      local size = bucket.sharedBy or false
+      if entry.sizes[size] == nil then
+        entry.sizes[size] = 0
+        entry.order[#entry.order + 1] = size
+        populations = populations + 1
+      end
+      entry.sizes[size] = entry.sizes[size] + bucket.kills
+      entry.kills = entry.kills + bucket.kills
+    end
+
+    if #order == 0 then
+      logger:info("creature populations: none recorded for the level in progress")
+      return
+    end
+
+    -- Most-killed first, so a population of one reads as thin beside something
+    -- that had a real chance to accumulate; by name after that, so the same level
+    -- prints the same report twice running.
+    table.sort(order, function(a, b)
+      if byName[a].kills ~= byName[b].kills then
+        return byName[a].kills > byName[b].kills
+      end
+      return a < b
+    end)
+
+    logger:info(("creature populations: %d across %d creatures"):format(populations, #order))
+    for _, name in ipairs(order) do
+      local entry = byName[name]
+      -- Smallest group first and the uncounted one last: it is what was recorded
+      -- before this distinction existed, and it stops growing the moment this
+      -- build runs, so it belongs at the end rather than in the middle.
+      table.sort(entry.order, function(a, b)
+        return (a or math.huge) < (b or math.huge)
+      end)
+      local parts = {}
+      for _, size in ipairs(entry.order) do
+        parts[#parts + 1] = size
+          and ("%d shared by %d"):format(entry.sizes[size], size)
+          or ("%d nobody counted"):format(entry.sizes[size])
+      end
+      logger:info(("  %s: %s"):format(name, table.concat(parts, ", ")))
+    end
+  end
+
   local function printDebug()
     logger:info(("flavor: %s"):format(Compat.flavor()))
     logger:info(("max level: %d"):format(Compat.maxLevel()))
@@ -1490,6 +1686,8 @@ local function buildContext()
     else
       logger:info("places: none recorded for the level in progress")
     end
+
+    printGroupDebug()
 
     -- Everything the diagnostic knows, in one command. There used to be three of
     -- them and no reason for it: a player chasing one number had to know which

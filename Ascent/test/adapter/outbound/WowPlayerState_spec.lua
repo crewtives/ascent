@@ -5,7 +5,7 @@ describe("WowPlayerState", function()
     "GetMaxPlayerLevel", "UnitLevel", "UnitXP", "UnitXPMax", "GetXPExhaustion",
     "IsResting", "IsXPUserDisabled", "UnitHealth", "UnitHealthMax",
     "UnitPower", "UnitPowerMax", "UnitGUID", "UnitName", "GetRealmName",
-    "IsInInstance", "GetInstanceInfo", "GetZoneText", "C_Map",
+    "IsInInstance", "GetInstanceInfo", "GetZoneText", "C_Map", "GetNumGroupMembers",
   }
 
   local function load(overrides)
@@ -29,6 +29,8 @@ describe("WowPlayerState", function()
       return overrides.instanceName, overrides.instanceType, nil, nil, nil, nil, nil, overrides.instanceId
     end
     _G.GetZoneText = function() return overrides.zone or "Elwynn Forest" end
+    -- 0 is what the live client answers out of a group, so it is the default here.
+    _G.GetNumGroupMembers = function() return overrides.groupMembers or 0 end
     _G.C_Map = overrides.noMapApi and {} or {
       GetBestMapForUnit = function() return overrides.mapId end,
       -- Answers nothing unless a case asks for a map name, so the cases that do not
@@ -177,6 +179,30 @@ describe("WowPlayerState", function()
       load({ inInstance = true, instanceType = "scenario", instanceId = 700 })
 
       assert.is_nil((state:place()))
+    end)
+  end)
+
+  -- D85: the port asks how many people share the payment, not what
+  -- `GetNumGroupMembers()` returns. The client counts a party and a raid through
+  -- that one call, so both sizes arrive the same way -- and out of a group it
+  -- answers 0, which is the one answer that is not a number of people.
+  describe("how many share what a kill pays", function()
+    it("is one alone, where the client counts nobody", function()
+      load({ groupMembers = 0 })
+
+      assert.equal(1, state:sharedBy())
+    end)
+
+    it("is the whole party, the character included", function()
+      load({ groupMembers = 5 })
+
+      assert.equal(5, state:sharedBy())
+    end)
+
+    it("is the whole raid inside one", function()
+      load({ groupMembers = 25 })
+
+      assert.equal(25, state:sharedBy())
     end)
   end)
 

@@ -222,10 +222,18 @@ end
 -- the end unless the offset is committed by hand, and Scale's setters are not the
 -- same across the two supported flavours -- neither is worth a wrong-looking
 -- frame on one of them (D38).
-function Effects.entrance(frame, duration)
+--
+-- `alpha` is what the frame arrives AT, and it is a parameter because one caller
+-- draws itself at an opacity its player chose (D91). SetToFinalAlpha leaves the
+-- frame wherever the animation ended, so a fade-in hard-coded to one is not a
+-- fade-in that can be overruled afterwards: it is the LAST write, a quarter of a
+-- second after the caller's own. Defaulted rather than required, because arriving
+-- at full strength is what a frame with no opinion wants.
+function Effects.entrance(frame, duration, alpha)
   if duration == nil or duration <= 0 or not canAnimate(frame) then
     return INERT
   end
+  alpha = alpha or 1
 
   local group = frame:CreateAnimationGroup()
   group:SetToFinalAlpha(true)
@@ -233,21 +241,21 @@ function Effects.entrance(frame, duration)
   local fade = group:CreateAnimation("Alpha")
   fade:SetOrder(1)
   fade:SetFromAlpha(0)
-  fade:SetToAlpha(1)
+  fade:SetToAlpha(alpha)
   fade:SetDuration(duration)
   fade:SetSmoothing("OUT")
 
-  local effect = { group = group, frame = frame }
+  local effect = { group = group, frame = frame, alpha = alpha }
 
   function effect:play()
     self.group:Stop()
-    self.frame:SetAlpha(1)
+    self.frame:SetAlpha(self.alpha)
     self.group:Play()
   end
 
   function effect:stop()
     self.group:Stop()
-    self.frame:SetAlpha(1)
+    self.frame:SetAlpha(self.alpha)
   end
 
   return effect

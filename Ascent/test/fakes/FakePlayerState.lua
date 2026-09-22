@@ -25,6 +25,9 @@ local DEFAULTS = {
   -- reach by deleting a field. Replaced wholesale by :set("place", {...}), never
   -- written into, so every fake sharing this one table is harmless.
   _place = {},
+  -- Alone, which is what the port promises for "no group" and what almost every
+  -- test means. A zero here would be the client's own answer, not the port's.
+  _sharedBy = 1,
   _health = 1,
   _power = 1,
   _guid = "Player-0-TEST",
@@ -77,6 +80,7 @@ function FakePlayerState:place()
   return self._place.context, self._place.areaId, self._place.name
 end
 
+function FakePlayerState:sharedBy() return self._sharedBy end
 function FakePlayerState:guid() return self._guid end
 function FakePlayerState:identity() return self._name, self._realm end
 

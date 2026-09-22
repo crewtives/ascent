@@ -206,7 +206,19 @@ end
 -- would not in buildTopQuests. Ties broken by xp, then by the creature's own
 -- id for determinism. Creatures with zero kills (should not occur, but nothing
 -- guarantees it) are excluded the same way a zero-amount source is.
-local function buildTopCreatures(creatures)
+--
+-- ONE ROW PER POPULATION, not per creature. The same creature killed alone and
+-- killed beside four other people paid two different amounts, and adding the two
+-- back together here would print exactly the mixed average this whole change
+-- exists to stop showing -- the aggregate would be split in the file and mixed
+-- again on the screen, which is the worst of both (D82). So each row says which
+-- group it was measured in, and `sharedBy` of nil means nobody counted, which is
+-- not the same claim as playing alone (D84).
+--
+-- `current` is the one row whose population prices what the character is doing
+-- NOW, which is what a surface needs to mark the others rather than letting a
+-- number measured in another context pass for a measurement of this one (D83).
+local function buildTopCreatures(creatures, sharedBy)
   local top = {}
   for _, creature in pairs(creatures) do
     if creature.kills > 0 then
@@ -220,11 +232,25 @@ local function buildTopCreatures(creatures)
     if a.xpTotal ~= b.xpTotal then
       return a.xpTotal > b.xpTotal
     end
-    return a.key:id() < b.key:id()
+    if a.key:id() ~= b.key:id() then
+      return a.key:id() < b.key:id()
+    end
+    -- Two populations of one creature share an id, so the id stopped being a
+    -- tie-break the day the aggregate gained a group dimension. Without this last
+    -- comparison the order is not an order at all, and two rows with the same
+    -- kills and the same experience would swap places between redraws of a level
+    -- that never changed.
+    return (a.sharedBy or 0) < (b.sharedBy or 0)
   end)
   local result = {}
   for _, creature in ipairs(top) do
-    result[#result + 1] = { creatureKey = creature.key, kills = creature.kills, xpTotal = creature.xpTotal }
+    result[#result + 1] = {
+      creatureKey = creature.key,
+      kills = creature.kills,
+      xpTotal = creature.xpTotal,
+      sharedBy = creature.sharedBy,
+      current = creature.sharedBy ~= nil and creature.sharedBy == sharedBy,
+    }
   end
   return result
 end
@@ -232,7 +258,11 @@ end
 -- Same inactive convention as XpBarViewModel.build: a record that does not
 -- exist yet and one that exists but has not learned its requirement yet both
 -- collapse to the same "nothing to show" shape.
-function LevelBreakdownViewModel.build(record)
+-- `sharedBy` is how many characters are sharing the pay right now. The record can
+-- be any level, finished or in progress, but the group is always the one of now:
+-- it is not part of what the level measured, it is the question being asked of
+-- what the level measured.
+function LevelBreakdownViewModel.build(record, sharedBy)
   if record == nil or record.xpRequired == nil or record.xpRequired <= 0 then
     return { active = false }
   end
@@ -260,7 +290,7 @@ function LevelBreakdownViewModel.build(record)
     restedBonus = buildRestedBonus(record, xpRequired),
     modifiers = buildModifiers(record, xpRequired),
     topQuests = buildTopQuests(record.quests),
-    topCreatures = buildTopCreatures(record.creatures),
+    topCreatures = buildTopCreatures(record.creatures, sharedBy),
     partial = record.partial,
   }
 end

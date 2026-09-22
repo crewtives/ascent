@@ -60,6 +60,23 @@ describe("XpGain", function()
       assert.equal(0, gain({ amount = 0 }).amount)
     end)
 
+    -- 0 is what the client answers out of a group and the adapter is what turns it
+    -- into the one person who was there. If it ever reaches the model the
+    -- translation broke, and every average measured afterwards would belong to a
+    -- group size nobody plays at -- so it raises here instead of dividing by it.
+    it("refuses a group that nobody is in", function()
+      assert.has_error(function() return gain({ amount = 10, sharedBy = 0 }) end)
+      assert.has_error(function() return gain({ amount = 10, sharedBy = -2 }) end)
+      assert.has_error(function() return gain({ amount = 10, sharedBy = 1.5 }) end)
+    end)
+
+    -- Absent is a real answer and the commonest one: every gain recorded before
+    -- this existed has no size, and so does every gain the addon posts for
+    -- experience it never watched being earned.
+    it("accepts a gain nobody counted the group for", function()
+      assert.is_nil(gain({ amount = 10 }).sharedBy)
+    end)
+
     it("refuses a source that is not a real source", function()
       assert.has_error(function() return XpGain.new({ amount = 10, at = 1, source = "quest" }) end)
       assert.has_error(function() return XpGain.new({ amount = 10, at = 1, source = nil }) end)
@@ -141,6 +158,27 @@ describe("XpGain", function()
         assert.equal(g.groupBonus, head.groupBonus + tail.groupBonus)
         assert.equal(g.raidPenalty, head.raidPenalty + tail.raidPenalty)
       end
+    end)
+
+    -- The group is not a quantity: one kill was paid by one server decision, and
+    -- both sides of a level boundary were part of it. Dividing it the way the
+    -- modifiers are divided would put half of a party of five on each level and
+    -- describe two groups that never existed; dropping it from the tail would file
+    -- the second half of a dinging kill under "nobody counted".
+    it("carries the whole group onto both halves rather than dividing it", function()
+      local g = gain({ amount = 1000, sharedBy = 5 })
+
+      local head, tail = g:splitAt(250)
+
+      assert.equal(5, head.sharedBy)
+      assert.equal(5, tail.sharedBy)
+    end)
+
+    it("leaves an uncounted gain uncounted on both halves", function()
+      local head, tail = gain({ amount = 1000 }):splitAt(250)
+
+      assert.is_nil(head.sharedBy)
+      assert.is_nil(tail.sharedBy)
     end)
 
     it("refuses to split off more than the gain holds", function()

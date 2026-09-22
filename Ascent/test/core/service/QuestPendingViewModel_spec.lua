@@ -8,16 +8,23 @@
 describe("QuestPendingViewModel", function()
   local ns, QuestPendingViewModel, QuestXpOrigin
 
-  local function levelThatKilled(name, kills, each)
-    local record = ns.core.LevelRecord.new(10, 0)
-    record.xpRequired = 100000
+  -- `sharedBy` is how many were splitting the pay when these died. Nil means
+  -- nobody counted, which is what every kill recorded before this distinction
+  -- existed says about itself.
+  local function killed(record, name, kills, each, sharedBy)
     for _ = 1, kills do
       ns.core.XpLedger.post(record, ns.core.XpGain.new({
         amount = each, source = ns.core.XpSource.MOB_KILL, at = 1,
-        creature = ns.core.CreatureKey.new(15343, 6, name),
+        creature = ns.core.CreatureKey.new(15343, 6, name), sharedBy = sharedBy,
       }))
     end
     return record
+  end
+
+  local function levelThatKilled(name, kills, each, sharedBy)
+    local record = ns.core.LevelRecord.new(10, 0)
+    record.xpRequired = 100000
+    return killed(record, name, kills, each, sharedBy)
   end
 
   local function objective(creature, done, needed)
@@ -59,14 +66,47 @@ describe("QuestPendingViewModel", function()
     end
 
     it("prices what is left with the creature's own average, and says where it came from", function()
-      local record = levelThatKilled("Springpaw Lynx", 2, 42)
-      local model = QuestPendingViewModel.build(nil, { entryWith({ objective("Springpaw Lynx", 3, 6) }) }, record)
+      local record = levelThatKilled("Springpaw Lynx", 2, 42, 1)
+      local model = QuestPendingViewModel.build(nil,
+        { entryWith({ objective("Springpaw Lynx", 3, 6) }) }, record, 1)
 
       local shown = model.entries[1].objectives[1]
       assert.equal("Springpaw Lynx", shown.creature)
       assert.equal(3, shown.remaining)
       assert.equal(126, shown.estimate)
+      -- Measured on this creature AND with this many people sharing the pay, which
+      -- is the only combination that earns the unqualified word.
       assert.equal("creature", shown.basis)
+    end)
+
+    -- 2.4: the tab asks for the group of now, the same way it asks for the level
+    -- of now. Three kills left are worth what three kills are worth to the group
+    -- the player is standing in, not to the one that happened to do the killing.
+    it("prices what is left for the group of now, not for the one that killed them", function()
+      local record = levelThatKilled("Springpaw Lynx", 2, 42, 1)
+      killed(record, "Springpaw Lynx", 4, 10, 5)
+      local entries = { entryWith({ objective("Springpaw Lynx", 3, 6) }) }
+
+      local inFive = QuestPendingViewModel.build(nil, entries, record, 5).entries[1].objectives[1]
+      assert.equal(30, inFive.estimate, "three of them at what five people are paid for one")
+      assert.equal("creature", inFive.basis)
+
+      local alone = QuestPendingViewModel.build(nil, entries, record, 1).entries[1].objectives[1]
+      assert.equal(126, alone.estimate, "and the solo average did not move")
+      assert.equal("creature", alone.basis)
+    end)
+
+    -- D83/D84: what was recorded before anyone counted the context still prices
+    -- the objective, because the alternative is a tab that says nothing over a
+    -- distinction the character never had the chance to record -- but it goes out
+    -- marked, not as a measurement of the group the player is in now.
+    it("marks an estimate served from kills nobody counted the group for", function()
+      local record = levelThatKilled("Springpaw Lynx", 2, 42)
+      local model = QuestPendingViewModel.build(nil,
+        { entryWith({ objective("Springpaw Lynx", 3, 6) }) }, record, 5)
+
+      assert.equal(126, model.entries[1].objectives[1].estimate)
+      assert.equal("mixed", model.entries[1].objectives[1].basis)
     end)
 
     it("marks an estimate that had to fall back to the level's average", function()

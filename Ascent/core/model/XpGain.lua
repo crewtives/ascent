@@ -22,7 +22,8 @@ local XpModifier = ns.core.XpModifier
 local XpGain = {}
 XpGain.__index = XpGain
 
--- fields: amount, source, at, restedBonus, groupBonus, raidPenalty, creature, questId
+-- fields: amount, source, at, restedBonus, groupBonus, raidPenalty, creature,
+-- questId, sharedBy
 function XpGain.new(fields)
   if type(fields) ~= "table" then
     error("XpGain.new expects a table of fields", 2)
@@ -40,6 +41,16 @@ function XpGain.new(fields)
       :format(restedBonus, amount), 2)
   end
 
+  -- Guarded rather than copied raw like `creature` and `questId`, because the one
+  -- wrong value this field can take is the client's own: `GetNumGroupMembers()`
+  -- answers 0 out of a group, and a payment split between nobody is not a
+  -- population an average can belong to. If a zero ever reaches here, the adapter
+  -- stopped translating and every average measured after it would be filed under a
+  -- group size nobody ever played at.
+  if fields.sharedBy ~= nil then
+    Guard.positiveInteger(fields.sharedBy, "XpGain.sharedBy")
+  end
+
   return setmetatable({
     amount = amount,
     source = source,
@@ -49,6 +60,14 @@ function XpGain.new(fields)
     raidPenalty = Guard.nonNegativeInteger(fields.raidPenalty or 0, "XpGain.raidPenalty"),
     creature = fields.creature, -- CreatureKey, when the gain came from a kill
     questId = fields.questId,   -- when the gain came from a turn-in
+    -- How many the payment was split between at the instant it was collected, and
+    -- nil when nobody was watching to count (D81). Absent is NOT one: a gain
+    -- written before this field existed, or posted by a path that never saw the
+    -- kill happen, says nothing about the group -- and reading that silence as
+    -- "alone" is exactly the invented observation D84 refuses to make, the more so
+    -- because most of it probably was solo, which is what would make the lie hard
+    -- to catch.
+    sharedBy = fields.sharedBy,
   }, XpGain)
 end
 
@@ -73,8 +92,10 @@ function XpGain:modifierAmount(modifier)
   return self.raidPenalty
 end
 
--- Split a gain that crosses a level boundary. Both halves keep the source, and
--- every modifier is divided the same way: the head takes its rounded share and
+-- Split a gain that crosses a level boundary. Both halves keep the source and the
+-- group the gain was paid in -- that is a property of one instant, not a quantity
+-- to divide, and halving it would describe two groups that were never there. Every
+-- modifier is divided the same way: the head takes its rounded share and
 -- the tail takes the remainder, so the two always add back up to the original
 -- exactly. Rounding both halves independently would leak a point either way.
 function XpGain:splitAt(amountForThisLevel)
@@ -95,14 +116,14 @@ function XpGain:splitAt(amountForThisLevel)
   local head = XpGain.new({
     amount = amountForThisLevel, source = self.source, at = self.at,
     restedBonus = restedHere, groupBonus = groupHere, raidPenalty = raidHere,
-    creature = self.creature, questId = self.questId,
+    creature = self.creature, questId = self.questId, sharedBy = self.sharedBy,
   })
   local tail = XpGain.new({
     amount = self.amount - amountForThisLevel, source = self.source, at = self.at,
     restedBonus = self.restedBonus - restedHere,
     groupBonus = self.groupBonus - groupHere,
     raidPenalty = self.raidPenalty - raidHere,
-    creature = self.creature, questId = self.questId,
+    creature = self.creature, questId = self.questId, sharedBy = self.sharedBy,
   })
 
   return head, tail
@@ -111,9 +132,14 @@ end
 
 -- The on-disk form: one line of text, because there are tens of thousands of these
 -- in a run and the client spends about forty-five bytes on every line it writes.
--- Nine fields in a fixed order, trailing empties dropped:
+-- Ten fields in a fixed order, trailing empties dropped:
 --
---   amount, source, at, rested, group, raid, npcId, creature level, quest id
+--   amount, source, at, rested, group, raid, npcId, creature level, quest id,
+--   shared by
+--
+-- The group size is written even when it is one, because blank in that position is
+-- already spoken for: it means nobody counted. A kill measured alone is a
+-- measurement, and it is the population every average of a solo level belongs to.
 --
 -- The creature's NAME is deliberately not here. It is display-only, it is the same
 -- for every gain from the same creature, and the level record already holds it once
@@ -139,6 +165,7 @@ function XpGain:toStored()
     npcId,
     creatureLevel,
     self.questId or false,
+    self.sharedBy or false,
   })
 end
 
@@ -181,6 +208,9 @@ function XpGain.restore(stored)
     raidPenalty = Stored.count(Packed.number(fields, 6), 0),
     creature = creature,
     questId = Stored.positiveInteger(Packed.number(fields, 9)),
+    -- Nil for every gain written before this field existed, which is the whole of
+    -- a player's history on the day they update. Unknown, never alone.
+    sharedBy = Stored.positiveInteger(Packed.number(fields, 10)),
   })
 end
 

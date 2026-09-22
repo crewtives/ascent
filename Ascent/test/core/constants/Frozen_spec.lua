@@ -193,6 +193,75 @@ describe("Frozen", function()
     end)
   end)
 
+  -- The way out of a frozen table for a caller that has to MUTATE what it read or
+  -- STORE it somewhere. Both readers of this are resets writing a default back
+  -- into the saved variables, which is the case where getting it wrong is silent:
+  -- a proxy reaches disk as the empty carrier it is.
+  describe("copying", function()
+    it("comes back walkable with pairs, which a proxy is not", function()
+      local Position = Frozen.enum("Position", { point = "CENTER", x = 0 })
+
+      local seen = {}
+      for key in pairs(Frozen.plain(Position)) do
+        seen[#seen + 1] = key
+      end
+      table.sort(seen)
+
+      assert.same({ "point", "x" }, seen)
+    end)
+
+    it("hands back a copy that can be written into, leaving the original frozen", function()
+      local Position = Frozen.enum("Position", { point = "CENTER", x = 0 })
+
+      local copy = Frozen.plain(Position)
+      copy.x = 42
+      copy.relativePoint = "TOPLEFT"
+
+      assert.equal(42, copy.x)
+      assert.equal(0, Position.x)
+      assert.is_false(Frozen.has(Position, "relativePoint"))
+    end)
+
+    it("copies a nested map rather than handing back the proxy inside it", function()
+      local Defaults = Frozen.enum("Defaults", { position = { point = "CENTER", x = 0 } })
+
+      local copy = Frozen.plain(Defaults)
+      copy.position.x = 42
+
+      assert.equal(0, Defaults.position.x)
+      assert.is_false(Frozen.isFrozen(copy.position))
+    end)
+
+    -- The array a frozen table answers with IS its backing store (this file's
+    -- header), so a copy that stopped at the top level would leave the caller
+    -- holding the addon's own constants.
+    it("copies a nested list, which is the backing store itself", function()
+      local Defaults = Frozen.enum("Defaults", { zones = { "clock", "footer" } })
+
+      local copy = Frozen.plain(Defaults)
+      copy.zones[1] = "changed"
+
+      assert.equal("clock", Defaults.zones[1])
+      assert.same({ "clock", "footer" }, Defaults.zones)
+    end)
+
+    it("copies a plain table too, so a caller need not ask which one it has", function()
+      local stored = { border = { thickness = 3 } }
+
+      local copy = Frozen.plain(stored)
+      copy.border.thickness = 6
+
+      assert.equal(3, stored.border.thickness)
+    end)
+
+    it("hands back anything that is not a table as it is", function()
+      assert.equal(6, Frozen.plain(6))
+      assert.equal("tabard", Frozen.plain("tabard"))
+      assert.is_false(Frozen.plain(false))
+      assert.is_nil(Frozen.plain(nil))
+    end)
+  end)
+
   describe("construction", function()
     it("requires a name", function()
       assert.has_error(function() return Frozen.enum("", { A = 1 }) end)

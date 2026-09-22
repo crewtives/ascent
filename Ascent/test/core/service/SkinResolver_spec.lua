@@ -212,6 +212,44 @@ describe("SkinResolver", function()
       assert.equal(0.3, appearance.fill.gloss)
     end)
 
+    -- One surface's own tweaks, over the choices every surface shares (D87). The
+    -- pull plate is the caller: it follows the bar's skin and the bar's own map,
+    -- and may then adjust a handful of axes for itself.
+    describe("a surface's own layer", function()
+      local function layered(skin, overrides, own)
+        return SkinResolver.resolve({
+          skin = skin, overrides = overrides, own = own, palette = Palette,
+        })
+      end
+
+      it("wins the axis it states over the shared choice", function()
+        local appearance = layered({}, { border = { thickness = 4 } }, { border = { thickness = 7 } })
+
+        assert.equal(7, appearance.border.thickness)
+      end)
+
+      -- The whole point of the map being partial: what it leaves out is not a
+      -- decision, so changing the bar's skin still carries the plate with it.
+      it("leaves an axis it does not state following the layer below", function()
+        local skin = { border = { kind = BorderKind.BEVEL, thickness = 2 } }
+
+        local appearance = layered(skin, { accent = { r = 0.1, g = 0.2, b = 0.3 } },
+          { border = { thickness = 7 } })
+
+        assert.equal(7, appearance.border.thickness)
+        assert.equal(0.1, appearance.accent.r)
+        assert.equal(BorderKind.BEVEL, appearance.border.kind)
+      end)
+
+      it("changes nothing at all when there is no own layer", function()
+        local skin = { border = { kind = BorderKind.BEVEL, thickness = 2 } }
+
+        assert.same(paths(layered(skin, { fill = { gloss = 0.3 } })),
+          paths(layered(skin, { fill = { gloss = 0.3 } }, {})))
+        assert.equal(0.3, layered(skin, { fill = { gloss = 0.3 } }, {}).fill.gloss)
+      end)
+    end)
+
     it("hands back a frozen table, so a typo downstream fails where it happens", function()
       local appearance = resolve({})
 

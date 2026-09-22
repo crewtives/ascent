@@ -84,6 +84,12 @@ ns.core.WowEvent = Frozen.enum("WowEvent", {
   TIME_PLAYED_MSG            = "TIME_PLAYED_MSG",
   GROUP_ROSTER_UPDATE        = "GROUP_ROSTER_UPDATE",
   ZONE_CHANGED_NEW_AREA      = "ZONE_CHANGED_NEW_AREA",
+  -- The only place the unit token of a nameplate is handed over. Reading it off
+  -- the frame that C_NamePlate.GetNamePlates() returns looked equivalent and is
+  -- not: on 2026-09-22 a session saw 168 nameplates and got a token from none of
+  -- them, so the rule that decides what belongs to a pull never ran once.
+  NAME_PLATE_UNIT_ADDED      = "NAME_PLATE_UNIT_ADDED",
+  NAME_PLATE_UNIT_REMOVED    = "NAME_PLATE_UNIT_REMOVED",
 })
 
 -- What counts as "used" is execution, not impact: a swing that misses was still
@@ -101,6 +107,15 @@ ns.core.CombatLogSubevent = Frozen.enum("CombatLogSubevent", {
   -- misses and a debuff that lands both name a creature that is fighting you and
   -- neither of them moves a health bar.
   SPELL_MISSED         = "SPELL_MISSED",
+  -- A hit that landed on a shield instead of on flesh. Carried for who is in the
+  -- fight and nothing else -- it has no handler, which is a thing that could not
+  -- be expressed until the router stopped requiring one.
+  SPELL_ABSORBED       = "SPELL_ABSORBED",
+  -- A creature winding up a spell at this character. Carried for the same reason
+  -- and with the same absence of a handler: it is the earliest thing the combat
+  -- log will ever say about a caster, and it was being dropped -- eleven of them
+  -- in the census of 2026-09-22.
+  SPELL_CAST_START     = "SPELL_CAST_START",
   SPELL_AURA_APPLIED   = "SPELL_AURA_APPLIED",
   SPELL_HEAL           = "SPELL_HEAL",
   SPELL_PERIODIC_HEAL  = "SPELL_PERIODIC_HEAL",

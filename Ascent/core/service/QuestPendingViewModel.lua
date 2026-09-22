@@ -25,7 +25,12 @@ local QuestPendingViewModel = {}
 --
 -- `record` is optional, and without it there are no estimates -- not estimates of
 -- zero. A view built with no level in progress must not print a price.
-local function buildObjectives(objectives, record)
+--
+-- `sharedBy` is how many characters are sharing the pay right now, and it is the
+-- group of NOW for the same reason the record is the level of now: it says which
+-- population to price these kills from, and the kills a quest still asks for will
+-- be taken by whoever is standing there when they are (D81, D82).
+local function buildObjectives(objectives, record, sharedBy)
   if objectives == nil then
     return nil
   end
@@ -34,7 +39,7 @@ local function buildObjectives(objectives, record)
   for _, objective in ipairs(objectives) do
     if not objective:isComplete() then
       built = built or {}
-      local estimate = record ~= nil and KillXpEstimator.estimate(record, objective) or nil
+      local estimate = record ~= nil and KillXpEstimator.estimate(record, objective, sharedBy) or nil
       built[#built + 1] = {
         creature = objective.creature,
         done = objective.done,
@@ -50,7 +55,7 @@ local function buildObjectives(objectives, record)
   return built
 end
 
-local function buildEntries(entries, record)
+local function buildEntries(entries, record, sharedBy)
   local built = {}
   for _, entry in ipairs(entries) do
     built[#built + 1] = {
@@ -65,13 +70,13 @@ local function buildEntries(entries, record)
       -- the reward is experience that exists nowhere else, while these kills will
       -- be recorded as creatures when they happen. One number for both would
       -- count the same afternoon twice (design.md D2).
-      objectives = buildObjectives(entry.objectives, record),
+      objectives = buildObjectives(entry.objectives, record, sharedBy),
     }
   end
   return built
 end
 
-function QuestPendingViewModel.build(report, entries, record)
+function QuestPendingViewModel.build(report, entries, record, sharedBy)
   if report == nil and entries == nil then
     return { active = false }
   end
@@ -84,7 +89,7 @@ function QuestPendingViewModel.build(report, entries, record)
     total = report.total,
     readyTotal = report.readyTotal,
     unknownCount = report.unknownCount,
-    entries = buildEntries(entries, record),
+    entries = buildEntries(entries, record, sharedBy),
   }
 end
 

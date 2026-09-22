@@ -36,8 +36,9 @@ describe("XpAttribution", function()
     return ns.core.XpAttribution.new(options)
   end
 
-  local function delta(amount, at, place)
-    bus:publish(EventTopic.XP_DELTA_OBSERVED, { amount = amount, at = at, place = place })
+  local function delta(amount, at, place, sharedBy)
+    bus:publish(EventTopic.XP_DELTA_OBSERVED,
+      { amount = amount, at = at, place = place, sharedBy = sharedBy })
   end
 
   local function hint(fields)
@@ -177,6 +178,53 @@ describe("XpAttribution", function()
       settleAll()
 
       assert.same({}, placesAttributed())
+    end)
+  end)
+
+  -- D81, and the same shape as the place above for the same reason: what the size
+  -- describes is the server's decision about THIS payment, and the hint that
+  -- explains it can be a window and a half away -- long enough to leave a party in.
+  -- It is also the denominator of every per-creature average once the buckets are
+  -- split by it, so a gain that gets the wrong one is not a cosmetic error.
+  describe("how many shared what the delta paid", function()
+    it("carries the delta's group onto the kill it explained", function()
+      kill("Kobold Miner", 44, 10.0)
+      delta(44, 10.05, nil, 5)
+      settleAll()
+
+      assert.equal(XpSource.MOB_KILL, gains()[1].source)
+      assert.equal(5, gains()[1].sharedBy)
+    end)
+
+    it("carries it onto the remainder nothing claimed", function()
+      delta(44, 10.0, nil, 3)
+      settleAll()
+
+      assert.equal(XpSource.UNKNOWN, gains()[1].source)
+      assert.equal(3, gains()[1].sharedBy)
+    end)
+
+    -- The bounded case builds the full gain and keeps its head, and the head is
+    -- what reaches the record: dropping the size there would leave every kill that
+    -- dinged the character filed as uncounted.
+    it("splits a bounded claim without losing it", function()
+      kill("Kobold Miner", 44, 10.0)
+      delta(20, 10.05, nil, 5)
+      settleAll()
+
+      assert.equal(20, attributedTotal())
+      assert.equal(5, gains()[1].sharedBy)
+    end)
+
+    -- A publisher that counted nobody says nothing, and nothing has to survive as
+    -- nothing all the way to the record (D84). One would be an observation this
+    -- service never made, and it is the plausible one, so it would never be caught.
+    it("says nothing when the delta counted nobody, rather than saying one", function()
+      kill("Kobold Miner", 44, 10.0)
+      delta(44, 10.05)
+      settleAll()
+
+      assert.is_nil(gains()[1].sharedBy)
     end)
   end)
 

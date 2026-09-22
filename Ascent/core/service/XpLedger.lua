@@ -38,6 +38,7 @@ local Frozen = ns.core.Frozen
 local XpModifier = ns.core.XpModifier
 local PlaceKey = ns.core.PlaceKey
 local CreatureKey = ns.core.CreatureKey
+local LevelRecord = ns.core.LevelRecord
 
 local XpLedger = {}
 
@@ -94,7 +95,12 @@ local function applyXp(record, gain, place)
 end
 
 local function aggregateCreature(record, gain)
-  local id = gain.creature:id()
+  -- The same creature killed beside four other people and killed alone paid two
+  -- different amounts, and one average over both describes neither of them (D82).
+  -- The group size indexes the aggregate, so the two are never added together in
+  -- the first place: there is no later moment at which a single total could be
+  -- taken apart again.
+  local id = LevelRecord.creatureId(gain.creature, gain.sharedBy)
   local bucket = record.creatures[id]
   if bucket == nil then
     -- A bucket whose key has no npcId is not a creature. It is every death the
@@ -111,12 +117,20 @@ local function aggregateCreature(record, gain)
     if not key:hasKnownType() then
       key = CreatureKey.unknown(nil)
     end
-    bucket = { key = key, kills = 0, xpTotal = 0 }
+    -- Carried on the bucket as well as in its key, because the stored form is
+    -- what the key is rebuilt from on the way back and nothing else would say
+    -- which population this one is.
+    bucket = { key = key, sharedBy = gain.sharedBy, kills = 0, xpTotal = 0 }
     record.creatures[id] = bucket
   end
 
   bucket.kills = bucket.kills + 1
   bucket.xpTotal = bucket.xpTotal + gain.amount
+  -- One gain is still one kill, and this counter is still the level's, not the
+  -- bucket's. Splitting the aggregate by group size multiplies how many buckets a
+  -- level holds; counting here per bucket rather than per gain would inflate it by
+  -- however many groups the player happened to play in and move the level's own
+  -- average per kill -- the one number this change promises not to touch.
   record.killsWithXp = record.killsWithXp + 1
 end
 

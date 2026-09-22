@@ -35,6 +35,25 @@ local EventTopic = ns.core.EventTopic
 local MIN_INTERVAL = 60
 local SAFETY_SECONDS = 15
 
+-- How long the silence is HELD after the first answer lands (D77). One request
+-- comes back two to four times, all in the same instant with the same number,
+-- and restoring the chat frames on the first one re-registers them inside that
+-- very dispatch -- which is why the repetitions reached the player's chat while
+-- the addon believed it had silenced them.
+--
+-- Held on a timer rather than on a count of expected answers because the count
+-- is NOT KNOWN: two to four were seen in Burning Crusade Classic on 2026-09-21
+-- and the figure has never been measured in Classic Era (spike 0.1). Calibrating
+-- to four would fail on a client that sends five, and fail silently.
+local SETTLE_SECONDS = 3
+
+-- After the window closes, how long an arriving message is still more likely to
+-- be a straggler of our own request than something the player asked for. It
+-- changes no behaviour -- the message is on screen either way -- only which
+-- counter it lands in, so that a window that closed too early shows up in the
+-- next session's file instead of being invisible.
+local LATE_HORIZON = 30
+
 local function forEachChatFrame(fn)
   local max = Constants.ChatFrameConstants.MaxChatWindows
   for index = 1, max do
@@ -80,6 +99,10 @@ function TimePlayedSync.new(options)
 
     lastRequestAt = nil,
     inFlight = false,
+    -- The first answer landed and the repetitions may still be coming: the chat
+    -- frames stay silenced through this, which is the whole of D77.
+    settling = false,
+    releasedAt = nil,
     generation = 0,
 
     frame = nil,
@@ -107,6 +130,10 @@ function TimePlayedSync:request()
 
   silenceChatFrames()
   self.inFlight = true
+  -- Any window still open belongs to the previous request; this one supersedes
+  -- it. Left set, a straggler of the old request would be read as the first
+  -- answer to the new one.
+  self.settling = false
   self.lastRequestAt = self.clock:now()
   self.generation = self.generation + 1
   local generation = self.generation
@@ -130,12 +157,20 @@ function TimePlayedSync:request()
   return true
 end
 
--- A stale timeout -- the response already landed, or a newer request superseded
--- this one -- finds nothing left to do and touches nothing.
+-- A stale timeout -- the response already landed AND its window already closed,
+-- or a newer request superseded this one -- finds nothing left to do and touches
+-- nothing.
+--
+-- It covers the settling state too, and has to: this timer is what guarantees
+-- the player is never left permanently silenced, and holding the silence past
+-- the first answer (D77) opened a second way to be stuck there. It fires at
+-- SAFETY_SECONDS against the window's SETTLE_SECONDS, so in every ordinary run
+-- it finds the window already closed and does nothing.
 function TimePlayedSync:onTimeout(generation)
-  if not self.inFlight or generation ~= self.generation then
+  if not (self.inFlight or self.settling) or generation ~= self.generation then
     return
   end
+  self.settling = false
   restoreChatFrames()
   self.inFlight = false
 end
@@ -150,32 +185,79 @@ end
 -- TIME_PLAYED_MSG arriving while inFlight is false -- the one case the early
 -- return below would otherwise make invisible.
 function TimePlayedSync:onTimePlayedMsg(_, timePlayedThisLevel)
+  local now = self.clock:now()
+  local mine = self.inFlight or self.settling
+
   if self.logger ~= nil then
     self.logger:debug(("TIME_PLAYED_MSG received at %.3f: levelSeconds=%s inFlight=%s")
-      :format(self.clock:now(), tostring(timePlayedThisLevel), tostring(self.inFlight)))
+      :format(now, tostring(timePlayedThisLevel), tostring(self.inFlight)))
   end
   -- To the file as well as to the chat ring, and for the same reason the debug
   -- line sits above the early return rather than below it: `inFlight = false` here
   -- IS the answer to spike 0.6, and a 500-line ring shared with three lines per
   -- kill will not still be holding it when the session ends.
+  --
+  -- EVERY answer is counted, not only the first. Counting one per request while
+  -- the client sends four is how "what the player sees in the chat" ended up
+  -- unmeasured.
   if self.recordEvidence ~= nil then
     self.recordEvidence("timePlayedReceived", {
-      at = self.clock:now(),
+      at = now,
       levelSeconds = timePlayedThisLevel,
-      requested = self.inFlight,
+      requested = mine,
+      repeated = (mine and not self.inFlight) or nil,
     })
   end
 
-  if not self.inFlight then
+  if not mine then
+    -- Nothing here asked for this, so nothing here answers for it: the chat
+    -- frames were never silenced and the message is on screen, which is right
+    -- for a /played the player typed.
+    --
+    -- It is counted apart depending on how recently our own window closed,
+    -- because the other thing it can be is a straggler that arrived too late --
+    -- the risk D77 accepts by holding the silence on a timer. Without this the
+    -- next session could not tell the two apart.
+    if self.recordEvidence ~= nil then
+      local late = self.releasedAt ~= nil and (now - self.releasedAt) <= LATE_HORIZON
+      self.recordEvidence(late and "timePlayedLate" or "timePlayedUnrequested", { at = now })
+    end
     return
   end
 
-  restoreChatFrames()
+  if not self.inFlight then
+    -- A repetition inside the window: counted above, still silenced, and
+    -- deliberately not published again. The figure is identical to the one
+    -- already published, and re-anchoring the level from it would only add a
+    -- second chance to get the same thing wrong.
+    return
+  end
+
+  -- The first answer. The chat frames stay silenced on purpose: restoring them
+  -- here re-registers them inside this dispatch, and the repetitions that follow
+  -- print. They are released by onSettled, once the window closes.
   self.inFlight = false
+  self.settling = true
+  local generation = self.generation
+  C_Timer.After(SETTLE_SECONDS, function()
+    self:onSettled(generation)
+  end)
 
   if type(timePlayedThisLevel) == "number" and timePlayedThisLevel >= 0 then
     self.bus:publish(EventTopic.TIME_PLAYED_SYNCED, { levelSeconds = timePlayedThisLevel })
   end
+end
+
+-- The window closing. Keyed on the generation for the same reason the safety
+-- timeout is: a newer request may have started meanwhile, and restoring then
+-- would unsilence a live one.
+function TimePlayedSync:onSettled(generation)
+  if not self.settling or generation ~= self.generation then
+    return
+  end
+  self.settling = false
+  self.releasedAt = self.clock:now()
+  restoreChatFrames()
 end
 
 function TimePlayedSync:start()
@@ -211,9 +293,12 @@ function TimePlayedSync:stop()
   self.frame:UnregisterAllEvents()
   self.frame = nil
 
-  if self.inFlight then
+  -- Settling counts as mid-request here: the frames are silenced in that state
+  -- too, and this frame is the only thing that could ever release them.
+  if self.inFlight or self.settling then
     restoreChatFrames()
     self.inFlight = false
+    self.settling = false
   end
   return self
 end

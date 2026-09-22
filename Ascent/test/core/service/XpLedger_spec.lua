@@ -14,11 +14,22 @@ describe("XpLedger", function()
     return XpGain.new(fields)
   end
 
-  local function killOf(name, npcId, creatureLevel, amount)
+  -- `sharedBy` left out means nobody counted the group, which is what every kill
+  -- recorded before this distinction existed says about itself.
+  local function killOf(name, npcId, creatureLevel, amount, sharedBy)
     return gain({
       amount = amount,
       creature = CreatureKey.new(npcId, creatureLevel, name),
+      sharedBy = sharedBy,
     })
+  end
+
+  local function bucketCount(record)
+    local count = 0
+    for _ in pairs(record.creatures) do
+      count = count + 1
+    end
+    return count
   end
 
   before_each(function()
@@ -89,8 +100,8 @@ describe("XpLedger", function()
       XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 44))
       XpLedger.post(record, killOf("Kobold Miner", 5644, 9, 90))
 
-      local young = record.creatures["5644:6"]
-      local older = record.creatures["5644:9"]
+      local young = record.creatures["5644:6@?"]
+      local older = record.creatures["5644:9@?"]
 
       assert.equal(2, young.kills)
       assert.equal(84, young.xpTotal)
@@ -105,9 +116,9 @@ describe("XpLedger", function()
       XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 44))
       XpLedger.post(record, killOf("Kobold Miner", 5644, nil, 600))
 
-      assert.equal(44, record.creatures["5644:6"].xpTotal)
-      assert.equal(600, record.creatures["5644:?"].xpTotal)
-      assert.equal(44, record.creatures["5644:6"].xpTotal / record.creatures["5644:6"].kills)
+      assert.equal(44, record.creatures["5644:6@?"].xpTotal)
+      assert.equal(600, record.creatures["5644:?@?"].xpTotal)
+      assert.equal(44, record.creatures["5644:6@?"].xpTotal / record.creatures["5644:6@?"].kills)
     end)
 
     it("puts a creature nobody identified at all in the unknown group", function()
@@ -115,7 +126,7 @@ describe("XpLedger", function()
 
       XpLedger.post(record, gain({ amount = 44, creature = CreatureKey.unknown("Kobold Miner") }))
 
-      assert.equal(1, record.creatures["?:?"].kills)
+      assert.equal(1, record.creatures["?:?@?"].kills)
     end)
 
     -- The shared entry is honest; a name on it is not. Everything the combat log
@@ -128,7 +139,7 @@ describe("XpLedger", function()
       XpLedger.post(record, gain({ amount = 44, creature = CreatureKey.unknown("Kobold Miner") }))
       XpLedger.post(record, gain({ amount = 60, creature = CreatureKey.unknown("Riverpaw Runt") }))
 
-      local bucket = record.creatures["?:?"]
+      local bucket = record.creatures["?:?@?"]
       assert.equal(2, bucket.kills)
       assert.equal(104, bucket.xpTotal)
       assert.is_nil(bucket.key.name)
@@ -141,7 +152,7 @@ describe("XpLedger", function()
 
       XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 44))
 
-      assert.equal("Kobold Miner", record.creatures["5644:6"].key.name)
+      assert.equal("Kobold Miner", record.creatures["5644:6@?"].key.name)
     end)
 
     it("counts a rewarded kill for every gain that names a creature", function()
@@ -152,6 +163,98 @@ describe("XpLedger", function()
 
       assert.equal(2, record.killsWithXp)
       assert.equal(0, record.killsWithoutXp)
+    end)
+
+    -- The server pays less for a creature killed beside four other people, so the
+    -- two are two measurements and not one. Averaged together they describe a
+    -- creature that pays something nobody was ever paid.
+    it("keeps the same creature killed in two group sizes apart", function()
+      local record = level(10, 10000)
+
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 44, 1))
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 46, 1))
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 12, 5))
+
+      local alone = record.creatures["5644:6@1"]
+      local party = record.creatures["5644:6@5"]
+
+      assert.equal(2, alone.kills)
+      assert.equal(90, alone.xpTotal)
+      assert.equal(45, alone.xpTotal / alone.kills)
+      assert.equal(1, party.kills)
+      assert.equal(12, party.xpTotal)
+      assert.equal(1, alone.sharedBy)
+      assert.equal(5, party.sharedBy)
+    end)
+
+    -- Separating them is only honest if nothing is lost by it: the two halves
+    -- still have to be everything that creature paid this level.
+    it("still holds, between the two, everything that creature paid", function()
+      local record = level(10, 10000)
+
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 44, 1))
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 46, 1))
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 12, 5))
+
+      local alone = record.creatures["5644:6@1"]
+      local party = record.creatures["5644:6@5"]
+
+      assert.equal(102, alone.xpTotal + party.xpTotal)
+      assert.equal(3, alone.kills + party.kills)
+      assert.equal(102, record:xpFrom(XpSource.MOB_KILL))
+      assert.equal(3, record.killsWithXp)
+    end)
+
+    -- Nobody counted is its own answer. Filing it under solo would be inventing
+    -- the observation, and inventing the likeliest one is what would make it
+    -- impossible to catch afterwards (D84).
+    it("keeps a group nobody counted apart from a group of one", function()
+      local record = level(10, 10000)
+
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 44, 1))
+      XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 44))
+
+      assert.equal(2, bucketCount(record))
+      assert.equal(1, record.creatures["5644:6@1"].kills)
+      assert.equal(1, record.creatures["5644:6@?"].kills)
+      assert.is_nil(record.creatures["5644:6@?"].sharedBy)
+    end)
+  end)
+
+  -- 1.4 -- the invariant this change promises. Breaking the aggregate into finer
+  -- populations is a finer breakdown of the same experience, so everything the
+  -- level says about itself has to come out identical however the kills were
+  -- shared. These are the numbers the panel and every per-kill average read.
+  describe("the level's own sums", function()
+    local AMOUNTS = { 44, 46, 12, 90, 8, 60 }
+
+    local function levelKilledIn(sizes)
+      local record = level(10, 10000)
+      for index, amount in ipairs(AMOUNTS) do
+        XpLedger.post(record, killOf("Kobold Miner", 5644, 6, amount, sizes[index]))
+      end
+      return record
+    end
+
+    it("do not move when the same kills are split across group sizes", function()
+      local before = levelKilledIn({})              -- one aggregate, as it was
+      local after = levelKilledIn({ 1, 1, 5, 5, 2 }) -- four, as it is now
+
+      assert.equal(before.xpTotal, after.xpTotal)
+      assert.equal(before:xpFrom(XpSource.MOB_KILL), after:xpFrom(XpSource.MOB_KILL))
+      assert.equal(before.killsWithXp, after.killsWithXp)
+      assert.equal(before:averageXpPerKill(), after:averageXpPerKill())
+
+      assert.equal(260, after.xpTotal)
+      assert.equal(6, after.killsWithXp)
+      assert.is_true(after:sourcesAddUp())
+    end)
+
+    -- And the split really happened, so the test above is not passing because
+    -- everything still landed in one bucket.
+    it("are the same sums over four aggregates instead of one", function()
+      assert.equal(1, bucketCount(levelKilledIn({})))
+      assert.equal(4, bucketCount(levelKilledIn({ 1, 1, 5, 5, 2 })))
     end)
   end)
 
@@ -261,10 +364,10 @@ describe("XpLedger", function()
 
       local landed = XpLedger.post(record, killOf("Kobold Miner", 5644, 6, 80), nextLevel)
 
-      assert.equal(1, opened[1].creatures["5644:6"].kills)
-      assert.equal(80, opened[1].creatures["5644:6"].xpTotal)
+      assert.equal(1, opened[1].creatures["5644:6@?"].kills)
+      assert.equal(80, opened[1].creatures["5644:6@?"].xpTotal)
       assert.equal(1, opened[1].killsWithXp)
-      assert.is_nil(landed.creatures["5644:6"])
+      assert.is_nil(landed.creatures["5644:6@?"])
       assert.equal(0, landed.killsWithXp)
     end)
 

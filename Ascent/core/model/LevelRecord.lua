@@ -79,7 +79,8 @@ function LevelRecord:reset(level, startedAt)
   self.xpBySource = zeroedFrom(XpSource)
   self.xpByModifier = zeroedFrom(XpModifier)
 
-  -- creatures, keyed by type and observed level (see the aggregation decision)
+  -- creatures, keyed by type, observed level and the group the kill was paid to
+  -- (see the aggregation decision, and D82 for the third half of the key)
   self.creatures = {}
   self.killsWithXp = 0
   self.killsWithoutXp = 0
@@ -229,6 +230,50 @@ function LevelRecord:hasPlaces()
   return next(self.places) ~= nil
 end
 
+-- The time dimension's half of the same idea, and the half that was missing.
+--
+-- Every point of experience that cannot be attributed lands in an explicit
+-- bucket rather than disappearing, which is why the experience sums balance to
+-- the unit. Time had no such bucket: the seconds measured against places could
+-- fall short of the seconds actually played and NOTHING SAID SO. The session of
+-- 2026-09-21 measured 8931.6s of the level's 9304.2s, and the missing 4% --
+-- loading screens, where none of this runs -- was found only by subtracting the
+-- two by hand (D78).
+--
+-- Derived, never accumulated. Both operands already live in the record, so this
+-- cannot drift away from them the way a third counter kept alongside would.
+function LevelRecord:sumOfPlaceSeconds()
+  local total = 0
+  for _, entry in pairs(self.places) do
+    total = total + entry.seconds
+  end
+  return total
+end
+
+-- Nil, not zero, when it cannot be known. Zero is a claim -- "all of it was
+-- measured" -- and a level that never received the server's figure, or that was
+-- written before places were tracked at all, is not entitled to make it.
+--
+-- Floored at zero. A negative difference is not a smaller amount of time, it is
+-- a broken anchor; `timeUnderflowed` is how that gets noticed instead of being
+-- presented as if it were time.
+function LevelRecord:unaccountedSeconds()
+  if not self.timeAnchored or not self:hasPlaces() then
+    return nil
+  end
+  return math.max(0, self.playedSeconds - self:sumOfPlaceSeconds())
+end
+
+-- The server's figure landing after time had already been accumulated against
+-- places. Nothing to show a player; everything to a file being read afterwards,
+-- because the alternative is a level quietly claiming it measured everything.
+function LevelRecord:timeUnderflowed()
+  if not self.timeAnchored or not self:hasPlaces() then
+    return false
+  end
+  return self.playedSeconds < self:sumOfPlaceSeconds()
+end
+
 -- The experience the client could actually put somewhere, which is NOT the same
 -- number as sumOfPlaces: the reserved entry is a place in the ledger's arithmetic
 -- (that is what keeps the two dimensions equal) and is the absence of one to a
@@ -306,6 +351,20 @@ function LevelRecord:averageXpPerKill()
   return self:xpFrom(XpSource.MOB_KILL) / self.killsWithXp
 end
 
+-- How one creature's aggregate is indexed: the creature, and how many the kill's
+-- experience was split between (D82). The group size is part of the key rather
+-- than a number kept inside a single bucket, because a bucket that holds both
+-- populations IS the average this distinction exists to stop showing -- two kills
+-- added together leave nothing behind to tell apart afterwards.
+--
+-- A context nobody counted gets `?`, and that is deliberately not the key a group
+-- of one gets: playing alone is a measurement, and the absence of one is not (D84).
+local UNCOUNTED = "?"
+
+function LevelRecord.creatureId(key, sharedBy)
+  return ("%s@%s"):format(key:id(), sharedBy and tostring(sharedBy) or UNCOUNTED)
+end
+
 -- ---------------------------------------------------------------------------
 -- The serialization boundary
 --
@@ -337,8 +396,14 @@ local function nonZero(totals)
   return kept
 end
 
+-- The group size goes BEFORE the key, not after it. The key is three fields of
+-- which the last two are routinely absent, and trailing empties are dropped, so
+-- "after the key" is not a position at all: an unidentified creature writes two
+-- fields and a named one writes five. Position is identity in this format, so the
+-- only place a new field can live is ahead of that variable-length tail -- which
+-- is why this is the first schema step that has to convert rather than default.
 local function packCreature(bucket)
-  local fields = { bucket.kills, bucket.xpTotal }
+  local fields = { bucket.kills, bucket.xpTotal, bucket.sharedBy or false }
   for _, value in ipairs(bucket.key:fields()) do
     fields[#fields + 1] = value
   end
@@ -353,9 +418,13 @@ local function unpackCreature(fields)
     return nil
   end
 
-  local key = ns.core.CreatureKey.fromFields(fields, 3)
+  local key = ns.core.CreatureKey.fromFields(fields, 4)
   return {
     key = key,
+    -- Blank is unknown and never one: it is what the migration writes for every
+    -- bucket recorded before the group was counted, and reading it as solo would
+    -- invent the one observation nobody made (D84).
+    sharedBy = Stored.positiveInteger(Packed.number(fields, 3)),
     kills = Stored.count(Packed.number(fields, 1), 0),
     xpTotal = Stored.count(Packed.number(fields, 2), 0),
   }
@@ -582,7 +651,7 @@ function LevelRecord.restore(stored)
   record.killsWithoutXp = Stored.count(fields.killsWithoutXp, 0)
 
   for _, bucket in ipairs(Packed.unlist(fields.creatures, unpackCreature)) do
-    record.creatures[bucket.key:id()] = bucket
+    record.creatures[LevelRecord.creatureId(bucket.key, bucket.sharedBy)] = bucket
   end
   for _, bucket in ipairs(Packed.unlist(fields.quests, unpackQuest)) do
     record.quests[bucket.questId] = bucket
@@ -617,9 +686,14 @@ function LevelRecord.restore(stored)
   -- A gain writes down which creature paid it but not what that creature is called:
   -- the name is display-only and the same for every gain from the same creature, so
   -- it is stored once in that creature's aggregate. This is where it goes back.
+  --
+  -- By the aggregate's own key, group size included: the gain and the bucket were
+  -- written by the same posting and therefore share a context, and looking the
+  -- creature up without it would find whichever population the hash happened to
+  -- reach first -- or none at all, in silence, leaving every restored gain nameless.
   for _, gain in ipairs(record.gains) do
     if gain.creature ~= nil then
-      local bucket = record.creatures[gain.creature:id()]
+      local bucket = record.creatures[LevelRecord.creatureId(gain.creature, gain.sharedBy)]
       if bucket ~= nil then
         gain.creature.name = bucket.key.name
       end

@@ -1,6 +1,6 @@
 -- The router's own contract is the payload shapes XpAttribution and LevelTracker
 -- already expect (read straight off their source, not guessed): XP_DELTA_OBSERVED
--- is {amount, at, place}, an XP_HINT_RECEIVED carries `kind` plus whatever its
+-- is {amount, at, place, sharedBy}, an XP_HINT_RECEIVED carries `kind` plus whatever its
 -- channel can say, CREATURE_DIED is out of scope entirely (CombatLogRouter's job).
 --
 -- Group and raid kill messages ARE exercised here now. They used to be left out
@@ -127,6 +127,30 @@ describe("WowEventRouter", function()
       router:dispatch(WowEvent.PLAYER_XP_UPDATE)
 
       assert.equal("dungeon:389", bus:lastOn(EventTopic.XP_DELTA_OBSERVED).place:id())
+    end)
+
+    -- D81, and the same argument as the place above: the size is read at the one
+    -- instant the server is known to have decided the split, because the addon
+    -- settles a delta two windows after it arrives and the party can be left in
+    -- between. The port already answers one for a character playing alone, so
+    -- nothing here has to remember the client's zero.
+    it("stamps the delta with how many shared it at that instant", function()
+      player:set("sharedBy", 5)
+      router:dispatch(WowEvent.PLAYER_ENTERING_WORLD)
+
+      player:set("xp", 150)
+      router:dispatch(WowEvent.PLAYER_XP_UPDATE)
+
+      assert.equal(5, bus:lastOn(EventTopic.XP_DELTA_OBSERVED).sharedBy)
+    end)
+
+    it("says one, not nothing, for a character earning it alone", function()
+      router:dispatch(WowEvent.PLAYER_ENTERING_WORLD)
+
+      player:set("xp", 150)
+      router:dispatch(WowEvent.PLAYER_XP_UPDATE)
+
+      assert.equal(1, bus:lastOn(EventTopic.XP_DELTA_OBSERVED).sharedBy)
     end)
 
     it("stamps the reserved entry when the client cannot say where that was", function()

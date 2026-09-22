@@ -64,6 +64,14 @@ local function fieldOf(given, key)
   return nil
 end
 
+-- Public for the same reason it exists: a surface's OWN override map has to be
+-- read by whoever decides what to do with it -- the plate asks whether the player
+-- gave it a text size of its own before laying itself out -- and that map reaches
+-- the caller out of a resolved settings table, frozen, where an axis nobody ever
+-- stored RAISES instead of answering nil. Everything outside this module that
+-- reads a partial appearance map goes through here rather than indexing it.
+SkinResolver.fieldOf = fieldOf
+
 local function complete(given, shape)
   local result = {}
   for key, fallback in Frozen.each(shape) do
@@ -196,6 +204,12 @@ end
 -- `options`:
 --   skin          a catalogue entry (partial; only what it means to change)
 --   overrides     the player's own choices (partial, same shape), optional
+--   own           a SECOND layer of the player's choices, applied on top of the
+--                 one above and belonging to one surface rather than to all of
+--                 them (D87). The pull plate follows the bar's skin and the bar's
+--                 own tweaks and may then adjust a handful of axes for itself; an
+--                 axis it does not state keeps following the bar, which is what
+--                 makes a plate tweak survive the bar changing skin.
 --   palette       the semantic colours, ns.core.Palette or a stand-in
 --   highContrast  true to ignore every tint and show the palette untouched
 --
@@ -210,7 +224,13 @@ function SkinResolver.resolve(options)
     error("SkinResolver.resolve needs a palette", 2)
   end
 
+  -- Two passes and not a merge of the two maps, because `overlay` already walks a
+  -- COMPLETE base field by field: laying the second layer over the result of the
+  -- first says "whatever this one states wins, and whatever it leaves out keeps
+  -- what the layer below decided" without anyone having to deep-merge two partial
+  -- tables and get the nesting right.
   local appearance = overlay(SkinResolver.normalize(options.skin), options.overrides)
+  appearance = overlay(appearance, options.own)
 
   -- Where the caller knows something about the frame that no skin can: a bar
   -- given the height of the client's own is too thin for text inside it, and the

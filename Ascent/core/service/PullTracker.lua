@@ -103,6 +103,11 @@ PullTracker.__index = PullTracker
 -- options.settleSeconds  override for the window above
 -- options.resumeSeconds  how long a CLOSED pull can still be reopened. The
 --                        composition root passes the plate's visible lifetime.
+--                        A number, or a function() -> number read at the moment
+--                        the question is asked: how long the plate stays is the
+--                        player's now (D89), and a value captured here would ask
+--                        them to reload before the answer changed -- the gap
+--                        COLLECT_DAMAGE closed by taking a function instead.
 -- options.comboWindow    forwarded to every PullRecord this opens
 -- options.enabled        optional function() -> boolean, read live. False means
 --                        events are dropped and no pull is ever opened, so a
@@ -121,7 +126,9 @@ function PullTracker.new(options)
     bus = options.bus,
     clock = options.clock,
     settleSeconds = options.settleSeconds or SETTLE_SECONDS,
-    resumeSeconds = options.resumeSeconds or RESUME_SECONDS,
+    -- Kept exactly as given, function or number: resolving it here is the very
+    -- thing that would freeze it (see resumeWindow below).
+    resumeSeconds = options.resumeSeconds,
     comboWindow = options.comboWindow,
     enabled = options.enabled,
 
@@ -170,6 +177,26 @@ end
 
 function PullTracker:isEnabled()
   return self.enabled == nil or self.enabled() ~= false
+end
+
+-- How long a closed pull can still be reopened, asked every time rather than once
+-- at construction. How long the plate stays is a setting now, and the window the
+-- tracker honours is the same number by design (D89) -- so a tracker that had
+-- captured it would go on offering the old window until the interface was
+-- reloaded, which is what "applies without a reload" rules out.
+--
+-- Anything that is not a number falls back to the default: the seam is a closure
+-- over the settings table, and a closure that hands back nil must cost the live
+-- reading rather than the comparison it feeds.
+function PullTracker:resumeWindow()
+  local window = self.resumeSeconds
+  if type(window) == "function" then
+    window = window()
+  end
+  if type(window) ~= "number" then
+    return RESUME_SECONDS
+  end
+  return window
 end
 
 -- The record events are allowed to land in right now, or nil. ACTIVE and
@@ -258,11 +285,20 @@ function PullTracker:canResume(now)
   end
   return self.phase == PullPhase.CLOSED
     and self.closedAt ~= nil
-    and (now - self.closedAt) <= self.resumeSeconds
+    and (now - self.closedAt) <= self:resumeWindow()
 end
 
 function PullTracker:onCombatStarted()
   if not self:isEnabled() then
+    return
+  end
+
+  -- Already fighting, so this is not the start of anything. It could not happen
+  -- before -- the client fires PLAYER_REGEN_DISABLED once on the way in, and
+  -- while a pull was ACTIVE the player was in combat by definition -- but an
+  -- engagement can now open a pull a moment before the client agrees, and the
+  -- REGEN event that follows must not throw away the pull it just opened.
+  if self.phase == PullPhase.ACTIVE then
     return
   end
 
@@ -346,15 +382,31 @@ function PullTracker:onEnemyEngaged(payload)
   end
   local pull = self:recording()
   if pull == nil then
-    -- The same prelude as the opening shot, from the other end: the swing that
-    -- announces an ambush lands before the client agrees there is a fight.
-    if self:isEnabled() then
-      self:remember(EventTopic.ENEMY_ENGAGED, payload, self.clock:now())
+    -- A creature is fighting this character, and the client has not said
+    -- PLAYER_REGEN_DISABLED yet. That gap is not a corner case: eight of the nine
+    -- fights in the session of 2026-09-22 were opened by a combat log line, and
+    -- the one thing that could have seen a creature coming first -- the nameplate
+    -- sweep -- was switched off until a pull existed, so it never once got to be
+    -- the thing that started one.
+    --
+    -- Remembered as well as opened, so the ordinary path still replays it and the
+    -- pull's own per-creature rule keeps one creature from being counted twice.
+    if not self:isEnabled() then
+      return
     end
-    return
+    self:remember(EventTopic.ENEMY_ENGAGED, payload, self.clock:now())
+    self:onCombatStarted()
+    pull = self:recording()
+    if pull == nil then
+      return
+    end
   end
-  pull:recordEngagement(payload.name, payload.guid)
-  self.changed = true
+  -- Only when it was news. A creature already in this pull costs a table lookup
+  -- and nothing else: the combat log announces the same one about thirty times a
+  -- fight, and every one of those used to ask the plate to rebuild itself.
+  if pull:recordEngagement(payload.name, payload.guid) then
+    self.changed = true
+  end
 end
 
 function PullTracker:onDamageDealt(payload)

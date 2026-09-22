@@ -203,6 +203,78 @@ describe("EvidenceLog", function()
     end)
   end)
 
+  -- D75/D76. The ring is the scarce thing; the counters are not. A fact that
+  -- happens constantly and says the same thing every time should spend the one
+  -- it does not need.
+  describe("counting without keeping", function()
+    it("tallies a counter-only kind without spending a sample on it", function()
+      local log = newLog():start()
+
+      log:record("timePlayedReceived", { levelSeconds = 900 })
+
+      assert.equal(1, log.counters.timePlayedReceived)
+      assert.equal(0, #log.samples)
+    end)
+
+    -- By declaration and not by volume: a counter-only kind is counter-only the
+    -- first time too. Otherwise the same fact would occupy a sample in a short
+    -- session and not in a long one, and two files would stop being comparable.
+    it("keeps a counter-only kind out of the ring even when it happens once", function()
+      local log = newLog():start()
+
+      log:record("sessionStarted", { carriedSamples = 0 })
+
+      assert.equal(1, log.counters.sessionStarted)
+      assert.equal(0, #log.samples)
+    end)
+
+    it("still counts and keeps a kind that was not declared", function()
+      local log = newLog():start()
+
+      log:record("questSweep", { scanned = 3 })
+
+      assert.equal(1, log.counters.questSweep)
+      assert.equal(1, #log.samples)
+    end)
+
+    -- The guard that matters. Declaring a kind of the experience path
+    -- counter-only would not fail anything -- it would quietly record the wrong
+    -- half of the next session, and nobody would find out until they went to
+    -- read the file and the evidence was not there.
+    it("declares nothing on the experience path as counter-only", function()
+      for _, kind in ipairs({ "delta", "hint", "attributed", "gain", "levelCompleted",
+        "restChanged", "engaged", "unmatchedLine", "recordingChanged" }) do
+        assert.is_nil(EvidenceLog.COUNTER_ONLY[kind],
+          ("%q is on the experience path and must never be counter-only"):format(kind))
+      end
+    end)
+
+    -- The defect itself, reproduced at the shape of the session of 2026-09-21:
+    -- a ring dominated by time-played answers and reload markers, with the
+    -- experience it existed to capture pushed off the oldest end. Without the
+    -- split this leaves one delta out of five; with it, all five survive.
+    it("does not let predictable noise evict the evidence", function()
+      local log = newLog({ limit = 5 }):start()
+
+      for amount = 1, 5 do
+        bus:publish(EventTopic.XP_DELTA_OBSERVED, { amount = amount })
+        for _ = 1, 4 do
+          log:record("timePlayedReceived", { levelSeconds = 900 })
+        end
+        log:record("sessionStarted", { carriedSamples = 0 })
+      end
+
+      assert.equal(5, #log.samples)
+      local amounts = {}
+      for _, sample in ipairs(log.samples) do
+        amounts[#amounts + 1] = sample.amount
+      end
+      assert.same({ 1, 2, 3, 4, 5 }, amounts)
+      assert.equal(20, log.counters.timePlayedReceived)
+      assert.equal(5, log.counters.sessionStarted)
+    end)
+  end)
+
   it("keeps the authoritative delta and the parsed claim as separate samples", function()
     -- The whole point: whether the two agree is the open question, so they are
     -- never folded into one number by the recorder itself.
@@ -327,7 +399,12 @@ describe("EvidenceLog", function()
       for _, sample in ipairs(store.evidence.samples) do
         amounts[#amounts + 1] = sample.amount or sample.kind
       end
-      assert.same({ 11, "sessionStarted", 22 }, amounts)
+      -- The session marker used to sit between the two as a sample. It is
+      -- counted now and not kept (D76): this assertion WAS the defect, because
+      -- one marker per reload is what left the real session with nine readable
+      -- minutes out of four hours.
+      assert.same({ 11, 22 }, amounts)
+      assert.equal(1, store.evidence.counters.sessionStarted)
       assert.equal(second.samples, store.evidence.samples)
     end)
 
@@ -369,6 +446,46 @@ describe("EvidenceLog", function()
       assert.is_nil(store.evidence.counters.delta)
     end)
 
+    -- The version this change replaced. A ring written before the split holds
+    -- session markers as samples and counters that cannot say which of the two
+    -- they came from, so half of its samples are noise and half are not, with
+    -- nothing to tell them apart. Dropping it is the honest move (D79).
+    it("drops evidence written before counting and keeping were separated", function()
+      local store = { evidence = { version = 2,
+        samples = { { kind = "sessionStarted" }, { kind = "delta", amount = 999 } },
+        counters = { delta = 7, sessionStarted = 32 } } }
+
+      session(store)
+
+      assert.equal(0, #store.evidence.samples)
+      assert.is_nil(store.evidence.counters.delta)
+      assert.is_nil(store.evidence.counters.sessionStarted)
+    end)
+
+    -- Adoption is the path that changed shape most, and the one nothing covered
+    -- on its own: carrying forward now has to leave the counter-only tallies
+    -- summed while the ring keeps only what was kept.
+    it("carries counter-only tallies forward without carrying samples for them", function()
+      local store = {}
+      local first = session(store)
+      bus:publish(EventTopic.XP_DELTA_OBSERVED, { amount = 11 })
+      first:record("timePlayedReceived", { levelSeconds = 900 })
+      first:record("timePlayedReceived", { levelSeconds = 960 })
+
+      bus = EventBus.new()
+      local second = session(store)
+      bus:publish(EventTopic.XP_DELTA_OBSERVED, { amount = 22 })
+      second:record("timePlayedReceived", { levelSeconds = 1020 })
+
+      local amounts = {}
+      for _, sample in ipairs(store.evidence.samples) do
+        amounts[#amounts + 1] = sample.amount
+      end
+      assert.same({ 11, 22 }, amounts)
+      assert.equal(3, store.evidence.counters.timePlayedReceived)
+      assert.equal(1, store.evidence.counters.sessionStarted)
+    end)
+
     it("still honours the limit once the carried samples are added back", function()
       local store = {}
       local first = newLog({ limit = 3 }):start()
@@ -379,11 +496,13 @@ describe("EvidenceLog", function()
       local second = newLog({ limit = 3 }):start()
       second:attachTo(store, {})
 
-      -- Three carried plus the session marker, trimmed back to three from the
-      -- oldest end.
+      -- Three carried and nothing else: the session marker no longer spends a
+      -- sample, so the limit now buys three samples of evidence instead of two
+      -- plus a marker. That difference, once per reload, is the whole change.
       assert.equal(3, #store.evidence.samples)
-      assert.equal(2, store.evidence.samples[1].amount)
-      assert.equal("sessionStarted", store.evidence.samples[3].kind)
+      assert.equal(1, store.evidence.samples[1].amount)
+      assert.equal(3, store.evidence.samples[3].amount)
+      assert.equal(1, store.evidence.counters.sessionStarted)
     end)
 
     it("reports the environment of the session running now, not the carried one", function()

@@ -316,6 +316,155 @@ describe("Settings", function()
     end)
   end)
 
+  -- The plate is the addon's second surface and the first whose settings arrive
+  -- into profiles that already exist -- eight keys at once, with no migration and
+  -- none needed, because `resolve` walks the defaults. What that leaves to prove
+  -- is the SHAPE of each one: a number that clamps instead of falling back, a list
+  -- that survives a word from another build, and a map that is NOT completed.
+  describe("the pull plate", function()
+    it("gives a profile written before it was configurable every default", function()
+      local settings = Settings.resolve({ [SettingKey.BAR_WIDTH] = 520 })
+
+      assert.is_false(settings[SettingKey.PLATE_LOCKED])
+      assert.equal(1.0, settings[SettingKey.PLATE_SCALE])
+      assert.equal(240, settings[SettingKey.PLATE_WIDTH])
+      assert.equal(1, settings[SettingKey.PLATE_OPACITY])
+      assert.equal(6, settings[SettingKey.PLATE_HOLD_SECONDS])
+      assert.equal(4, settings[SettingKey.PLATE_ROWS])
+      assert.equal(520, settings[SettingKey.BAR_WIDTH])
+    end)
+
+    -- D88. Two keys, so locking the bar leaves the plate loose -- the declared
+    -- cost of the change, and this is what keeps it a decision rather than a
+    -- coincidence of how the two happen to be named.
+    it("does not take its lock from the bar's", function()
+      local settings = Settings.resolve({ [SettingKey.BAR_LOCKED] = true })
+
+      assert.is_true(settings[SettingKey.BAR_LOCKED])
+      assert.is_false(settings[SettingKey.PLATE_LOCKED])
+    end)
+
+    -- Each stored value below is outside its range AND different from its default,
+    -- so an edge and a fallback cannot be confused for one another. Somebody who
+    -- typed 5000 for a width wanted a very wide plate.
+    it("pulls a stored number to the edge of its range rather than to its default", function()
+      local settings = Settings.resolve({
+        [SettingKey.PLATE_WIDTH] = 5000,
+        [SettingKey.PLATE_SCALE] = 0,
+        [SettingKey.PLATE_OPACITY] = -1,
+        [SettingKey.PLATE_HOLD_SECONDS] = 0,
+        [SettingKey.PLATE_ROWS] = 99,
+      })
+
+      assert.equal(800, settings[SettingKey.PLATE_WIDTH])
+      assert.equal(0.5, settings[SettingKey.PLATE_SCALE])
+      assert.equal(0, settings[SettingKey.PLATE_OPACITY])
+      assert.equal(1, settings[SettingKey.PLATE_HOLD_SECONDS])
+      assert.equal(8, settings[SettingKey.PLATE_ROWS])
+    end)
+
+    -- Two ranges, and the panel's is the narrower one on purpose: the setting's
+    -- range is the last line before a hand-edited file reaches a frame, the
+    -- panel's is what makes sense to drag. The bar has had both halves since its
+    -- width admitted 60..1600 while its slider offered 120..900.
+    it("offers less in the panel than the setting admits, on every plate slider", function()
+      for _, key in ipairs(ns.core.Frozen.keys(ns.core.SettingPanelRange)) do
+        local domain = ns.core.SettingRange[key]
+        local panel = ns.core.SettingPanelRange[key]
+
+        assert.is_true(domain.min <= panel.min, key .. ": the panel starts below the setting's floor")
+        assert.is_true(domain.max >= panel.max, key .. ": the panel reaches past the setting's ceiling")
+        assert.is_true(domain.max - domain.min > panel.max - panel.min,
+          key .. ": the panel offers the whole range instead of a narrower one")
+      end
+    end)
+
+    -- D89, stated on its own because it is the one range whose width is not
+    -- cosmetic: how long the plate stays is also how long a closed pull can be
+    -- resumed, so a hold of minutes would make every fight in a zone one pull.
+    it("keeps the longest hold it offers well short of the one it admits", function()
+      assert.is_true(ns.core.SettingPanelRange[SettingKey.PLATE_HOLD_SECONDS].max
+        < ns.core.SettingRange[SettingKey.PLATE_HOLD_SECONDS].max)
+    end)
+
+    it("starts with every zone the plate can draw turned on", function()
+      local chosen = {}
+      for _, zone in ipairs(Settings.resolve()[SettingKey.PLATE_ZONES]) do
+        chosen[zone] = true
+      end
+
+      for _, name in ipairs(ns.core.Frozen.keys(ns.core.PlateZone)) do
+        assert.is_true(chosen[ns.core.PlateZone[name]] == true, name .. " is off by default")
+      end
+    end)
+
+    -- A list is several choices in one key, so one word this build does not know
+    -- must not cost the player the others -- which is what taking the value whole
+    -- would do, the way an unknown bar slot falls back whole.
+    it("drops a zone it does not know without losing the ones it does", function()
+      local PlateZone = ns.core.PlateZone
+      local settings = Settings.resolve({
+        [SettingKey.PLATE_ZONES] = { PlateZone.CLOCK, "disco_lights", PlateZone.FOOTER },
+      })
+
+      assert.same({ PlateZone.CLOCK, PlateZone.FOOTER }, settings[SettingKey.PLATE_ZONES])
+    end)
+
+    it("reports the key whose list it had to prune, so the player can be told", function()
+      assert.same({ SettingKey.PLATE_ZONES }, Settings.invalidKeys({
+        [SettingKey.PLATE_ZONES] = { ns.core.PlateZone.CLOCK, "disco_lights" },
+      }))
+    end)
+
+    it("says nothing about a list whose every entry it knows", function()
+      assert.same({}, Settings.invalidKeys({ [SettingKey.PLATE_ZONES] = { ns.core.PlateZone.STREAK } }))
+    end)
+
+    -- Every accessory zone off is a player who wants the headline and nothing
+    -- else (D90), not a corrupt file: it stays empty, stays indexable, and is not
+    -- reported as junk.
+    it("keeps an empty zone list as the choice it is", function()
+      local zones = Settings.resolve({ [SettingKey.PLATE_ZONES] = {} })[SettingKey.PLATE_ZONES]
+
+      assert.equal(0, #zones)
+      assert.is_nil(zones[1])
+      assert.same({}, Settings.invalidKeys({ [SettingKey.PLATE_ZONES] = {} }))
+    end)
+
+    -- `same` alone cannot tell the two shapes apart: a frozen map reads as an
+    -- empty table from the outside (Frozen's header), so a map-valued default
+    -- would sail straight through it. NOT being frozen is the observable
+    -- difference, and it is the very property that keeps this taken or rejected
+    -- whole instead of completed key by key.
+    it("starts with no appearance of its own, and no shape either", function()
+      local stored = Settings.resolve()[SettingKey.PLATE_APPEARANCE]
+
+      assert.same({}, stored)
+      assert.is_false(ns.core.Frozen.isFrozen(stored))
+    end)
+
+    -- D87, and the trap the design named: a map-valued default would declare a
+    -- shape and `resolve` would complete this key by key, nailing the plate to
+    -- whichever skin the bar happened to be wearing when the tweak was made. What
+    -- is stored is one axis, and one axis is what has to survive a skin change.
+    it("keeps a partial plate appearance exactly as stored, without completing it", function()
+      local stored = Settings.resolve({
+        [SettingKey.PLATE_APPEARANCE] = { border = { thickness = 3 } },
+      })[SettingKey.PLATE_APPEARANCE]
+
+      assert.equal(3, stored.border.thickness)
+      assert.same({ "border" }, ns.core.Frozen.keys(stored))
+    end)
+
+    it("leaves the bar's own appearance empty when the plate is given one", function()
+      local settings = Settings.resolve({
+        [SettingKey.PLATE_APPEARANCE] = { border = { thickness = 3 } },
+      })
+
+      assert.same({}, settings[SettingKey.BAR_APPEARANCE])
+    end)
+  end)
+
   -- The update check arrives into profiles that were written before it existed,
   -- which is every profile there is. Both of its keys have to survive that.
   describe("the update check", function()

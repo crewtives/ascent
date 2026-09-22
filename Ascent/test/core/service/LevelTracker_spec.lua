@@ -261,6 +261,22 @@ describe("LevelTracker", function()
       assert.equal(200, tracker:current().seededXp)
     end)
 
+    -- Same rule as the seed, at the other site that posts experience the addon did
+    -- not watch arrive: the gap belongs to whatever group the character was in
+    -- while the addon was off, which is nothing anyone can now say (D81).
+    it("imputes the gap without claiming to know who shared it", function()
+      seedStored({ level = 5, xpTotal = 300, xpRequired = 800, xpBySource = { mob_kill = 300 } })
+      player:set("xp", 500):set("sharedBy", 5)
+      login(1000)
+
+      tracker:start()
+
+      local gains = tracker:current().gains
+      assert.equal(1, #gains)
+      assert.equal(200, gains[1].amount)
+      assert.is_nil(gains[1].sharedBy)
+    end)
+
     -- A record already carrying a seed adds to it rather than replacing it: both
     -- gaps are experience nobody watched, and they are the same kind of missing.
     it("adds a later gap to the seed it already carried", function()
@@ -358,6 +374,22 @@ describe("LevelTracker", function()
       tracker:start()
 
       assert.equal(640, tracker:current().seededXp)
+    end)
+
+    -- D81: the seed is experience earned at instants nobody watched, so it goes in
+    -- with the group unknown even while the character stands in one right now.
+    -- Stamping the present group on it is the reclassification the decision exists
+    -- to prevent, and it would be invisible: a party of five at login would price
+    -- the whole level as if every kill in it had been shared.
+    it("seeds without claiming to know who shared it", function()
+      player:set("xp", 640):set("sharedBy", 5)
+
+      tracker:start()
+
+      local gains = tracker:current().gains
+      assert.equal(1, #gains)
+      assert.equal(640, gains[1].amount)
+      assert.is_nil(gains[1].sharedBy)
     end)
 
     it("records a seed of zero when it meets a level at its very first point", function()

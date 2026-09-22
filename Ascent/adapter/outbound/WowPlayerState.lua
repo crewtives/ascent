@@ -131,6 +131,20 @@ function WowPlayerState:place()
   return PlaceContext.WORLD, id, displayName(mapName(id)) or displayName(GetZoneText())
 end
 
+-- How many the payment is split between, counting the character. The client's own
+-- count is not that number: it answers 0 out of a group, and nobody was ever paid
+-- by a group of nobody. Passing that through would make every consumer remember
+-- the peculiarity, and a client capability that leaks through its return value is
+-- as leaked as one that leaks through its name (D85) -- so the translation
+-- happens here, the same way `restedXp` turns the client's nil into zero.
+function WowPlayerState:sharedBy()
+  local members = GetNumGroupMembers()
+  if members < 1 then
+    return 1
+  end
+  return members
+end
+
 function WowPlayerState:healthFraction()
   return fraction(UnitHealth("player"), UnitHealthMax("player"))
 end

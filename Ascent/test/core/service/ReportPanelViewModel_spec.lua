@@ -8,8 +8,8 @@ describe("ReportPanelViewModel", function()
   before_each(function()
     ns = AscentTest.loadWith("core/model/", "core/service/XpLedger.lua", "core/service/Composition.lua",
       "core/service/LevelBreakdownViewModel.lua", "core/service/CombatBreakdownViewModel.lua",
-      "core/service/AbilityRankingViewModel.lua", "core/service/QuestPendingViewModel.lua",
-      "core/service/ReportPanelViewModel.lua")
+      "core/service/AbilityRankingViewModel.lua", "core/service/KillXpEstimator.lua",
+      "core/service/QuestPendingViewModel.lua", "core/service/ReportPanelViewModel.lua")
     ReportPanelViewModel = ns.core.ReportPanelViewModel
     XpLedger = ns.core.XpLedger
     LevelRecord = ns.core.LevelRecord
@@ -47,6 +47,36 @@ describe("ReportPanelViewModel", function()
 
     assert.is_true(viewModel.pending.active)
     assert.equal(300, viewModel.pending.total)
+  end)
+
+  -- 2.4: the group of now has to reach BOTH tabs that price a creature, and the
+  -- bundling is the only place that can hand it to them. A size that reached one
+  -- of the two would put a panel on screen whose per-creature rows and whose
+  -- pending estimates disagreed about which character they were describing.
+  it("hands both tabs the group of now", function()
+    local record = LevelRecord.new(10, 0)
+    record.xpRequired = 1000
+    local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
+    XpLedger.post(record, XpGain.new({ amount = 100, source = XpSource.MOB_KILL, at = 0,
+      creature = lynx, sharedBy = 1 }))
+    XpLedger.post(record, XpGain.new({ amount = 20, source = XpSource.MOB_KILL, at = 0,
+      creature = lynx, sharedBy = 5 }))
+
+    local viewModel = ReportPanelViewModel.build(record, {
+      questEntries = { { questId = 1, questLevel = 10, reward = 300, adjustedReward = 300,
+        origin = ns.core.QuestXpOrigin.CLIENT, complete = false,
+        objectives = { ns.core.QuestObjective.new({ creature = "Springpaw Lynx", done = 0, needed = 2 }) } } },
+      currentRecord = record,
+      sharedBy = 5,
+    })
+
+    local objective = viewModel.pending.entries[1].objectives[1]
+    assert.equal(40, objective.estimate, "two of them at what a group of five was paid for one")
+    assert.equal("creature", objective.basis)
+
+    for _, row in ipairs(viewModel.breakdown.topCreatures) do
+      assert.equal(row.sharedBy == 5, row.current)
+    end
   end)
 
   it("still returns a pending tab (inactive, not an error) when no quest data is given", function()

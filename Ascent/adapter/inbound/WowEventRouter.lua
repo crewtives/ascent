@@ -151,8 +151,16 @@ local function publishXpDelta(self)
     -- the instant the experience is known to have been granted; the announcement
     -- that explains it can arrive a second and a half either side, by which time
     -- the character may be through a portal.
+    --
+    -- How many shared the payment is read on the same instant and for the same
+    -- reason (D81). It is the server's own decision about this delta: the party
+    -- can be left, or joined, between the line that announces a kill and the
+    -- experience arriving, and the domain settles a delta two windows after it --
+    -- so asking any later would file the kill under whatever group the character
+    -- happens to be in a second and a half afterwards.
     self.bus:publish(EventTopic.XP_DELTA_OBSERVED, {
       amount = amount, at = at, place = PlaceKey.new(self.playerState:place()),
+      sharedBy = self.playerState:sharedBy(),
     })
   end
   refreshXpSnapshot(self)

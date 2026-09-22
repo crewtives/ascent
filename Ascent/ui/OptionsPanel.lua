@@ -39,6 +39,9 @@ local BarSlotPolicy = ns.core.BarSlotPolicy
 local Frozen = ns.core.Frozen
 local SkinCatalog = ns.core.SkinCatalog
 local SkinResolver = ns.core.SkinResolver
+local PlateLayout = ns.core.PlateLayout
+local PlateZone = ns.core.PlateZone
+local SettingPanelRange = ns.core.SettingPanelRange
 local Palette = ns.core.Palette
 local BorderKind = ns.core.BorderKind
 local SeparatorKind = ns.core.SeparatorKind
@@ -126,6 +129,37 @@ local CYCLES = {
   },
 }
 
+-- The plate's accessory zones, each with the words the player reads next to its
+-- box. The ORDER is not this table's: it is the layout service's, and a test
+-- holds that one to covering the vocabulary exactly (D90). What is this table's
+-- is the pairing, so a zone added to the vocabulary and forgotten here is a zone
+-- nobody can switch off -- which is why the harness counts these against the
+-- vocabulary rather than against seven.
+local PLATE_ZONE_ROWS = {
+  { PlateZone.CLOCK, TextKey.OPT_PLATE_ZONE_CLOCK },
+  { PlateZone.REMAINING, TextKey.OPT_PLATE_ZONE_REMAINING },
+  { PlateZone.STREAK, TextKey.OPT_PLATE_ZONE_STREAK },
+  { PlateZone.SOURCES, TextKey.OPT_PLATE_ZONE_SOURCES },
+  { PlateZone.CREATURES, TextKey.OPT_PLATE_ZONE_CREATURES },
+  { PlateZone.ABILITIES, TextKey.OPT_PLATE_ZONE_ABILITIES },
+  { PlateZone.FOOTER, TextKey.OPT_PLATE_ZONE_FOOTER },
+}
+
+-- The three axes of the plate's OWN appearance map that this page offers. The
+-- map admits more and the resolver type-checks all of them (D94): what is
+-- decided here is which ones are worth a control, not which ones exist.
+--
+-- `own` marks the axis the plate reads off its own map and nowhere else. The
+-- plate has never read the skin's text size -- it ignores size, style and anchor
+-- -- so an untouched text size falls back to the layout service's base rather
+-- than to whatever the bar resolved, which would move every plate that exists on
+-- the first login after updating.
+local PLATE_AXES = {
+  { labelKey = TextKey.OPT_BACKGROUND_ALPHA, path = { "background", "a" }, bounds = ALPHA },
+  { labelKey = TextKey.OPT_BORDER_THICKNESS, path = { "border", "thickness" }, bounds = THICKNESS },
+  { labelKey = TextKey.OPT_TEXT_SIZE, path = { "text", "size" }, bounds = PlateLayout.TEXT_SIZE, own = true },
+}
+
 local SLIDERS = {
   { labelKey = TextKey.OPT_BORDER_THICKNESS, path = { "border", "thickness" }, bounds = THICKNESS },
   { labelKey = TextKey.OPT_SEPARATOR_THICKNESS, path = { "separator", "thickness" }, bounds = THICKNESS },
@@ -137,27 +171,6 @@ local SLIDERS = {
 -- ---------------------------------------------------------------------------
 -- Reading and writing the player's overrides
 -- ---------------------------------------------------------------------------
-
--- A plain deep copy of a table that may be frozen. Frozen tables raise on a key
--- they do not have and cannot be walked with pairs, so neither a normal copy nor
--- a normal read works on one (see core/constants/Frozen.lua).
-local function plainCopy(value)
-  if Frozen.isFrozen(value) then
-    local copy = {}
-    for key, inner in Frozen.each(value) do
-      copy[key] = plainCopy(inner)
-    end
-    return copy
-  end
-  if type(value) ~= "table" then
-    return value
-  end
-  local copy = {}
-  for key, inner in pairs(value) do
-    copy[key] = plainCopy(inner)
-  end
-  return copy
-end
 
 local function readPath(root, path)
   local node = root
@@ -530,6 +543,12 @@ function OptionsPanel.new(context)
   local pageFields = newPage("Fields", TextKey.OPT_SECTION_FIELDS, TextKey.OPT_PAGE_FIELDS_DESC)
   local pageSize = newPage("Size", TextKey.OPT_SECTION_SIZE, TextKey.OPT_PAGE_SIZE_DESC)
   local pageBehaviour = newPage("Behaviour", TextKey.OPT_SECTION_BEHAVIOUR, TextKey.OPT_PAGE_BEHAVIOUR_DESC)
+  -- The other surface this addon draws, and the only one whose settings used to
+  -- be reachable by chat command alone. ONE page carrying its name (D92): the bar
+  -- needed six because it had six unrelated subjects, and the plate's lock filed
+  -- under Behaviour with its width under Size would be a player hunting three
+  -- pages for one surface.
+  local pagePlate = newPage("Plate", TextKey.OPT_PAGE_PLATE, TextKey.OPT_PAGE_PLATE_DESC)
 
   local content = pageMain.content
 
@@ -556,8 +575,15 @@ function OptionsPanel.new(context)
     view.preview:apply(appearanceFor(overrides), currentSettings()[SettingKey.MOTION_SCALE])
   end
 
-  local function overridesWith(path, value)
-    local overrides = plainCopy(currentSettings()[SettingKey.BAR_APPEARANCE])
+  -- Which override map, then the axis inside it. The key is a parameter rather
+  -- than BAR_APPEARANCE spelled in, because the plate's own map (D87) is the same
+  -- shape read the same way, and the pruning below is subtle enough that a second
+  -- copy of it would be a second thing to get right.
+  --
+  -- Frozen.plain, always: what comes back out of the settings is FROZEN, and a proxy
+  -- saved back reaches Frozen again as an array-like table -- emptied, in silence.
+  local function overridesWith(key, path, value)
+    local overrides = Frozen.plain(currentSettings()[key])
     local node = overrides
     for index = 1, #path - 1 do
       node[path[index]] = node[path[index]] or {}
@@ -567,8 +593,8 @@ function OptionsPanel.new(context)
     return overrides
   end
 
-  local function commitOverride(path, value)
-    saveSetting(SettingKey.BAR_APPEARANCE, overridesWith(path, value))
+  local function commitOverride(key, path, value)
+    saveSetting(key, overridesWith(key, path, value))
     view.refresh()
   end
 
@@ -576,8 +602,8 @@ function OptionsPanel.new(context)
   -- override table and not off the resolved appearance, because the resolved
   -- one always has a value for every axis -- that is what resolving means -- and
   -- so cannot tell the two apart.
-  local function hasOverride(path)
-    return readPath(currentSettings()[SettingKey.BAR_APPEARANCE], path) ~= nil
+  local function hasOverride(key, path)
+    return readPath(currentSettings()[key], path) ~= nil
   end
 
   -- The overrides with one axis taken out, and every other one untouched. Empty
@@ -585,8 +611,8 @@ function OptionsPanel.new(context)
   -- `border = {}` reads as "the player touched the border" to hasOverride, so
   -- leaving one behind would keep the reset button on screen for a setting that
   -- is no longer overridden.
-  local function overridesWithout(path)
-    local overrides = plainCopy(currentSettings()[SettingKey.BAR_APPEARANCE])
+  local function overridesWithout(key, path)
+    local overrides = Frozen.plain(currentSettings()[key])
     local chain = { overrides }
     local node = overrides
     for index = 1, #path - 1 do
@@ -606,9 +632,9 @@ function OptionsPanel.new(context)
     return overrides
   end
 
-  local function resetOverride(path)
+  local function resetOverride(key, path)
     return function()
-      saveSetting(SettingKey.BAR_APPEARANCE, overridesWithout(path))
+      saveSetting(key, overridesWithout(key, path))
       view.refresh()
     end
   end
@@ -850,14 +876,14 @@ function OptionsPanel.new(context)
       -- handler below builds off this snapshot rather than re-reading the
       -- settings, because the whole point is that the settings do not move
       -- while the player is trying colours out.
-      local stored = plainCopy(currentSettings()[SettingKey.BAR_COLORS])
+      local stored = Frozen.plain(currentSettings()[SettingKey.BAR_COLORS])
 
       openColorPicker(appearanceFor().colors[row.key], {
         -- Preview: the demo bar and this swatch, and nothing else. No call
         -- reaches the repository, so a colour tried and abandoned leaves
         -- nothing behind to undo.
         preview = function(chosen)
-          local trial = plainCopy(stored)
+          local trial = Frozen.plain(stored)
           trial[row.key] = chosen
           view.preview:apply(appearanceFor(nil, trial), currentSettings()[SettingKey.MOTION_SCALE])
           swatchTexture:SetColorTexture(chosen.r, chosen.g, chosen.b, 1)
@@ -909,11 +935,12 @@ function OptionsPanel.new(context)
           nextIndex = position % #cycle.values + 1
         end
       end
-      commitOverride(cycle.path, cycle.values[nextIndex][1])
+      commitOverride(SettingKey.BAR_APPEARANCE, cycle.path, cycle.values[nextIndex][1])
     end)
     view.cycles[index] = {
       button = button, cycle = cycle,
-      reset = createAxisReset(content, "Cycle" .. index, button, locale, resetOverride(cycle.path)),
+      reset = createAxisReset(content, "Cycle" .. index, button, locale,
+        resetOverride(SettingKey.BAR_APPEARANCE, cycle.path)),
     }
     previous = button
   end
@@ -921,11 +948,12 @@ function OptionsPanel.new(context)
   view.sliders = {}
   for index, spec in ipairs(SLIDERS) do
     local slider = createSlider(content, "Axis" .. index, spec.labelKey, previous, locale, spec.bounds,
-      function(value) previewOverrides(overridesWith(spec.path, value)) end,
-      function(value) commitOverride(spec.path, value) end)
+      function(value) previewOverrides(overridesWith(SettingKey.BAR_APPEARANCE, spec.path, value)) end,
+      function(value) commitOverride(SettingKey.BAR_APPEARANCE, spec.path, value) end)
     view.sliders[index] = {
       slider = slider, spec = spec,
-      reset = createAxisReset(content, "Axis" .. index, slider, locale, resetOverride(spec.path)),
+      reset = createAxisReset(content, "Axis" .. index, slider, locale,
+        resetOverride(SettingKey.BAR_APPEARANCE, spec.path)),
     }
     previous = slider
   end
@@ -1079,6 +1107,232 @@ function OptionsPanel.new(context)
 
   pageBehaviour.last = resetAll
 
+  -- --- the pull plate ------------------------------------------------------
+
+  -- THERE IS NO PREVIEW ON THIS PAGE, and that is the decision rather than the
+  -- omission (D92). The bar's preview exists because a BarRenderer was split from
+  -- the compositor and a sample level is published on the context; the plate has
+  -- neither, and building them would mean a fictional PullRecord published for
+  -- one page. The demo already drives the REAL plate through a whole pull, so the
+  -- button at the bottom launches that instead. It is the better preview: it is
+  -- the thing itself, at the settings just chosen.
+
+  -- The plate is optional here in a way the bar is not: all three views are built
+  -- inside one pcall, so a client that failed at the plate leaves the bar -- and
+  -- this panel -- standing without it. The settings stay the player's to change;
+  -- only the live half is missing, which is why every use of this is guarded.
+  local plate = context.plate
+
+  -- The appearance the PLATE resolves: the bar's, with the plate's own map laid
+  -- over it (D87). Its own function rather than a flag on appearanceFor, because
+  -- that one feeds the bar's preview and an `own` layer leaking into it would
+  -- show the bar wearing the plate's tweaks.
+  local function plateAppearance()
+    local settings = currentSettings()
+    return SkinResolver.resolve({
+      skin = SkinResolver.skinFor(SkinCatalog, settings[SettingKey.BAR_SKIN], ns.core.DEFAULT_SKIN_ID),
+      overrides = settings[SettingKey.BAR_APPEARANCE],
+      own = settings[SettingKey.PLATE_APPEARANCE],
+      colors = settings[SettingKey.BAR_COLORS],
+      palette = Palette,
+      highContrast = settings[SettingKey.HIGH_CONTRAST],
+    })
+  end
+
+  -- What one axis of the plate's own look is worth right now: the player's own
+  -- value when they have set one, and otherwise what the plate actually draws
+  -- with -- which for the text size is the layout service's base rather than
+  -- anything the skin says (see PLATE_AXES).
+  local function plateAxisValue(spec)
+    local stored = readPath(currentSettings()[SettingKey.PLATE_APPEARANCE], spec.path)
+    if stored ~= nil then
+      return stored
+    end
+    if spec.own then
+      return spec.bounds.default
+    end
+    return readPath(plateAppearance(), spec.path) or spec.bounds.min
+  end
+
+  -- The stored list with one zone added or taken out, rebuilt in the canonical
+  -- order rather than in the order the boxes were ticked: the order IS the
+  -- reading (D90), and what is stored is a set of choices, not a sequence.
+  local function zonesToggled(zone, checked)
+    local chosen = {}
+    for _, current in ipairs(currentSettings()[SettingKey.PLATE_ZONES]) do
+      if current ~= zone then
+        chosen[#chosen + 1] = current
+      end
+    end
+    if checked then
+      chosen[#chosen + 1] = zone
+    end
+    -- The first return value only: `zones` also answers with a lookup, and
+    -- storing that would put a map where the setting declares a list.
+    return (PlateLayout.zones(chosen))
+  end
+
+  content = pagePlate.content
+  local plateFrameHeading = heading(content, TextKey.OPT_SECTION_PLATE_FRAME, pagePlate.top, 4, locale)
+
+  -- FIRST, because it decides whether anything below it matters -- the same
+  -- reason the bar's slot heads its own page. Absorbs add-ascent-pull-recap 7.3,
+  -- which asked for this one checkbox and nothing else.
+  view.plateEnabledCheck = createCheckbox(content, "PlateEnabled", TextKey.OPT_PLATE_ENABLED,
+    plateFrameHeading, locale, function(checked)
+      saveSetting(SettingKey.PLATE_ENABLED, checked)
+    end)
+
+  -- Its own lock, never the bar's (D88). The two surfaces have opposite
+  -- ergonomics -- the bar is placed once, the plate moves whenever the fighting
+  -- does -- and sharing one meant the bar's slot, which disables the bar's lock,
+  -- silently decided whether the plate could be dragged.
+  view.plateLockedCheck = createCheckbox(content, "PlateLocked", TextKey.OPT_PLATE_LOCKED,
+    view.plateEnabledCheck, locale, function(checked)
+      saveSetting(SettingKey.PLATE_LOCKED, checked)
+    end)
+
+  -- The panel's half of each range, read from core rather than written here as a
+  -- literal. Two halves exist on purpose: the setting admits what a hand-edited
+  -- file may hold, and this is what makes sense to drag. Declaring the narrow one
+  -- in core/ is what lets a test hold it inside the wide one -- the bar's own
+  -- slider bounds, four literals at the top of this file, have no such test.
+  --
+  -- The preview writes to the FRAME and never through the view's own applyFrame,
+  -- place or currentAlpha: those are internal, and applySettings is the single
+  -- hot-apply door. What a preview owes is immediacy, and three frame calls give
+  -- exactly that without a second path into the plate's layout.
+  local function previewPlate(apply)
+    if plate ~= nil and plate.frame ~= nil then
+      apply(plate.frame)
+    end
+  end
+
+  view.plateScaleSlider = createSlider(content, "PlateScale", TextKey.OPT_PLATE_SCALE,
+    view.plateLockedCheck, locale, SettingPanelRange[SettingKey.PLATE_SCALE],
+    function(value) previewPlate(function(frame) frame:SetScale(value) end) end,
+    function(value) saveSetting(SettingKey.PLATE_SCALE, value) end)
+
+  view.plateWidthSlider = createSlider(content, "PlateWidth", TextKey.OPT_PLATE_WIDTH,
+    view.plateScaleSlider, locale, SettingPanelRange[SettingKey.PLATE_WIDTH],
+    function(value) previewPlate(function(frame) frame:SetWidth(value) end) end,
+    function(value) saveSetting(SettingKey.PLATE_WIDTH, value) end)
+
+  -- Previewed by writing the frame's alpha, which is the one place this page
+  -- touches the channel D91 reserves for the fade. It is safe only because it is
+  -- a preview: the very next thing the plate draws overwrites it with the factor
+  -- times where the fade has got to, so nothing here can outlive the drag.
+  view.plateOpacitySlider = createSlider(content, "PlateOpacity", TextKey.OPT_PLATE_OPACITY,
+    view.plateWidthSlider, locale, SettingPanelRange[SettingKey.PLATE_OPACITY],
+    function(value) previewPlate(function(frame) frame:SetAlpha(value) end) end,
+    function(value) saveSetting(SettingKey.PLATE_OPACITY, value) end)
+
+  -- No preview, because there is nothing to show: this one is a duration, and the
+  -- only way to see it is to watch a plaque leave. The label carries what it
+  -- costs -- this is also the window a closed pull can be carried on in (D89).
+  view.plateHoldSlider = createSlider(content, "PlateHold", TextKey.OPT_PLATE_HOLD,
+    view.plateOpacitySlider, locale, SettingPanelRange[SettingKey.PLATE_HOLD_SECONDS],
+    nil, function(value) saveSetting(SettingKey.PLATE_HOLD_SECONDS, value) end)
+
+  -- --- what the plate shows ------------------------------------------------
+
+  local plateContentHeading = heading(content, TextKey.OPT_SECTION_PLATE_CONTENT,
+    view.plateHoldSlider, 24, locale)
+
+  -- How many rows are SHOWN. The rows themselves were built at the ceiling of the
+  -- range and are only shown or hidden, so this never rebuilds a frame -- which
+  -- is what lets it change mid-fight.
+  view.plateRowsSlider = createSlider(content, "PlateRows", TextKey.OPT_PLATE_ROWS,
+    plateContentHeading, locale, SettingPanelRange[SettingKey.PLATE_ROWS],
+    nil, function(value) saveSetting(SettingKey.PLATE_ROWS, value) end)
+
+  view.plateZoneChecks = {}
+  local previousZone = view.plateRowsSlider
+  for index, row in ipairs(PLATE_ZONE_ROWS) do
+    local zone = row[1]
+    local check = createCheckbox(content, "PlateZone" .. index, row[2], previousZone, locale,
+      function(checked)
+        saveSetting(SettingKey.PLATE_ZONES, zonesToggled(zone, checked))
+        view.refresh()
+      end,
+      -- The first box clears the slider under it; the rest stack tight, so the
+      -- seven read as one list rather than as seven controls.
+      index == 1 and { relativePoint = "BOTTOMLEFT", x = 4, y = -12 }
+        or { relativePoint = "BOTTOMLEFT", x = 0, y = -4 })
+    view.plateZoneChecks[index] = { check = check, zone = zone }
+    previousZone = check
+  end
+
+  -- Says what an empty selection leaves, the way the bar's field list does. Every
+  -- accessory zone off is a legitimate choice (D90), so this appears rather than
+  -- argues -- and the section below is anchored to it, which is why refresh
+  -- EMPTIES it as well as hiding it.
+  view.plateZonesNote = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  view.plateZonesNote:SetPoint("TOPLEFT", previousZone, "BOTTOMLEFT", 4, -8)
+  view.plateZonesNote:SetWidth(460)
+  view.plateZonesNote:SetJustifyH("LEFT")
+  view.plateZonesNote:Hide()
+
+  -- --- the plate's own look ------------------------------------------------
+
+  local plateLookHeading = heading(content, TextKey.OPT_SECTION_PLATE_LOOK,
+    view.plateZonesNote, 24, locale)
+
+  -- No preview on these three, unlike the bar's axes above. The plate resolves
+  -- its own map off the settings inside applySkin rather than being handed one,
+  -- so there is no trial map to show it -- and a plate that is not in a fight is
+  -- not on screen to show anything to. That is what the demo button is for.
+  view.plateAxes = {}
+  local previousPlateAxis = plateLookHeading
+  for index, spec in ipairs(PLATE_AXES) do
+    local slider = createSlider(content, "PlateLook" .. index, spec.labelKey, previousPlateAxis,
+      locale, spec.bounds, nil,
+      function(value) commitOverride(SettingKey.PLATE_APPEARANCE, spec.path, value) end)
+    view.plateAxes[index] = {
+      slider = slider, spec = spec,
+      reset = createAxisReset(content, "PlateLook" .. index, slider, locale,
+        resetOverride(SettingKey.PLATE_APPEARANCE, spec.path)),
+    }
+    previousPlateAxis = slider
+  end
+
+  local plateDemoButton = CreateFrame("Button", "AscentOptionsPlateDemo", content, "UIPanelButtonTemplate")
+  plateDemoButton:SetSize(240, 22)
+  plateDemoButton:SetPoint("TOPLEFT", previousPlateAxis, "BOTTOMLEFT", 0, -26)
+  plateDemoButton:SetText(locale:get(TextKey.OPT_PLATE_DEMO))
+  plateDemoButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(locale:get(TextKey.OPT_PLATE_DEMO_TIP))
+    GameTooltip:Show()
+  end)
+  plateDemoButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  if context.startPlateDemo == nil then
+    -- A context that cannot run one -- an older composition root, or a test --
+    -- gets a button that says it cannot rather than one that does nothing.
+    plateDemoButton:Disable()
+  else
+    plateDemoButton:SetScript("OnClick", function() context.startPlateDemo() end)
+  end
+  view.plateDemoButton = plateDemoButton
+
+  local plateReset = CreateFrame("Button", "AscentOptionsPlateReset", content, "UIPanelButtonTemplate")
+  plateReset:SetSize(240, 22)
+  plateReset:SetPoint("TOPLEFT", plateDemoButton, "BOTTOMLEFT", 0, -8)
+  plateReset:SetText(locale:get(TextKey.OPT_PLATE_RESET))
+  plateReset:SetScript("OnClick", function()
+    for _, key in ipairs(ns.core.PlateSettingKeys) do
+      -- A COPY of the default, never the default itself. A frozen map's proxy
+      -- saved back reaches Frozen again as an array-like table and is emptied in
+      -- silence, and the default list a frozen table answers with IS its backing
+      -- store -- storing that would put the addon's own constants one write away
+      -- from the player's saved variables.
+      saveSetting(key, Frozen.plain(ns.core.Defaults[key]))
+    end
+    view.refresh()
+  end)
+
+  pagePlate.last = plateReset
+
   -- Each page is as tall as what it holds. Measured rather than guessed, which is
   -- the other half of why the old single canvas lost half of itself: its height
   -- was a constant somebody typed, and the panel outgrew it in silence.
@@ -1124,12 +1378,20 @@ function OptionsPanel.new(context)
         end
       end
       entry.button:SetText(label)
-      if hasOverride(entry.cycle.path) then entry.reset:Show() else entry.reset:Hide() end
+      if hasOverride(SettingKey.BAR_APPEARANCE, entry.cycle.path) then
+        entry.reset:Show()
+      else
+        entry.reset:Hide()
+      end
     end
 
     for _, entry in ipairs(view.sliders) do
       entry.slider:SetValue(currentValue(entry.spec.path, entry.spec.bounds.min))
-      if hasOverride(entry.spec.path) then entry.reset:Show() else entry.reset:Hide() end
+      if hasOverride(SettingKey.BAR_APPEARANCE, entry.spec.path) then
+        entry.reset:Show()
+      else
+        entry.reset:Hide()
+      end
     end
 
     for _, entry in ipairs(view.settingResets) do
@@ -1213,6 +1475,50 @@ function OptionsPanel.new(context)
     view.damageCheck:SetChecked(settings[SettingKey.COLLECT_DAMAGE])
     view.debugCheck:SetChecked(settings[SettingKey.DEBUG])
     view.updateCheck:SetChecked(settings[SettingKey.UPDATE_CHECK])
+
+    -- The plate's page. Every control of it written from the live settings, like
+    -- everything above: the refresh is shared by all seven pages and a control
+    -- left out of it shows stale state with no error -- which matters more here
+    -- than anywhere else, because the plate's settings are the ones a chat
+    -- command is most likely to have changed while the panel was open.
+    view.plateEnabledCheck:SetChecked(settings[SettingKey.PLATE_ENABLED])
+    view.plateLockedCheck:SetChecked(settings[SettingKey.PLATE_LOCKED])
+    view.plateScaleSlider:SetValue(settings[SettingKey.PLATE_SCALE])
+    view.plateWidthSlider:SetValue(settings[SettingKey.PLATE_WIDTH])
+    view.plateOpacitySlider:SetValue(settings[SettingKey.PLATE_OPACITY])
+    view.plateHoldSlider:SetValue(settings[SettingKey.PLATE_HOLD_SECONDS])
+    view.plateRowsSlider:SetValue(settings[SettingKey.PLATE_ROWS])
+
+    -- Asked of the layout service rather than scanned here: it already answers
+    -- which zones are drawn as a lookup, and a second reading of the same list
+    -- would be free to disagree with the one the plate lays itself out from.
+    local chosenZones = settings[SettingKey.PLATE_ZONES]
+    local _, drawnZones = PlateLayout.zones(chosenZones)
+    for _, entry in ipairs(view.plateZoneChecks) do
+      entry.check:SetChecked(drawnZones[entry.zone] == true)
+    end
+    if #chosenZones == 0 then
+      view.plateZonesNote:SetText(locale:get(TextKey.OPT_PLATE_ZONES_NONE))
+      view.plateZonesNote:Show()
+    else
+      -- Emptied as well as hidden: a hidden font string keeps the height of the
+      -- text it last held, and the section below is anchored to this one.
+      view.plateZonesNote:SetText("")
+      view.plateZonesNote:Hide()
+    end
+
+    for _, entry in ipairs(view.plateAxes) do
+      entry.slider:SetValue(plateAxisValue(entry.spec))
+      -- On screen only while the axis really is the player's, read off the
+      -- override map and never off the resolved appearance -- which has a value
+      -- for every axis, that being what resolving means, and so cannot tell an
+      -- inherited one from a chosen one.
+      if hasOverride(SettingKey.PLATE_APPEARANCE, entry.spec.path) then
+        entry.reset:Show()
+      else
+        entry.reset:Hide()
+      end
+    end
     refreshing = false
   end
 

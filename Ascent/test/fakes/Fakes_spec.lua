@@ -71,6 +71,15 @@ describe("the test doubles", function()
       assert.equal(4500, player:restedXp())
     end)
 
+    -- The default every domain fixture inherits. The client's own 0 here would
+    -- seed the whole suite with a group size nobody ever plays at.
+    it("is alone until a test puts the character in a group", function()
+      local player = ns.fakes.FakePlayerState.new()
+
+      assert.equal(1, player:sharedBy())
+      assert.equal(5, player:set("sharedBy", 5):sharedBy())
+    end)
+
     -- The same contract the rested reserve already has: the port promises plain
     -- values and a real answer for "the client cannot say", and the double has to
     -- be able to produce both or no domain test can reach the reserved entry.

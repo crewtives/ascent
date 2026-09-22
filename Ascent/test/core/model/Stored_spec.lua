@@ -110,6 +110,50 @@ describe("the serialization boundary", function()
       assert.equal("5644:6", restored.creature:id())
     end)
 
+    -- D81: what a kill paid is only comparable to what another kill paid when both
+    -- were split between the same number of people, so the size travels with the
+    -- gain to disk and back. Written as its own field and read back as a number,
+    -- not inferred from the group bonus, which says nothing about how many shared.
+    it("round-trips the group a kill's experience was split between", function()
+      local live = gain({
+        amount = 100, sharedBy = 5,
+        creature = ns.core.CreatureKey.new(5644, 6, "Kobold Miner"),
+      })
+      local restored = assertRoundTrips(ns.core.XpGain, live, "grouped gain")
+
+      assert.equal(5, restored.sharedBy)
+      assert.equal("5644:6", restored.creature:id())
+    end)
+
+    it("round-trips a kill measured alone as alone, not as unmeasured", function()
+      local restored = assertRoundTrips(ns.core.XpGain, gain({ amount = 44, sharedBy = 1 }), "solo gain")
+
+      assert.equal(1, restored.sharedBy)
+    end)
+
+    -- The half of D84 that has to hold at this boundary: every gain in every
+    -- history written before this version has no such field, and what it means is
+    -- that nobody counted -- not that the character was alone. Restoring it as one
+    -- would invent an observation, and the averages built on it would be wrong in
+    -- the direction hardest to notice, because most of it probably WAS solo.
+    it("restores a gain written without a group size as unknown, never as alone", function()
+      local restored = ns.core.XpGain.restore("44,mob_kill,100.5,,,,5644,6")
+
+      assert.is_nil(restored.sharedBy)
+      assert.equal(44, restored.amount)
+      assert.equal("5644:6", restored.creature:id())
+    end)
+
+    -- The client's own answer out of a group, which the adapter is supposed to have
+    -- translated. Arriving here it is not a population, so it restores as unknown
+    -- rather than dividing an average by nobody -- and the live constructor raises
+    -- on it, which is where that bug would be found.
+    it("refuses a group of nobody, from disk and from a caller alike", function()
+      assert.is_nil(ns.core.XpGain.restore("44,mob_kill,100.5,,,,,,,0").sharedBy)
+      assert.has_error(function() return gain({ amount = 44, sharedBy = 0 }) end)
+      assert.has_error(function() return gain({ amount = 44, sharedBy = 2.5 }) end)
+    end)
+
     it("round-trips a quest gain", function()
       local restored = assertRoundTrips(ns.core.XpGain,
         gain({ amount = 250, source = ns.core.XpSource.QUEST_TURNIN, questId = 1234 }), "quest gain")
@@ -126,6 +170,10 @@ describe("the serialization boundary", function()
       assert.equal("44,mob_kill,100.5", gain({ amount = 44 }):toStored())
       assert.equal("250,quest_turnin,100.5,,,,,,1234",
         gain({ amount = 250, source = ns.core.XpSource.QUEST_TURNIN, questId = 1234 }):toStored())
+      -- The group size is the tenth field and nothing else moved to make room for
+      -- it, so a gain nobody counted still writes the same three fields it always
+      -- did -- and a counted one pays for the blanks in between.
+      assert.equal("44,mob_kill,100.5,,,,,,,3", gain({ amount = 44, sharedBy = 3 }):toStored())
     end)
 
     it("needs an amount and nothing else", function()
@@ -327,6 +375,33 @@ describe("the serialization boundary", function()
       assert.equal(restored:sumOfSources(), restored:sumOfPlaces())
     end)
 
+    -- Both operands survive the file already, so the figure does too without a
+    -- field of its own. What this pins is that it survives INTACT: derive it
+    -- from anything that does not round-trip and a level would answer one thing
+    -- in the session that recorded it and another after a reload.
+    it("still knows what time it could not place after a trip through the file", function()
+      local restored = assertRoundTrips(ns.core.LevelRecord, populated(), "LevelRecord")
+
+      assert.equal(852.5, restored:sumOfPlaceSeconds())
+      assert.equal(1843.25 - 852.5, restored:unaccountedSeconds())
+      assert.is_false(restored:timeUnderflowed())
+      assert.equal(restored.playedSeconds,
+        restored:sumOfPlaceSeconds() + restored:unaccountedSeconds())
+    end)
+
+    -- A level from before places existed holds no entries at all, and that is
+    -- the one state where the difference cannot be computed rather than being
+    -- zero. Zero would have it claim it measured everything.
+    it("declines to guess for a level written before places were tracked", function()
+      local restored = ns.core.LevelRecord.restore({
+        level = 24, xpTotal = 900, xpBySource = { mob_kill = 900 },
+        playedSeconds = 1800, timeAnchored = true,
+      })
+
+      assert.is_false(restored:hasPlaces())
+      assert.is_nil(restored:unaccountedSeconds())
+    end)
+
     it("round-trips which source paid for each place's experience", function()
       local restored = assertRoundTrips(ns.core.LevelRecord, populated(), "LevelRecord")
 
@@ -423,11 +498,85 @@ describe("the serialization boundary", function()
     it("comes back with its collections keyed again", function()
       local restored = assertRoundTrips(ns.core.LevelRecord, populated(), "LevelRecord")
 
-      assert.equal(1, restored.creatures["5644:6"].kills)
-      assert.equal(44, restored.creatures["5644:6"].xpTotal)
-      assert.equal("Kobold Miner", restored.creatures["5644:6"].key.name)
+      assert.equal(1, restored.creatures["5644:6@?"].kills)
+      assert.equal(44, restored.creatures["5644:6@?"].xpTotal)
+      assert.equal("Kobold Miner", restored.creatures["5644:6@?"].key.name)
       assert.equal(250, restored.quests[1234].xpTotal)
       assert.equal(1, restored.quests[1234].turnIns)
+    end)
+
+    -- The line, spelled out: kills, experience, the group the kill was paid to,
+    -- and then the creature's own three fields. The group sits AHEAD of the key
+    -- because the key is the line's tail and a tail has no fixed position -- an
+    -- unidentified creature ends the line two fields in. Blank in that third
+    -- field is the context nobody counted, which is exactly what tells a level
+    -- recorded before this distinction from one played alone.
+    it("writes the group a creature was killed in ahead of the creature", function()
+      local record = ns.core.LevelRecord.new(24, 0)
+      record.xpRequired = 8800
+      local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
+      local function kill(amount, sharedBy)
+        ns.core.XpLedger.post(record, ns.core.XpGain.new({
+          amount = amount, source = ns.core.XpSource.MOB_KILL, at = 10,
+          creature = lynx, sharedBy = sharedBy,
+        }))
+      end
+
+      kill(40, 5)
+      kill(44, 5)
+      kill(84)
+
+      assert.equal(
+        "1,84,,15343,6,Springpaw Lynx;2,84,5,15343,6,Springpaw Lynx",
+        record:toStored().creatures)
+    end)
+
+    -- The first of the three nets the schema step needs: version 4 rewrites every
+    -- stored creature line into this shape, so a shape that did not survive its own
+    -- write and read would convert a character's history into something the next
+    -- login cannot use -- and there is no going back from a conversion.
+    it("carries both of a creature's contexts through a round trip", function()
+      local record = ns.core.LevelRecord.new(24, 0)
+      record.xpRequired = 8800
+      local lynx = ns.core.CreatureKey.new(15343, 6, "Springpaw Lynx")
+      local function kill(amount, sharedBy)
+        ns.core.XpLedger.post(record, ns.core.XpGain.new({
+          amount = amount, source = ns.core.XpSource.MOB_KILL, at = 10,
+          creature = lynx, sharedBy = sharedBy,
+        }))
+      end
+
+      kill(40, 5)
+      kill(84)
+
+      local restored = assertRoundTrips(ns.core.LevelRecord, record, "grouped creatures")
+
+      assert.equal(5, restored.creatures["15343:6@5"].sharedBy)
+      assert.equal(40, restored.creatures["15343:6@5"].xpTotal)
+      assert.equal("Springpaw Lynx", restored.creatures["15343:6@5"].key.name)
+      assert.is_nil(restored.creatures["15343:6@?"].sharedBy)
+      assert.equal(84, restored.creatures["15343:6@?"].xpTotal)
+    end)
+
+    -- Two lines for one creature is the whole point, and restore ASSIGNS each
+    -- bucket into the map: read under a key that left the group out, the second
+    -- line would silently delete the first one's kills and experience.
+    it("brings a creature's two contexts back as two aggregates", function()
+      local restored = ns.core.LevelRecord.restore({
+        level = 24,
+        creatures = "1,84,,15343,6,Springpaw Lynx;2,84,5,15343,6,Springpaw Lynx",
+      })
+
+      local uncounted = restored.creatures["15343:6@?"]
+      local party = restored.creatures["15343:6@5"]
+
+      assert.equal(1, uncounted.kills)
+      assert.equal(84, uncounted.xpTotal)
+      assert.is_nil(uncounted.sharedBy)
+      assert.equal(2, party.kills)
+      assert.equal(84, party.xpTotal)
+      assert.equal(5, party.sharedBy)
+      assert.equal("Springpaw Lynx", party.key.name)
     end)
 
     it("needs a level and nothing else", function()

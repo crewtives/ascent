@@ -55,14 +55,14 @@ describe("RetentionPolicy", function()
   it("leaves every total exactly where it was", function()
     local record = recordWith(10)
     local total, bySource = record.xpTotal, record:xpFrom(XpSource.MOB_KILL)
-    local kills, creature = record.killsWithXp, record.creatures["5644:6"].xpTotal
+    local kills, creature = record.killsWithXp, record.creatures["5644:6@?"].xpTotal
 
     policyWith(3):apply(record)
 
     assert.equal(total, record.xpTotal)
     assert.equal(bySource, record:xpFrom(XpSource.MOB_KILL))
     assert.equal(kills, record.killsWithXp)
-    assert.equal(creature, record.creatures["5644:6"].xpTotal)
+    assert.equal(creature, record.creatures["5644:6@?"].xpTotal)
     assert.is_true(record:sourcesAddUp())
   end)
 

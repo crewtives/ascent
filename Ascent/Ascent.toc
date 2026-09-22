@@ -3,7 +3,7 @@
 ## Notes: Per-level leveling analytics. Where every point of experience came from, and how you played to earn it.
 ## Notes-esES: Analítica de leveleo por nivel. De dónde salió cada punto de experiencia y cómo jugaste para conseguirlo.
 ## Author: crewtives
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: AscentDB
 ## SavedVariablesPerCharacter: AscentCharDB
 ## X-Category: Leveling
@@ -106,6 +106,7 @@ core/service/DamageCollector.lua
 core/service/CombatAggregator.lua
 core/service/PullTracker.lua
 core/service/PullViewModel.lua
+core/service/PlateLayout.lua
 core/service/CopyReport.lua
 
 # --- adapter: compat -------------------------------------------------------

@@ -321,6 +321,17 @@ local function renderBreakdown(view, breakdown)
       if creatureLevel then
         name = name .. locale:get(TextKey.PANEL_CREATURE_LEVEL, creatureLevel)
       end
+      -- A row measured with a different number of people sharing the pay says so,
+      -- and one recorded before anybody counted says THAT instead of passing for
+      -- a solo measurement (D84). The row for the current group carries no mark:
+      -- it is the one that prices what the character is doing now, and marking
+      -- every row would make the marks worthless on the common screen where they
+      -- all read the same.
+      if not creature.current then
+        name = name .. (creature.sharedBy ~= nil
+          and locale:get(TextKey.PANEL_CREATURE_SHARED, creature.sharedBy)
+          or locale:get(TextKey.PANEL_CREATURE_MIXED))
+      end
       rows[#rows + 1] = row({ name, tostring(creature.xpTotal), locale:get(TextKey.PANEL_KILLS, creature.kills) })
     end
   end
@@ -428,7 +439,7 @@ local function renderPending(view, pending)
   -- Printed once at the end if any row used it, rather than per row: the mark is
   -- what the reader needs beside the figure, and the sentence explaining it is
   -- what they need once.
-  local rough = false
+  local rough, mixed = false, false
   for _, entry in ipairs(pending.entries) do
     -- "Not recorded" and "zero" are different answers and must not share a
     -- cell: a quest whose reward nobody has seen is unknown, not worthless.
@@ -450,6 +461,14 @@ local function renderPending(view, pending)
       elseif objective.basis == KillXpEstimator.Basis.LEVEL then
         rough = true
         estimate = locale:get(TextKey.PANEL_OBJ_ROUGH, objective.estimate)
+      elseif objective.basis == KillXpEstimator.Basis.MIXED then
+        -- Its own mark and not the rough one: this figure came from this very
+        -- creature, which the rough one did not, but from kills taken before
+        -- anyone counted who shared them -- so it is neither a measurement of
+        -- the group the player is in now nor the level's blanket average (D83).
+        -- Passing it off as the former is what left it unmarked until now.
+        mixed = true
+        estimate = locale:get(TextKey.PANEL_OBJ_MIXED, objective.estimate)
       else
         estimate = locale:get(TextKey.PANEL_OBJ_ESTIMATE, objective.estimate)
       end
@@ -460,6 +479,11 @@ local function renderPending(view, pending)
     end
   end
 
+  -- The narrower mark first, so reading down goes from a real average of the
+  -- wrong population to no average of this creature at all.
+  if mixed then
+    rows[#rows + 1] = row({ locale:get(TextKey.PANEL_OBJ_MIXED_FOOTNOTE) })
+  end
   if rough then
     rows[#rows + 1] = row({ locale:get(TextKey.PANEL_OBJ_FOOTNOTE) })
   end
@@ -1000,6 +1024,12 @@ function ReportPanelView.new(options)
     settings = options.settings,
     saveSetting = options.saveSetting,
     currentRecord = options.currentRecord,
+    -- How many are sharing the pay right now, asked fresh on every rebuild. A
+    -- seam and not a value for the same reason the record is one, and optional
+    -- because a panel built without it still draws: every row then reads as a
+    -- population that is not the current one, which is exactly what a panel that
+    -- cannot ask should claim.
+    sharedBy = options.sharedBy or function() return nil end,
     questForecastService = options.questForecastService,
     questNames = options.questNames,
     locale = options.locale,
@@ -1114,6 +1144,10 @@ function ReportPanelView:refresh()
       -- The level in progress, whatever level the panel is showing: the pending
       -- tab is about now, and so are the kill rates its estimates are priced with.
       currentRecord = self.currentRecord(),
+      -- And the group of now, for the same reason: what a creature pays depends
+      -- on how many people are splitting it, so an estimate priced with another
+      -- group's average is the defect this seam exists to close.
+      sharedBy = self.sharedBy(),
     })
   end)
   if viewModel == nil then

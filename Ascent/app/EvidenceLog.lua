@@ -43,10 +43,76 @@ local DEFAULT_LIMIT = 400
 -- 1 wrote every verdict blank and kept no raw lines. Dropping them on a version
 -- change is the honest move; mixing them silently is how a counter ends up
 -- summarising two different meanings under one name.
-local VERSION = 2
+local VERSION = 3
+
+-- Counting and keeping are two decisions, and the KIND of fact makes it -- not
+-- the volume seen at runtime (D75). A dynamic threshold would make the evidence
+-- depend on how long that session happened to run: the same fact would occupy a
+-- sample one day and not the next, and two files would stop being comparable.
+-- Declared up front, a reader knows before opening the file which kinds could
+-- have been in it.
+--
+-- A kind belongs here only if it meets BOTH conditions (D76): it happens many
+-- times in a session, AND its n-th occurrence says nothing the first did not.
+-- Nothing on the experience path qualifies however frequent it gets -- there the
+-- n-th occurrence is the case being hunted, and the volume is the whole reason
+-- the ring exists.
+--
+-- What this fixes: of the 400 samples the session of 2026-09-21 left behind, 132
+-- were time played received, 34 requested and 32 session markers. Half the file,
+-- leaving 131 samples of experience -- four hours of clock turned into nine
+-- minutes of readable play.
+local COUNTER_ONLY = {
+  timePlayedReceived = true,
+  timePlayedRequested = true,
+  timePlayedSuppressed = true,
+  timePlayedUnrequested = true,
+  timePlayedLate = true,
+  sessionStarted = true,
+  -- Four times a second while a pull is open, and its n-th identical tally says
+  -- nothing the first did not. `nameplateMix` is the sample: the sweep keeps one
+  -- only when the tally actually changes.
+  nameplateSweep = true,
+}
+
+-- A FAMILY of counter-only kinds, for the case the declaration above cannot
+-- express: a kind whose name is not known here in advance. The census of combat
+-- log subevents this addon does not handle is named by the client's own
+-- vocabulary, and enumerating it here would mean this file learning every line
+-- the combat log can write -- which is the opposite of what the census is for.
+--
+-- Still a declaration and still explicit: a prefix is registered on purpose, one
+-- at a time, and a kind that does not start with one is not counter-only. It is
+-- not a rule about volume, which is the thing D75 refuses.
+local COUNTER_ONLY_PREFIX = {
+  ["subevent."] = true,
+  -- What the pull plate was handed, by phase and by how many creatures were in
+  -- it. Named by the combination rather than enumerated, and counted rather than
+  -- kept: it changes on every redraw of a live fight.
+  ["plate."] = true,
+}
+
+local function isCounterOnly(kind)
+  if COUNTER_ONLY[kind] then
+    return true
+  end
+  for prefix in pairs(COUNTER_ONLY_PREFIX) do
+    if kind:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+  return false
+end
 
 local EvidenceLog = {}
 EvidenceLog.__index = EvidenceLog
+
+-- Exposed so the declaration can be enumerated by a test rather than trusted.
+-- Getting a kind wrong here is not the risk; getting it wrong WITHOUT NOTICING
+-- is, and it would only show up as a session that recorded the wrong half.
+EvidenceLog.COUNTER_ONLY = COUNTER_ONLY
+EvidenceLog.COUNTER_ONLY_PREFIX = COUNTER_ONLY_PREFIX
+EvidenceLog.isCounterOnly = isCounterOnly
 
 -- Where the player is, as the client will tell it at this instant. Read here
 -- rather than through the player-state port on purpose: the port does not carry
@@ -140,6 +206,16 @@ function EvidenceLog:record(kind, fields)
     return self
   end
 
+  self:count(kind)
+
+  -- Counted, never kept. The tally still answers "how often"; the ring is left
+  -- for what can only be understood by seeing one whole (D75). Returning here
+  -- rather than inside push() also skips building the sample at all, and
+  -- placeNow() costs eight client calls.
+  if isCounterOnly(kind) then
+    return self
+  end
+
   local sample = {}
   for key, value in pairs(fields or {}) do
     sample[key] = value
@@ -147,7 +223,6 @@ function EvidenceLog:record(kind, fields)
   sample.kind = kind
   sample.place = placeNow()
 
-  self:count(kind)
   self:push(sample)
   return self
 end
@@ -284,6 +359,12 @@ function EvidenceLog:start()
       groupBonus = gain and gain.groupBonus,
       raidPenalty = gain and gain.raidPenalty,
       restedBonus = gain and gain.restedBonus,
+      -- How many shared this one, which is NOT derivable from groupBonus above --
+      -- that is the bonus, not the population, and telling a two-man from a
+      -- five-man is the whole point. Without it the session that has to confirm
+      -- each kill was filed under the right size cannot do it from the file, which
+      -- is the only way anything here has ever been confirmed.
+      sharedBy = gain and gain.sharedBy,
     })
   end)
 
@@ -374,11 +455,13 @@ function EvidenceLog:attachTo(store, environment)
       end
     end
 
-    -- A visible seam. Without it a reader cannot tell a gap in the timestamps
-    -- caused by a reload from one caused by the player walking away, and the
-    -- clock restarts at login so the numbers alone would suggest time ran
-    -- backwards.
-    self:push({ kind = "sessionStarted", carriedSamples = #carried.samples })
+    -- Counted, not kept (D76). The seam still matters -- without it a reader
+    -- cannot tell a gap in the timestamps caused by a reload from one caused by
+    -- the player walking away -- but the tally says it happened, and keeping one
+    -- sample per reload is precisely what drowned the ring: a reload is the
+    -- single most common thing a player does while an addon is being worked on,
+    -- so this marker scaled with the noise instead of with the evidence.
+    self:count("sessionStarted")
   end
 
   store.evidence = {

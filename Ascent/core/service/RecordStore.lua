@@ -22,9 +22,38 @@
 local _, ns = ...
 ns.core = ns.core or {}
 
+local Packed = ns.core.Packed
 local Port = ns.core.Port
 local LevelRecord = ns.core.LevelRecord
 local SchemaVersion = ns.core.SchemaVersion
+
+-- Wedge a blank field in at position 3 of one packed creature line, which is the
+-- whole of the 3 -> 4 conversion: kills and experience stay where they are, the
+-- creature's key moves one to the right, and what lands in the gap is the group
+-- nobody counted.
+--
+-- Built by hand rather than with table.insert because a line holding fewer than two
+-- fields is not something this addon ever wrote, and on LuaJIT table.insert past the
+-- end of a table raises -- which here would fail the step and archive a character's
+-- entire history over one corrupted line.
+local function widenCreature(fields)
+  local shifted = { fields[1], fields[2] or false, false }
+  for index = 3, #fields do
+    shifted[#shifted + 1] = fields[index]
+  end
+  return Packed.join(shifted)
+end
+
+local function widenCreatures(stored)
+  if type(stored) ~= "table" or type(stored.creatures) ~= "string"
+    or stored.creatures == "" then
+    return stored
+  end
+
+  local lines = Packed.unlist(stored.creatures, function(fields) return fields end)
+  stored.creatures = Packed.list(lines, widenCreature)
+  return stored
+end
 
 local RecordStore = {}
 RecordStore.__index = RecordStore
@@ -45,6 +74,32 @@ RecordStore.MIGRATIONS = {
   -- present for the same reason as the step above -- a record written at 2 restores
   -- with seededXp nil, which is the honest answer and not a converted one.
   [2] = function() end,
+
+  -- 3 -> 4: the size of the group a creature's kills were paid to. The first step
+  -- that has to CONVERT: the group is written ahead of the creature's key, so every
+  -- stored creature line shifts by a field and no default can stand in for that --
+  -- left alone, a line would be read with the npc id where the group belongs.
+  --
+  -- The gap is filled with blank rather than with one. Most of these kills probably
+  -- were solo, which is exactly what would make writing "1" undetectable: it reads
+  -- as a measurement of a population nobody observed. Blank says unknown, and the
+  -- estimator can then decline to price a kill from it (D84).
+  --
+  -- Only the packed creature text moves. The level's own sums -- xpTotal,
+  -- xpBySource, killsWithXp -- live outside it and are not touched: this separates a
+  -- breakdown, it does not restate a total.
+  [3] = function(repository)
+    local current = widenCreatures(repository:currentRecord())
+    if current ~= nil then
+      repository:saveCurrentRecord(current)
+    end
+    for _, level in ipairs(repository:completedLevels()) do
+      local stored = widenCreatures(repository:completedRecord(level))
+      if stored ~= nil then
+        repository:saveCompletedRecord(stored)
+      end
+    end
+  end,
 }
 
 function RecordStore.new(options)

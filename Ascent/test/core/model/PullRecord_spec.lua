@@ -280,4 +280,28 @@ describe("PullRecord", function()
     assert.is_nil(pull.toStored)
     assert.is_nil(PullRecord.restore)
   end)
+  -- The defect reported from a real fight on 2026-09-22: a creature beating on an
+  -- absorb shield leaves every damage figure at zero, so the plate treated the
+  -- pull as having nothing to say and stayed hidden for the whole fight -- with
+  -- the creature enrolled and the pull open the entire time.
+  describe("having something to say", function()
+    local function record()
+      return ns.core.PullRecord.new(0, { comboWindow = 5 })
+    end
+
+    it("is empty with nothing in it at all", function()
+      assert.is_true(record():isEmpty())
+    end)
+
+    it("is not empty once a creature is in the fight, before any damage", function()
+      local pull = record()
+      pull:recordEngagement("Starving Ghostclaw", "Creature-0-1-1-1-16347-A")
+
+      assert.equal(0, pull.damageTaken)
+      assert.equal(0, pull.damageDealt)
+      assert.equal(0, pull.kills)
+      assert.is_false(pull:isEmpty(), "being fought is something to show")
+    end)
+  end)
+
 end)
