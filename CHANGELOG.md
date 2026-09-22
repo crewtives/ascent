@@ -7,10 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.3.0] - 2026-09-22
 
-Published as a release rather than a beta. What changed about that: the addon has now been played
-across sessions on Burning Crusade Classic, and the three separate reports about the live combat
-summary turned out to be one defect with one cause -- a sweep that was switched off. What has not
-changed: `ui/` still has no tests, and the promise that the sources add up to exactly the experience
+Still a beta. What changed about that: the addon has now been played across sessions on Burning
+Crusade Classic, and the three separate reports about the live combat summary turned out to be one
+defect with one cause -- a sweep that was switched off. What has not changed, and is why this is
+still a beta: `ui/` has no tests, and the promise that the sources add up to exactly the experience
 of a level is verified on the levels that have actually been played, not on all of them.
 
 ### Added
